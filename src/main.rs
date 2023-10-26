@@ -551,7 +551,23 @@ pub fn is_convertible(context_length: Level, left: Rc<Value>, right: Rc<Value>) 
 			is_convertible(context_length, left_basepoint.clone(), right_basepoint.clone())
 			&& is_convertible(context_length, left_fiberpoint.clone(), right_fiberpoint.clone())
 		}
-		// TODO: Eta-conversion for pairs.
+		// Eta-conversion for pairs.
+		(Pair { basepoint: left_basepoint, fiberpoint: left_fiberpoint }, Neutral { variable, eliminators }) => {
+			let mut eliminators_basepoint = eliminators.clone();
+			eliminators_basepoint.push(NeutralEliminator::ProjectBase);
+			let mut eliminators_fiberpoint = eliminators.clone();
+			eliminators_fiberpoint.push(NeutralEliminator::ProjectFiber);
+			is_convertible(context_length, left_basepoint.clone(), rc!(Neutral { variable: *variable, eliminators: eliminators_basepoint })) &&
+			is_convertible(context_length, left_fiberpoint.clone(), rc!(Neutral { variable: *variable, eliminators: eliminators_fiberpoint }))
+		}
+		(Neutral { variable, eliminators }, Pair { basepoint: right_basepoint, fiberpoint: right_fiberpoint }) => {
+			let mut eliminators_basepoint = eliminators.clone();
+			eliminators_basepoint.push(NeutralEliminator::ProjectBase);
+			let mut eliminators_fiberpoint = eliminators.clone();
+			eliminators_fiberpoint.push(NeutralEliminator::ProjectFiber);
+			is_convertible(context_length, rc!(Neutral { variable: *variable, eliminators: eliminators_basepoint }), right_basepoint.clone()) &&
+			is_convertible(context_length, rc!(Neutral { variable: *variable, eliminators: eliminators_fiberpoint }), right_fiberpoint.clone())
+		}
 		(
 			Pi { parameter: _, base: left_base, family: left_family },
 			Pi { parameter: _, base: right_base, family: right_family },
