@@ -1,10 +1,14 @@
 use std::rc::Rc;
 
 use super::{
-	common::Metavariable,
+	common::{Index, Metavariable},
 	domain::{Level, NeutralEliminator, Value},
+	syntax::Term,
 };
-use crate::{beta::domain::Head, utility::rc};
+use crate::{
+	beta::{domain::Head, syntax::Eliminator},
+	utility::{bx, rc},
+};
 
 pub struct Metacontext {
 	entries: Vec<Option<Rc<Value>>>,
@@ -152,7 +156,7 @@ impl Metacontext {
 	pub fn solve(
 		&mut self,
 		context_length: Level,
-		meta: Metavariable,
+		definee: Metavariable,
 		eliminators: &[NeutralEliminator],
 		target: &Value,
 	) -> bool {
@@ -165,7 +169,9 @@ impl Metacontext {
 				let NeutralEliminator::Apply { argument } = eliminator else {
 					panic!("attempted to solve metavariable equation with non-application eliminators");
 				};
-				let Value::Neutral { head: Head::Variable(variable), eliminators } = self.force(&argument) else {
+				let Value::Neutral { head: Head::Variable(variable), eliminators } =
+					self.force(argument.as_ref().clone())
+				else {
 					panic!("attempted to solve metavariable equation with non-variable application");
 				};
 				if !eliminators.is_empty() {
@@ -173,32 +179,117 @@ impl Metacontext {
 				}
 				// We only consider spines which mention each variable at most once to ensure a unique unifier.
 				if partial_renaming[variable.0].is_some() {
-					panic!("metavariable spine is non-linear");
+					panic!("metavariable spine mentions a variable multiple times");
 				}
 				partial_renaming[variable.0] = Some(Level(i));
 			}
-			PartialRenaming::new(Level(eliminators.len()), partial_renaming)
+			PartialRenaming::new(eliminators.len(), partial_renaming)
 		};
+
+		let renamed_target = self.rename(definee, &partial_renaming, 0, target.clone());
 
 		todo!();
 		false
 	}
 
+	// Apply a partial renaming to a value while quoting it and ensure that a given metavariable is not named within.
+	pub fn rename(
+		&self,
+		definee: Metavariable,
+		partial_renaming: &PartialRenaming,
+		additional_bindings: usize,
+		value: Value,
+	) -> Term {
+		match self.force(value) {
+			Value::Neutral { head: Head::Metavariable(hole), eliminators } =>
+				if hole == definee {
+					panic!("metavariable equation yields an impredicative solution");
+				} else {
+					let head = Term::Metavariable(hole);
+					let mut spine = Vec::new();
+
+					for eliminator in eliminators {
+						match eliminator {
+							NeutralEliminator::Apply { argument } => spine.push(Eliminator::Apply {
+								argument: self.rename(
+									definee,
+									partial_renaming,
+									additional_bindings,
+									argument.as_ref().clone(),
+								),
+							}),
+							NeutralEliminator::ProjectBase => spine.push(Eliminator::ProjectBase),
+							NeutralEliminator::ProjectFiber => spine.push(Eliminator::ProjectFiber),
+						}
+					}
+
+					if spine.is_empty() {
+						head
+					} else {
+						Term::Compute { scrutinee: bx!(head), eliminators: spine }
+					}
+				},
+			Value::Neutral { head: Head::Variable(variable), eliminators } => {
+				let Some(renamed_index) = partial_renaming.get_renamed_index(variable, additional_bindings)
+				else {
+					panic!("variable not in renaming") // TODO: when, exactly, does this happen?
+				};
+
+				let head = Term::Variable(renamed_index);
+				let mut spine = Vec::new();
+
+				for eliminator in eliminators {
+					match eliminator {
+						NeutralEliminator::Apply { argument } => spine.push(Eliminator::Apply {
+							argument: self.rename(
+								definee,
+								partial_renaming,
+								additional_bindings,
+								argument.as_ref().clone(),
+							),
+						}),
+						NeutralEliminator::ProjectBase => spine.push(Eliminator::ProjectBase),
+						NeutralEliminator::ProjectFiber => spine.push(Eliminator::ProjectFiber),
+					}
+				}
+
+				if spine.is_empty() {
+					head
+				} else {
+					Term::Compute { scrutinee: bx!(head), eliminators: spine }
+				}
+			}
+			Value::Lambda { parameter, body } => Term::Lambda {
+				parameter,
+				body: bx!(self.rename(
+					definee,
+					partial_renaming,
+					additional_bindings + 1,
+					body
+						.apply_value(rc!(Value::variable(Level(partial_renaming.hole_arity + additional_bindings))))
+						.as_ref()
+						.clone()
+				)),
+			},
+			Value::Pair { basepoint, fiberpoint } => Term::Pair { basepoint: bx!(self.rename(definee, partial_renaming, additional_bindings, basepoint.as_ref().clone())), fiberpoint: bx!(self.rename(definee, partial_renaming, additional_bindings, fiberpoint.as_ref().clone())) },
+			Value::Pi { parameter, base, family } => Term::Pi { parameter, base: bx!(self.rename(definee, partial_renaming, additional_bindings, base.as_ref().clone())), family: bx!(self.rename(definee, partial_renaming, additional_bindings + 1, family.apply_value(rc!(Value::variable(Level(partial_renaming.hole_arity + additional_bindings)))).as_ref().clone())) },
+			Value::Sigma { parameter, base, family } => Term::Sigma { parameter, base: bx!(self.rename(definee, partial_renaming, additional_bindings, base.as_ref().clone())), family: bx!(self.rename(definee, partial_renaming, additional_bindings + 1, family.apply_value(rc!(Value::variable(Level(partial_renaming.hole_arity + additional_bindings)))).as_ref().clone())) },
+			Value::Universe => Term::Universe,
+		}
+	}
+
 	// (Non-recursively) unfold a solved flex neutral form by replacing its head with its solution.
-	pub fn force(&self, value: &Value) -> Value {
+	pub fn force(&self, value: Value) -> Value {
 		match value {
 			Value::Neutral { head: Head::Metavariable(metavariable), eliminators } => {
-				let Some(term) = &self[*metavariable] else {
-					return Value::Neutral {
-						head: Head::Metavariable(*metavariable),
-						eliminators: eliminators.clone(),
-					};
+				let Some(term) = &self[metavariable] else {
+					return Value::Neutral { head: Head::Metavariable(metavariable), eliminators };
 				};
 
 				//TODO: Apply the spine to the term (with eliminate_spine), then force it again.
 				todo!()
 			}
-			value => value.clone(),
+			value => value,
 		}
 	}
 }
@@ -212,12 +303,26 @@ impl std::ops::Index<Metavariable> for Metacontext {
 }
 
 pub struct PartialRenaming {
-	spine_length: Level,
+	hole_arity: usize,
 	partial_renaming: Vec<Option<Level>>,
 }
 
 impl PartialRenaming {
-	pub fn new(spine_length: Level, partial_renaming: Vec<Option<Level>>) -> Self {
-		Self { spine_length, partial_renaming }
+	pub fn new(hole_arity: usize, partial_renaming: Vec<Option<Level>>) -> Self {
+		Self { hole_arity, partial_renaming }
+	}
+
+	pub fn get_renamed_index(&self, Level(level): Level, additional_bindings: usize) -> Option<Index> {
+		if let Some(renamed_level) = self.partial_renaming.get(level) {
+			let Level(renamed_level) = (*renamed_level)?;
+			Some(Index(additional_bindings + (self.hole_arity - 1 - renamed_level)))
+		} else {
+			let relative_level = level - self.partial_renaming.len();
+			if relative_level < additional_bindings {
+				Some(Index(additional_bindings - 1 - relative_level))
+			} else {
+				None
+			}
+		}
 	}
 }
