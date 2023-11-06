@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use super::common::{Index, Level};
+use crate::utility::rc;
 
 #[derive(Clone, Debug)]
 pub enum StaticTerm {
@@ -54,6 +55,99 @@ pub enum DynamicValue {
 	Universe,
 	IndexedProduct(Rc<Self>, Rc<dyn Fn(Self) -> Self>),
 	Function(Rc<dyn Fn(Self) -> Self>),
+}
+
+#[derive(Clone)]
+pub enum Value {
+	Static(StaticValue),
+	Dynamic(DynamicValue),
+}
+
+#[derive(Clone)]
+struct Environment(Vec<Value>);
+
+impl Environment {
+	fn lookup_static(&self, Index(i): Index) -> StaticValue {
+		let Some(Value::Static(value)) = self.0.get(self.0.len() - 1 - i) else { panic!() };
+		value.clone()
+	}
+	fn lookup_dynamic(&self, Index(i): Index) -> DynamicValue {
+		let Some(Value::Dynamic(value)) = self.0.get(self.0.len() - 1 - i) else { panic!() };
+		value.clone()
+	}
+	fn extend(&self, value: Value) -> Self {
+		let mut environment = self.clone();
+		environment.0.push(value);
+		environment
+	}
+}
+
+fn evaluate_static(environment: &Environment, term: StaticTerm) -> StaticValue {
+	use StaticTerm::*;
+	match term {
+		Variable(index) => environment.lookup_static(index),
+		Lambda { body, .. } => {
+			let environment = environment.clone();
+			let body = *body;
+			StaticValue::Function(rc!(move |value| {
+				evaluate_static(&environment.extend(Value::Static(value)), body.clone())
+			}))
+		}
+		Apply { scrutinee, argument } => {
+			let StaticValue::Function(closure) = evaluate_static(environment, *scrutinee) else { panic!() };
+			let argument = evaluate_static(environment, *argument);
+			closure(argument)
+		}
+		Pi { base, family, .. } => StaticValue::IndexedProduct(
+			rc!(evaluate_static(environment, *base)),
+			rc!({
+				let environment = environment.clone();
+				let family = *family;
+				move |value| evaluate_static(&environment.extend(Value::Static(value)), family.clone())
+			}),
+		),
+		Let { argument, tail, .. } =>
+			evaluate_static(&environment.extend(Value::Static(evaluate_static(environment, *argument))), *tail),
+		Universe => StaticValue::Universe,
+		Lift(liftee) => StaticValue::Lift(evaluate_dynamic(environment, *liftee)),
+		Quote(quotee) => StaticValue::Quote(evaluate_dynamic(environment, *quotee)),
+	}
+}
+
+fn evaluate_dynamic(environment: &Environment, term: DynamicTerm) -> DynamicValue {
+	use DynamicTerm::*;
+	match term {
+		Variable(index) => environment.lookup_dynamic(index),
+		Lambda { body, .. } => {
+			let environment = environment.clone();
+			let body = *body;
+			DynamicValue::Function(Rc::new(move |value| {
+				evaluate_dynamic(&environment.extend(Value::Dynamic(value)), body.clone())
+			}))
+		}
+		Apply { scrutinee, argument } => {
+			let DynamicValue::Function(closure) = evaluate_dynamic(environment, *scrutinee) else { panic!() };
+			let argument = evaluate_dynamic(environment, *argument);
+			closure(argument)
+		}
+		Pi { base, family, .. } => DynamicValue::IndexedProduct(
+			rc!(evaluate_dynamic(environment, *base)),
+			rc!({
+				let environment = environment.clone();
+				let family = *family;
+				move |value| evaluate_dynamic(&environment.extend(Value::Dynamic(value)), family.clone())
+			}),
+		),
+		Let { argument, tail, .. } => evaluate_dynamic(
+			&environment.extend(Value::Dynamic(evaluate_dynamic(environment, *argument))),
+			*tail,
+		),
+		Universe => DynamicValue::Universe,
+		Splice(splicee) => {
+			let StaticValue::Quote(quotee) = evaluate_static(environment, *splicee) else { panic!() };
+			quotee
+		}
+	}
 }
 
 pub fn is_convertible_static(context_length: Level, left: &StaticValue, right: &StaticValue) -> bool {
