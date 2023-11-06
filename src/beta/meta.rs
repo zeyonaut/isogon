@@ -59,8 +59,8 @@ impl Metacontext {
 				self.unify(context_length, left_base.clone(), right_base.clone())
 					&& self.unify(
 						context_length.suc(),
-						left_family.clone().apply_value(left_base.clone()),
-						right_family.clone().apply_value(right_base.clone()),
+						left_family.clone().apply_value(rc!(Value::variable(context_length))),
+						right_family.clone().apply_value(rc!(Value::variable(context_length))),
 					),
 			(
 				Sigma { parameter: _, base: left_base, family: left_family },
@@ -69,8 +69,8 @@ impl Metacontext {
 				self.unify(context_length, left_base.clone(), right_base.clone())
 					&& self.unify(
 						context_length.suc(),
-						left_family.clone().apply_value(left_base.clone()),
-						right_family.clone().apply_value(right_base.clone()),
+						left_family.clone().apply_value(rc!(Value::variable(context_length))),
+						right_family.clone().apply_value(rc!(Value::variable(context_length))),
 					),
 			(Lambda { parameter: _, body: left_body }, Lambda { parameter: _, body: right_body }) => self.unify(
 				context_length.suc(),
@@ -271,9 +271,46 @@ impl Metacontext {
 						.clone()
 				)),
 			},
-			Value::Pair { basepoint, fiberpoint } => Term::Pair { basepoint: bx!(self.rename(definee, partial_renaming, additional_bindings, basepoint.as_ref().clone())), fiberpoint: bx!(self.rename(definee, partial_renaming, additional_bindings, fiberpoint.as_ref().clone())) },
-			Value::Pi { parameter, base, family } => Term::Pi { parameter, base: bx!(self.rename(definee, partial_renaming, additional_bindings, base.as_ref().clone())), family: bx!(self.rename(definee, partial_renaming, additional_bindings + 1, family.apply_value(rc!(Value::variable(Level(partial_renaming.hole_arity + additional_bindings)))).as_ref().clone())) },
-			Value::Sigma { parameter, base, family } => Term::Sigma { parameter, base: bx!(self.rename(definee, partial_renaming, additional_bindings, base.as_ref().clone())), family: bx!(self.rename(definee, partial_renaming, additional_bindings + 1, family.apply_value(rc!(Value::variable(Level(partial_renaming.hole_arity + additional_bindings)))).as_ref().clone())) },
+			Value::Pair { basepoint, fiberpoint } => Term::Pair {
+				basepoint: bx!(self.rename(
+					definee,
+					partial_renaming,
+					additional_bindings,
+					basepoint.as_ref().clone()
+				)),
+				fiberpoint: bx!(self.rename(
+					definee,
+					partial_renaming,
+					additional_bindings,
+					fiberpoint.as_ref().clone()
+				)),
+			},
+			Value::Pi { parameter, base, family } => Term::Pi {
+				parameter,
+				base: bx!(self.rename(definee, partial_renaming, additional_bindings, base.as_ref().clone())),
+				family: bx!(self.rename(
+					definee,
+					partial_renaming,
+					additional_bindings + 1,
+					family
+						.apply_value(rc!(Value::variable(Level(partial_renaming.hole_arity + additional_bindings))))
+						.as_ref()
+						.clone()
+				)),
+			},
+			Value::Sigma { parameter, base, family } => Term::Sigma {
+				parameter,
+				base: bx!(self.rename(definee, partial_renaming, additional_bindings, base.as_ref().clone())),
+				family: bx!(self.rename(
+					definee,
+					partial_renaming,
+					additional_bindings + 1,
+					family
+						.apply_value(rc!(Value::variable(Level(partial_renaming.hole_arity + additional_bindings))))
+						.as_ref()
+						.clone()
+				)),
+			},
 			Value::Universe => Term::Universe,
 		}
 	}
@@ -286,7 +323,8 @@ impl Metacontext {
 					return Value::Neutral { head: Head::Metavariable(metavariable), eliminators };
 				};
 
-				//TODO: Apply the spine to the term (with eliminate_spine), then force it again.
+				//self.force(term.as_ref().clone().eliminate_spine(eliminators.into_iter()).as_ref().clone())
+				//TODO: Check if this is good.
 				todo!()
 			}
 			value => value,

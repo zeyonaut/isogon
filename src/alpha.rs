@@ -578,8 +578,8 @@ pub fn is_convertible(context_length: Level, left: Rc<Value>, right: Rc<Value>) 
 			is_convertible(context_length, left_base.clone(), right_base.clone())
 				&& is_convertible(
 					context_length.suc(),
-					left_family.clone().apply_value(left_base.clone()),
-					right_family.clone().apply_value(right_base.clone()),
+					left_family.clone().apply_value(rc!(Value::variable(context_length))),
+					right_family.clone().apply_value(rc!(Value::variable(context_length))),
 				),
 		(
 			Sigma { parameter: _, base: left_base, family: left_family },
@@ -588,8 +588,8 @@ pub fn is_convertible(context_length: Level, left: Rc<Value>, right: Rc<Value>) 
 			is_convertible(context_length, left_base.clone(), right_base.clone())
 				&& is_convertible(
 					context_length.suc(),
-					left_family.clone().apply_value(left_base.clone()),
-					right_family.clone().apply_value(right_base.clone()),
+					left_family.clone().apply_value(rc!(Value::variable(context_length))),
+					right_family.clone().apply_value(rc!(Value::variable(context_length))),
 				),
 		(Universe, Universe) => true,
 		_ => false,

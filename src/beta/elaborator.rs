@@ -115,7 +115,7 @@ pub fn synthesize(
 				None
 			}
 		}),
-		Preterm::Pair { .. } => None, // TODO: infer non-dependent pair?
+		Preterm::Pair { .. } => None,      // TODO: infer non-dependent pair?
 		Preterm::Lambda { .. } => todo!(), // We can infer a lambda by introducing a metavariable for its domain.
 		Preterm::Compute { scrutinee, eliminators: raw_eliminators } => {
 			let (scrutinee, mut total_ty) = synthesize(metacontext, context, *scrutinee)?;
