@@ -15,6 +15,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bpaf"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "565688a36ddfcfc189cc927c94a6b69cc96c9f8a69030151ae8f0ed2b54a2ad3"
+
+[[package]]
 name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -25,6 +31,7 @@ name = "isogon"
 version = "0.1.0"
 dependencies = [
  "bitvec",
+ "bpaf",
  "nom",
 ]
 
