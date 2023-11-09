@@ -10,7 +10,7 @@ use nom::{
 
 use crate::utility::bx;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum StaticPreterm {
 	Variable(String),
 	Lambda { parameter: String, body: Box<Self> },
@@ -22,7 +22,7 @@ pub enum StaticPreterm {
 	Quote(Box<DynamicPreterm>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DynamicPreterm {
 	Variable(String),
 	Lambda { parameter: String, body: Box<Self> },

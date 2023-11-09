@@ -9,8 +9,7 @@ mod utility;
 mod parse;
 use std::str::FromStr;
 
-use bpaf::{choice, construct, short, Parser};
-use parse::*;
+use bpaf::{construct, short, Parser};
 
 enum LanguageOption {
 	Alpha,
@@ -43,12 +42,12 @@ struct Options {
 }
 
 fn main() {
-	let language = short('l').argument::<LanguageOption>("LANGUAGE");
+	let language = short('l').help("Choose language").argument::<LanguageOption>("{a, b, c}");
 	let options: Options = construct!(Options {
 		language,
 		input(construct!([
-			c(short('c').argument::<String>("COMMAND").map(InputOption::Direct)),
-			f(short('f').argument::<String>("FILE").map(InputOption::FilePath)),
+			c(short('c').argument::<String>("\"preterm\"").help("Read input from argument").map(InputOption::Direct)),
+			f(short('f').argument::<String>("PATH").help("Read input from file").map(InputOption::FilePath)),
 		]))
 	})
 	.to_options()
