@@ -9,13 +9,13 @@ use crate::utility::{bx, rc};
 #[derive(Clone, Debug)]
 pub enum StaticTerm {
 	Variable(Index),
-	Lambda { parameter: String, body: Box<Self> },
-	Apply { scrutinee: Box<Self>, argument: Box<Self> },
-	Pi { parameter: String, base: Box<Self>, family: Box<Self> },
 	Let { assignee: String, ty: Box<Self>, argument: Box<Self>, tail: Box<Self> },
-	Universe,
 	Lift(Box<DynamicTerm>),
 	Quote(Box<DynamicTerm>),
+	Universe,
+	Pi { parameter: String, base: Box<Self>, family: Box<Self> },
+	Lambda { parameter: String, body: Box<Self> },
+	Apply { scrutinee: Box<Self>, argument: Box<Self> },
 }
 
 fn write_static_spine(term: &StaticTerm, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -45,15 +45,15 @@ impl Display for StaticTerm {
 		use StaticTerm::*;
 		match self {
 			Variable(Index(index)) => write!(f, "#{index}"),
-			Lambda { parameter, body } => write!(f, "({parameter}) => {body}"),
+			Lambda { parameter, body } => write!(f, "|{parameter}| {body}"),
 			Apply { scrutinee, argument } => {
 				write_static_spine(&scrutinee, f)?;
 				write!(f, " ")?;
 				write_static_atom(&argument, f)
 			}
-			Pi { parameter, base, family } => write!(f, "({parameter} : {base}) -> {family}"),
-			Let { assignee, ty, argument, tail } => write!(f, "@let {assignee} : {ty} = {argument}; {tail}"),
-			Universe => write!(f, "@type"),
+			Pi { parameter, base, family } => write!(f, "|{parameter} : {base}| -> {family}"),
+			Let { assignee, ty, argument, tail } => write!(f, "let {assignee} : {ty} = {argument}; {tail}"),
+			Universe => write!(f, "*"),
 			Lift(liftee) => {
 				write!(f, "^")?;
 				write_dynamic_atom(liftee, f)
@@ -66,12 +66,12 @@ impl Display for StaticTerm {
 #[derive(Clone, Debug)]
 pub enum DynamicTerm {
 	Variable(Index),
+	Let { assignee: String, ty: Box<Self>, argument: Box<Self>, tail: Box<Self> },
+	Splice(Box<StaticTerm>),
+	Universe,
+	Pi { parameter: String, base: Box<Self>, family: Box<Self> },
 	Lambda { parameter: String, body: Box<Self> },
 	Apply { scrutinee: Box<Self>, argument: Box<Self> },
-	Pi { parameter: String, base: Box<Self>, family: Box<Self> },
-	Let { assignee: String, ty: Box<Self>, argument: Box<Self>, tail: Box<Self> },
-	Universe,
-	Splice(Box<StaticTerm>),
 }
 
 fn write_dynamic_spine(term: &DynamicTerm, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -100,15 +100,15 @@ impl Display for DynamicTerm {
 		use DynamicTerm::*;
 		match self {
 			Variable(Index(index)) => write!(f, "#{index}"),
-			Lambda { parameter, body } => write!(f, "({parameter}) => {body}"),
+			Lambda { parameter, body } => write!(f, "|{parameter}| {body}"),
 			Apply { scrutinee, argument } => {
 				write_dynamic_spine(&scrutinee, f)?;
 				write!(f, " ")?;
 				write_dynamic_atom(&argument, f)
 			}
-			Pi { parameter, base, family } => write!(f, "({parameter} : {base}) -> {family}"),
-			Let { assignee, ty, argument, tail } => write!(f, "@let {assignee} : {ty} = {argument}; {tail}"),
-			Universe => write!(f, "@type"),
+			Pi { parameter, base, family } => write!(f, "|{parameter} : {base}| -> {family}"),
+			Let { assignee, ty, argument, tail } => write!(f, "let {assignee} : {ty} = {argument}; {tail}"),
+			Universe => write!(f, "*"),
 			Splice(splicee) => write!(f, "[{splicee}]"),
 		}
 	}

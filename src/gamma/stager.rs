@@ -26,11 +26,11 @@ impl Debug for StaticValue {
 #[derive(Clone, Debug)]
 pub enum DynamicValue {
 	Variable(Level),
-	Function { parameter: Rc<str>, closure: Rc<Self> },
-	Apply { scrutinee: Rc<Self>, argument: Rc<Self> },
-	Pi { parameter: Rc<str>, base: Rc<Self>, family: Rc<Self> },
 	Let { assignee: Rc<str>, ty: Rc<Self>, argument: Rc<Self>, tail: Rc<Self> },
 	Universe,
+	Pi { parameter: Rc<str>, base: Rc<Self>, family: Rc<Self> },
+	Function { parameter: Rc<str>, closure: Rc<Self> },
+	Apply { scrutinee: Rc<Self>, argument: Rc<Self> },
 }
 
 impl DynamicValue {
