@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{iter::Peekable, rc::Rc};
 
 use super::{
 	common::{Index, Metavariable, Name},
@@ -78,6 +78,34 @@ impl Value {
 			},
 			_ => panic!("bad eliminator"),
 		}
+	}
+
+	pub fn eliminate_spine(self, spine: impl Iterator<Item = NeutralEliminator>) -> Rc<Self> {
+		let mut value = rc!(self);
+		let mut spine = spine.peekable();
+		while spine.peek().is_some() {
+			match value.as_ref() {
+				Value::Neutral { head, eliminators } => {
+					let mut eliminators = eliminators.clone();
+					eliminators.extend(spine);
+					value = rc!(Value::Neutral { head: head.clone(), eliminators });
+					break;
+				}
+				Value::Lambda { parameter, body } => {
+					let Some(NeutralEliminator::Apply { argument }) = spine.next() else {
+						panic!("bad eliminator");
+					};
+					value = body.clone().apply_value(argument);
+				}
+				Value::Pair { basepoint, fiberpoint } => match spine.next() {
+					Some(NeutralEliminator::ProjectBase) => value = basepoint.clone(),
+					Some(NeutralEliminator::ProjectFiber) => value = fiberpoint.clone(),
+					_ => panic!("bad eliminator"),
+				},
+				_ => panic!("bad eliminator"),
+			}
+		}
+		value
 	}
 }
 
