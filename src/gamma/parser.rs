@@ -2,7 +2,10 @@ use std::iter::Peekable;
 
 use lasso::{Rodeo, Spur};
 
-use super::lexer::{Lexeme, Lexer};
+use super::{
+	common::Projection,
+	lexer::{Lexeme, Lexer},
+};
 use crate::{gamma::lexer::Token, utility::bx};
 
 pub type Name = Spur;
@@ -28,6 +31,9 @@ pub enum DynamicPreterm {
 	Pi { parameter: Name, base: Box<Self>, family: Box<Self> },
 	Lambda { parameter: Name, body: Box<Self> },
 	Apply { scrutinee: Box<Self>, argument: Box<Self> },
+	Sigma { parameter: Name, base: Box<Self>, family: Box<Self> },
+	Pair { basepoint: Box<Self>, fiberpoint: Box<Self> },
+	Project(Box<Self>, Projection),
 }
 
 pub struct Parser<'s> {
@@ -75,6 +81,10 @@ impl<'s> Parser<'s> {
 		self.interner.get_or_intern(span)
 	}
 
+	pub fn consume(&mut self, token: Token) -> Option<()> {
+		(self.next_lexeme()?.0.token == token).then_some(())
+	}
+
 	pub fn parse_static(&mut self) -> Option<StaticPreterm> {
 		use StaticPreterm::*;
 		use Token::*;
@@ -92,11 +102,11 @@ impl<'s> Parser<'s> {
 							};
 							self.identifier(offset, len)
 						};
-						let Colon = self.next_lexeme()?.0.token else { return None };
+						self.consume(Colon)?;
 						let ty = self.parse_static()?;
-						let Equal = self.next_lexeme()?.0.token else { return None };
+						self.consume(Equal)?;
 						let argument = self.parse_static()?;
-						let Semi = self.next_lexeme()?.0.token else { return None };
+						self.consume(Semi)?;
 						let tail = self.parse_static()?;
 
 						Some(Let { assignee: name, ty: bx!(ty), argument: bx!(argument), tail: bx!(tail) })
@@ -121,8 +131,8 @@ impl<'s> Parser<'s> {
 					Colon => {
 						self.next_lexeme();
 						let base = self.parse_static()?;
-						let Pipe = self.next_lexeme()?.0.token else { return None };
-						let Arrow = self.next_lexeme()?.0.token else { return None };
+						self.consume(Pipe)?;
+						self.consume(Arrow)?;
 						let family = self.parse_static()?;
 						Some(Pi { parameter: name, base: bx!(base), family: bx!(family) })
 					}
@@ -150,11 +160,11 @@ impl<'s> Parser<'s> {
 							};
 							self.identifier(offset, len)
 						};
-						let Colon = self.next_lexeme()?.0.token else { return None };
+						self.consume(Colon)?;
 						let ty = self.parse_dynamic()?;
-						let Equal = self.next_lexeme()?.0.token else { return None };
+						self.consume(Equal)?;
 						let argument = self.parse_dynamic()?;
-						let Semi = self.next_lexeme()?.0.token else { return None };
+						self.consume(Semi)?;
 						let tail = self.parse_dynamic()?;
 
 						Some(Let { assignee: name, ty: bx!(ty), argument: bx!(argument), tail: bx!(tail) })
@@ -167,11 +177,11 @@ impl<'s> Parser<'s> {
 							};
 							self.identifier(offset, len)
 						};
-						let Colon = self.next_lexeme()?.0.token else { return None };
+						self.consume(Colon)?;
 						let ty = self.parse_static()?;
-						let Equal = self.next_lexeme()?.0.token else { return None };
+						self.consume(Equal)?;
 						let argument = self.parse_static()?;
-						let Semi = self.next_lexeme()?.0.token else { return None };
+						self.consume(Semi)?;
 						let tail = self.parse_dynamic()?;
 
 						Some(Splice(bx!(StaticPreterm::Let {
@@ -201,10 +211,18 @@ impl<'s> Parser<'s> {
 					Colon => {
 						self.next_lexeme();
 						let base = self.parse_dynamic()?;
-						let Pipe = self.next_lexeme()?.0.token else { return None };
-						let Arrow = self.next_lexeme()?.0.token else { return None };
-						let family = self.parse_dynamic()?;
-						Some(Pi { parameter: name, base: bx!(base), family: bx!(family) })
+						self.consume(Pipe)?;
+						match self.next_lexeme()?.0.token {
+							Arrow => {
+								let family = self.parse_dynamic()?;
+								Some(Pi { parameter: name, base: bx!(base), family: bx!(family) })
+							}
+							Amp => {
+								let family = self.parse_dynamic()?;
+								Some(Sigma { parameter: name, base: bx!(base), family: bx!(family) })
+							}
+							_ => None,
+						}
 					}
 					_ => None,
 				}
@@ -230,12 +248,31 @@ impl<'s> Parser<'s> {
 		use DynamicPreterm::*;
 		use Token::*;
 		let term = self.parse_dynamic_spine()?;
-		if let Some(Lexeme { token: Arrow, len: _ }) = self.peek_lexeme() {
-			self.next_lexeme();
-			let family = self.parse_dynamic()?;
-			Some(Pi { parameter: self.interner.get_or_intern_static("_"), base: bx!(term), family: bx!(family) })
-		} else {
-			Some(term)
+		match self.peek_lexeme().map(|lexeme| lexeme.token) {
+			Some(Arrow) => {
+				self.next_lexeme();
+				let family = self.parse_dynamic()?;
+				Some(Pi {
+					parameter: self.interner.get_or_intern_static("_"),
+					base: bx!(term),
+					family: bx!(family),
+				})
+			}
+			Some(Amp) => {
+				self.next_lexeme();
+				let family = self.parse_dynamic()?;
+				Some(Sigma {
+					parameter: self.interner.get_or_intern_static("_"),
+					base: bx!(term),
+					family: bx!(family),
+				})
+			}
+			Some(Comma) => {
+				self.next_lexeme();
+				let rest = self.parse_dynamic_atom_headed()?;
+				Some(Pair { basepoint: bx!(term), fiberpoint: bx!(rest) })
+			}
+			_ => Some(term),
 		}
 	}
 
@@ -265,6 +302,10 @@ impl<'s> Parser<'s> {
 					let atom = self.parse_dynamic_atom()?;
 					term = Apply { scrutinee: bx!(term), argument: bx!(atom) };
 				}
+				Token::Project(projection) => {
+					self.next_lexeme();
+					term = DynamicPreterm::Project(bx!(term), projection);
+				}
 				_ => break,
 			}
 		}
@@ -282,16 +323,12 @@ impl<'s> Parser<'s> {
 			}
 			SquareL => {
 				let term = self.parse_dynamic()?;
-				let SquareR = self.next_lexeme()?.0.token else {
-					return None;
-				};
+				self.consume(SquareR)?;
 				Quote(bx!(term))
 			}
 			ParenL => {
 				let term = self.parse_static()?;
-				let ParenR = self.next_lexeme()?.0.token else {
-					return None;
-				};
+				self.consume(ParenR)?;
 				term
 			}
 			Ast => Universe,
@@ -308,16 +345,12 @@ impl<'s> Parser<'s> {
 		let term = match token {
 			SquareL => {
 				let term = self.parse_static()?;
-				let SquareR = self.next_lexeme()?.0.token else {
-					return None;
-				};
+				self.consume(SquareR)?;
 				Splice(bx!(term))
 			}
 			ParenL => {
 				let term = self.parse_dynamic()?;
-				let ParenR = self.next_lexeme()?.0.token else {
-					return None;
-				};
+				self.consume(ParenR)?;
 				term
 			}
 			Ast => Universe,

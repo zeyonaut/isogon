@@ -1,7 +1,7 @@
 use std::{fmt::Debug, rc::Rc};
 
 use super::{
-	common::{Index, Level},
+	common::{Index, Level, Projection},
 	elaborator::{DynamicTerm, StaticTerm},
 	parser::Name,
 };
@@ -32,6 +32,9 @@ pub enum DynamicValue {
 	Pi { parameter: Name, base: Rc<Self>, family: Rc<Self> },
 	Function { parameter: Name, closure: Rc<Self> },
 	Apply { scrutinee: Rc<Self>, argument: Rc<Self> },
+	Sigma { parameter: Name, base: Rc<Self>, family: Rc<Self> },
+	Pair { basepoint: Rc<Self>, fiberpoint: Rc<Self> },
+	Project { scrutinee: Rc<Self>, projection: Projection },
 }
 
 impl DynamicValue {
@@ -46,11 +49,24 @@ impl DynamicValue {
 					DynamicTerm::Variable(*name, Index(context_length - 1 - variable)),
 				Function { parameter, closure } =>
 					DynamicTerm::Lambda { parameter: *parameter, body: bx!(unstage_open(closure, level.suc())) },
+				Pair { basepoint, fiberpoint } => DynamicTerm::Pair {
+					basepoint: bx!(unstage_open(basepoint, level)),
+					fiberpoint: bx!(unstage_open(fiberpoint, level)),
+				},
 				Apply { scrutinee, argument } => DynamicTerm::Apply {
 					scrutinee: bx!(unstage_open(scrutinee, level)),
 					argument: bx!(unstage_open(argument, level)),
 				},
+				Project { scrutinee, projection } => DynamicTerm::Project {
+					scrutinee: bx!(unstage_open(scrutinee, level)),
+					projection: *projection,
+				},
 				Pi { parameter, base, family } => DynamicTerm::Pi {
+					parameter: *parameter,
+					base: bx!(unstage_open(base, level)),
+					family: bx!(unstage_open(family, level.suc())),
+				},
+				Sigma { parameter, base, family } => DynamicTerm::Sigma {
 					parameter: *parameter,
 					base: bx!(unstage_open(base, level)),
 					family: bx!(unstage_open(family, level.suc())),
@@ -146,11 +162,22 @@ pub fn evaluate_dynamic(environment: &Environment, term: DynamicTerm) -> Dynamic
 			parameter,
 			closure: rc!(evaluate_dynamic(&environment.extend_dynamic(parameter), *body)),
 		},
+		DynamicTerm::Pair { basepoint, fiberpoint } => DynamicValue::Pair {
+			basepoint: rc!(evaluate_dynamic(environment, *basepoint)),
+			fiberpoint: rc!(evaluate_dynamic(environment, *fiberpoint)),
+		},
 		DynamicTerm::Apply { scrutinee, argument } => DynamicValue::Apply {
 			scrutinee: rc!(evaluate_dynamic(environment, *scrutinee)),
 			argument: rc!(evaluate_dynamic(environment, *argument)),
 		},
+		DynamicTerm::Project { scrutinee, projection } =>
+			DynamicValue::Project { scrutinee: rc!(evaluate_dynamic(environment, *scrutinee)), projection },
 		DynamicTerm::Pi { parameter, base, family } => DynamicValue::Pi {
+			parameter,
+			base: rc!(evaluate_dynamic(environment, *base)),
+			family: rc!(evaluate_dynamic(&environment.extend_dynamic(parameter), *family)),
+		},
+		DynamicTerm::Sigma { parameter, base, family } => DynamicValue::Sigma {
 			parameter,
 			base: rc!(evaluate_dynamic(environment, *base)),
 			family: rc!(evaluate_dynamic(&environment.extend_dynamic(parameter), *family)),

@@ -3,7 +3,7 @@ use std::{fmt::Write, rc::Rc};
 use lasso::Rodeo;
 
 use super::{
-	common::{Index, Level},
+	common::{Index, Level, Projection},
 	parser::{DynamicPreterm, Name, StaticPreterm},
 };
 use crate::utility::{bx, rc};
@@ -33,9 +33,9 @@ fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) ->
 	match term {
 		Variable(..) | Universe | Lift(_) | Quote(_) => write_static(term, f, interner),
 		Lambda { .. } | Apply { .. } | Pi { .. } | Let { .. } => {
-			write!(f, "{{")?;
+			write!(f, "(")?;
 			write_static(term, f, interner)?;
-			write!(f, "}}")
+			write!(f, ")")
 		}
 	}
 }
@@ -95,12 +95,15 @@ pub enum DynamicTerm {
 	Pi { parameter: Name, base: Box<Self>, family: Box<Self> },
 	Lambda { parameter: Name, body: Box<Self> },
 	Apply { scrutinee: Box<Self>, argument: Box<Self> },
+	Sigma { parameter: Name, base: Box<Self>, family: Box<Self> },
+	Pair { basepoint: Box<Self>, fiberpoint: Box<Self> },
+	Project { scrutinee: Box<Self>, projection: Projection },
 }
 
 fn write_dynamic_spine(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use DynamicTerm::*;
 	match term {
-		Apply { .. } => write_dynamic(term, f, interner),
+		Apply { .. } | Project { .. } => write_dynamic(term, f, interner),
 		_ => write_dynamic_atom(term, f, interner),
 	}
 }
@@ -109,10 +112,10 @@ fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) 
 	use DynamicTerm::*;
 	match term {
 		Variable(..) | Universe | Splice(_) => write_dynamic(term, f, interner),
-		Lambda { .. } | Apply { .. } | Pi { .. } | Let { .. } => {
-			write!(f, "{{")?;
+		Lambda { .. } | Pair { .. } | Apply { .. } | Project { .. } | Pi { .. } | Sigma { .. } | Let { .. } => {
+			write!(f, "(")?;
 			write_dynamic(term, f, interner)?;
-			write!(f, "}}")
+			write!(f, ")")
 		}
 	}
 }
@@ -125,10 +128,22 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write!(f, "|{}| ", interner.resolve(parameter))?;
 			write_dynamic(body, f, interner)
 		}
+		Pair { basepoint, fiberpoint } => {
+			write_dynamic_spine(basepoint, f, interner)?;
+			write!(f, ", ")?;
+			write_dynamic_spine(fiberpoint, f, interner)
+		}
 		Apply { scrutinee, argument } => {
 			write_dynamic_spine(scrutinee, f, interner)?;
 			write!(f, " ")?;
 			write_dynamic_atom(argument, f, interner)
+		}
+		Project { scrutinee, projection } => {
+			write_dynamic_spine(scrutinee, f, interner)?;
+			match projection {
+				Projection::Base => write!(f, "/."),
+				Projection::Fiber => write!(f, "/!"),
+			}
 		}
 		Pi { parameter, base, family } => {
 			let parameter = interner.resolve(parameter);
@@ -137,8 +152,20 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 				write_dynamic(base, f, interner)?;
 				write!(f, "| -> ")?;
 			} else {
-				write_dynamic(base, f, interner)?;
+				write_dynamic_spine(base, f, interner)?;
 				write!(f, " -> ")?;
+			}
+			write_dynamic(family, f, interner)
+		}
+		Sigma { parameter, base, family } => {
+			let parameter = interner.resolve(parameter);
+			if parameter != "_" {
+				write!(f, "|{parameter} : ")?;
+				write_dynamic(base, f, interner)?;
+				write!(f, "| & ")?;
+			} else {
+				write_dynamic_spine(base, f, interner)?;
+				write!(f, " & ")?;
 			}
 			write_dynamic(family, f, interner)
 		}
@@ -162,7 +189,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 #[derive(Clone)]
 pub enum StaticNeutral {
 	Variable(Name, Level),
-	Apply { callee: Rc<Self>, argument: Rc<StaticValue> },
+	Apply(Rc<Self>, Rc<StaticValue>),
 }
 
 #[derive(Clone)]
@@ -178,7 +205,8 @@ pub enum StaticValue {
 #[derive(Clone)]
 pub enum DynamicNeutral {
 	Variable(Name, Level),
-	Apply { callee: Rc<Self>, argument: Rc<DynamicValue> },
+	Apply(Rc<Self>, Rc<DynamicValue>),
+	Project(Rc<Self>, Projection),
 	Splice(StaticNeutral),
 }
 
@@ -188,6 +216,8 @@ pub enum DynamicValue {
 	Universe,
 	IndexedProduct(Name, Rc<Self>, Rc<dyn Fn(Self) -> Self>),
 	Function(Name, Rc<dyn Fn(Self) -> Self>),
+	IndexedSum(Name, Rc<Self>, Rc<dyn Fn(Self) -> Self>),
+	Pair(/* basepoint */ Rc<Self>, /* fiberpoint */ Rc<Self>),
 }
 
 impl DynamicValue {
@@ -271,7 +301,7 @@ fn reify_static_open_neutral(neutral: &StaticNeutral, level @ Level(context_leng
 	use StaticNeutral::*;
 	match neutral {
 		Variable(name, Level(level)) => StaticTerm::Variable(*name, Index(context_length - 1 - level)),
-		Apply { callee, argument } => StaticTerm::Apply {
+		Apply(callee, argument) => StaticTerm::Apply {
 			scrutinee: bx!(reify_static_open_neutral(callee, level)),
 			argument: bx!(reify_static_open_value(argument, level)),
 		},
@@ -307,9 +337,13 @@ fn reify_dynamic_open_neutral(neutral: &DynamicNeutral, level @ Level(context_le
 	use DynamicNeutral::*;
 	match neutral {
 		Variable(name, Level(level)) => DynamicTerm::Variable(*name, Index(context_length - 1 - level)),
-		Apply { callee, argument } => DynamicTerm::Apply {
+		Apply(callee, argument) => DynamicTerm::Apply {
 			scrutinee: bx!(reify_dynamic_open_neutral(callee, level)),
 			argument: bx!(reify_dynamic_open_value(argument, level)),
+		},
+		Project(scrutinee, projection) => DynamicTerm::Project {
+			scrutinee: bx!(reify_dynamic_open_neutral(scrutinee, level)),
+			projection: *projection,
 		},
 		Splice(splicee) => DynamicTerm::Splice(bx!(reify_static_open_neutral(splicee, level))),
 	}
@@ -334,6 +368,18 @@ fn reify_dynamic_open_value(value: &DynamicValue, level: Level) -> DynamicTerm {
 				&function(DynamicValue::Neutral(DynamicNeutral::Variable(*name, level))),
 				level.suc()
 			)),
+		},
+		IndexedSum(name, base, family) => DynamicTerm::Sigma {
+			parameter: *name,
+			base: bx!(reify_dynamic_open_value(base, level)),
+			family: bx!(reify_dynamic_open_value(
+				&family(DynamicValue::Neutral(DynamicNeutral::Variable(*name, level))),
+				level.suc()
+			)),
+		},
+		Pair(basepoint, fiberpoint) => DynamicTerm::Pair {
+			basepoint: bx!(reify_dynamic_open_value(basepoint, level)),
+			fiberpoint: bx!(reify_dynamic_open_value(fiberpoint, level)),
 		},
 	}
 }
@@ -463,13 +509,27 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 				}
 			})
 			.unwrap(),
-		Lambda { .. } => panic!(),
+		Lambda { .. } | Pair { .. } => panic!(),
 		Apply { scrutinee, argument } => {
 			let (scrutinee, scrutinee_ty) = synthesize_dynamic(context, *scrutinee);
 			let DynamicValue::IndexedProduct(_, base, family) = scrutinee_ty else { panic!() };
 			let argument = verify_dynamic(context, *argument, (*base).clone());
 			let argument_value = evaluate_dynamic(&context.environment, argument.clone());
 			(DynamicTerm::Apply { scrutinee: bx!(scrutinee), argument: bx!(argument) }, family(argument_value))
+		}
+		Project(scrutinee, projection) => {
+			let (scrutinee, scrutinee_ty) = synthesize_dynamic(context, *scrutinee);
+			let DynamicValue::IndexedSum(_, base, family) = scrutinee_ty else { panic!() };
+			match projection {
+				Projection::Base =>
+					(DynamicTerm::Project { scrutinee: bx!(scrutinee), projection }, base.as_ref().clone()),
+				Projection::Fiber => {
+					let basepoint =
+						DynamicTerm::Project { scrutinee: bx!(scrutinee.clone()), projection: Projection::Base };
+					let basepoint = evaluate_dynamic(&context.environment, basepoint);
+					(DynamicTerm::Project { scrutinee: bx!(scrutinee), projection }, family(basepoint))
+				}
+			}
 		}
 		Universe => (DynamicTerm::Universe, DynamicValue::Universe),
 		Pi { parameter, base, family } => {
@@ -481,6 +541,16 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 				DynamicValue::Universe,
 			);
 			(DynamicTerm::Pi { parameter, base: bx!(base), family: bx!(family) }, DynamicValue::Universe)
+		}
+		Sigma { parameter, base, family } => {
+			let base = verify_dynamic(context, *base, DynamicValue::Universe);
+			let base_value = evaluate_dynamic(&context.environment, base.clone());
+			let family = verify_dynamic(
+				&context.clone().bind_dynamic(parameter, base_value),
+				*family,
+				DynamicValue::Universe,
+			);
+			(DynamicTerm::Sigma { parameter, base: bx!(base), family: bx!(family) }, DynamicValue::Universe)
 		}
 		Let { assignee, ty, argument, tail } => {
 			let ty = verify_dynamic(context, *ty, DynamicValue::Universe);
@@ -511,6 +581,12 @@ pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue)
 				family(base.as_ref().clone()),
 			);
 			DynamicTerm::Lambda { parameter, body: bx!(body) }
+		}
+		(Pair { basepoint, fiberpoint }, DynamicValue::IndexedSum(_, base, family)) => {
+			let basepoint = verify_dynamic(context, *basepoint, base.as_ref().clone());
+			let basepoint_value = evaluate_dynamic(&context.environment, basepoint.clone());
+			let fiberpoint = verify_dynamic(context, *fiberpoint, family(basepoint_value));
+			DynamicTerm::Pair { basepoint: bx!(basepoint), fiberpoint: bx!(fiberpoint) }
 		}
 		(Let { assignee, ty, argument, tail }, _) => {
 			let ty = verify_dynamic(context, *ty, DynamicValue::Universe);
@@ -543,20 +619,19 @@ fn evaluate_static(environment: &Environment, term: StaticTerm) -> StaticValue {
 	use StaticTerm::*;
 	match term {
 		Variable(_, index) => environment.lookup_static(index),
-		Lambda { parameter, body, .. } => {
-			let environment = environment.clone();
-			let body = *body;
-			StaticValue::Function(
-				parameter,
-				rc!(move |value| { evaluate_static(&environment.extend(Value::Static(value)), body.clone()) }),
-			)
-		}
+		Lambda { parameter, body, .. } => StaticValue::Function(
+			parameter,
+			rc!({
+				let environment = environment.clone();
+				move |value| evaluate_static(&environment.extend(Value::Static(value)), *body.clone())
+			}),
+		),
 		Apply { scrutinee, argument } => {
 			let argument = evaluate_static(environment, *argument);
 			match evaluate_static(environment, *scrutinee) {
 				StaticValue::Function(_, closure) => closure(argument),
 				StaticValue::Neutral(neutral) =>
-					StaticValue::Neutral(StaticNeutral::Apply { callee: rc!(neutral), argument: rc!(argument) }),
+					StaticValue::Neutral(StaticNeutral::Apply(rc!(neutral), rc!(argument))),
 				_ => panic!(),
 			}
 		}
@@ -577,34 +652,57 @@ fn evaluate_static(environment: &Environment, term: StaticTerm) -> StaticValue {
 	}
 }
 
+pub fn evaluate(term: DynamicTerm) -> DynamicValue {
+	evaluate_dynamic(&Environment(Vec::new()), term)
+}
+
 fn evaluate_dynamic(environment: &Environment, term: DynamicTerm) -> DynamicValue {
 	use DynamicTerm::*;
 	match term {
 		Variable(_, index) => environment.lookup_dynamic(index),
-		Lambda { parameter, body, .. } => {
-			let environment = environment.clone();
-			let body = *body;
-			DynamicValue::Function(
-				parameter,
-				Rc::new(move |value| evaluate_dynamic(&environment.extend(Value::Dynamic(value)), body.clone())),
-			)
-		}
+		Lambda { parameter, body, .. } => DynamicValue::Function(
+			parameter,
+			rc!({
+				let environment = environment.clone();
+				move |value| evaluate_dynamic(&environment.extend(Value::Dynamic(value)), *body.clone())
+			}),
+		),
+		Pair { basepoint, fiberpoint } => DynamicValue::Pair(
+			rc!(evaluate_dynamic(environment, *basepoint)),
+			rc!(evaluate_dynamic(environment, *fiberpoint)),
+		),
 		Apply { scrutinee, argument } => {
 			let argument = evaluate_dynamic(environment, *argument);
 			match evaluate_dynamic(environment, *scrutinee) {
 				DynamicValue::Function(_, closure) => closure(argument),
 				DynamicValue::Neutral(neutral) =>
-					DynamicValue::Neutral(DynamicNeutral::Apply { callee: rc!(neutral), argument: rc!(argument) }),
+					DynamicValue::Neutral(DynamicNeutral::Apply(rc!(neutral), rc!(argument))),
 				_ => panic!(),
 			}
 		}
+		Project { scrutinee, projection } => match evaluate_dynamic(environment, *scrutinee) {
+			DynamicValue::Pair(basepoint, fiberpoint) => match projection {
+				Projection::Base => basepoint.as_ref().clone(),
+				Projection::Fiber => fiberpoint.as_ref().clone(),
+			},
+			DynamicValue::Neutral(neutral) =>
+				DynamicValue::Neutral(DynamicNeutral::Project(rc!(neutral), projection)),
+			_ => panic!(),
+		},
 		Pi { parameter, base, family, .. } => DynamicValue::IndexedProduct(
 			parameter,
 			rc!(evaluate_dynamic(environment, *base)),
 			rc!({
 				let environment = environment.clone();
-				let family = *family;
-				move |value| evaluate_dynamic(&environment.extend(Value::Dynamic(value)), family.clone())
+				move |value| evaluate_dynamic(&environment.extend(Value::Dynamic(value)), *family.clone())
+			}),
+		),
+		Sigma { parameter, base, family, .. } => DynamicValue::IndexedSum(
+			parameter,
+			rc!(evaluate_dynamic(environment, *base)),
+			rc!({
+				let environment = environment.clone();
+				move |value| evaluate_dynamic(&environment.extend(Value::Dynamic(value)), *family.clone())
 			}),
 		),
 		Let { argument, tail, .. } => evaluate_dynamic(
@@ -621,33 +719,28 @@ fn evaluate_dynamic(environment: &Environment, term: DynamicTerm) -> DynamicValu
 }
 
 pub fn is_convertible_static(context_length: Level, left: &StaticValue, right: &StaticValue) -> bool {
+	use StaticValue::*;
 	match (left, right) {
-		(StaticValue::Universe, StaticValue::Universe) => true,
-		(StaticValue::Lift(left), StaticValue::Lift(right)) =>
-			is_convertible_dynamic(context_length, left, right),
-		(StaticValue::Quote(left), StaticValue::Quote(right)) =>
-			is_convertible_dynamic(context_length, left, right),
-		(StaticValue::Neutral(left), StaticValue::Neutral(right)) =>
-			is_convertible_static_neutral(context_length, left, right),
-		(StaticValue::Function(lp, left), StaticValue::Function(rp, right)) => is_convertible_static(
+		(Universe, Universe) => true,
+		(Lift(left), Lift(right)) => is_convertible_dynamic(context_length, left, right),
+		(Quote(left), Quote(right)) => is_convertible_dynamic(context_length, left, right),
+		(Neutral(left), Neutral(right)) => is_convertible_static_neutral(context_length, left, right),
+		(Function(lp, left), Function(rp, right)) => is_convertible_static(
 			context_length.suc(),
 			&left(StaticValue::Neutral(StaticNeutral::Variable(*lp, context_length))),
 			&right(StaticValue::Neutral(StaticNeutral::Variable(*rp, context_length))),
 		),
-		(left @ StaticValue::Neutral(_), StaticValue::Function(rp, right)) => is_convertible_static(
+		(left @ Neutral(_), Function(rp, right)) => is_convertible_static(
 			context_length.suc(),
 			left,
 			&right(StaticValue::Neutral(StaticNeutral::Variable(*rp, context_length))),
 		),
-		(StaticValue::Function(lp, left), right @ StaticValue::Neutral(_)) => is_convertible_static(
+		(Function(lp, left), right @ Neutral(_)) => is_convertible_static(
 			context_length.suc(),
 			&left(StaticValue::Neutral(StaticNeutral::Variable(*lp, context_length))),
 			right,
 		),
-		(
-			StaticValue::IndexedProduct(lp, left_base, left_family),
-			StaticValue::IndexedProduct(rp, right_base, right_family),
-		) =>
+		(IndexedProduct(lp, left_base, left_family), IndexedProduct(rp, right_base, right_family)) =>
 			is_convertible_static(context_length, left_base, right_base)
 				&& is_convertible_static(
 					context_length.suc(),
@@ -663,12 +756,10 @@ pub fn is_convertible_static_neutral(
 	left: &StaticNeutral,
 	right: &StaticNeutral,
 ) -> bool {
+	use StaticNeutral::*;
 	match (left, right) {
-		(StaticNeutral::Variable(_, left), StaticNeutral::Variable(_, right)) => left == right,
-		(
-			StaticNeutral::Apply { callee: left, argument: left_argument },
-			StaticNeutral::Apply { callee: right, argument: right_argument },
-		) =>
+		(Variable(_, left), Variable(_, right)) => left == right,
+		(Apply(left, left_argument), Apply(right, right_argument)) =>
 			is_convertible_static_neutral(context_length, left, right)
 				&& is_convertible_static(context_length, left_argument.as_ref(), right_argument.as_ref()),
 		_ => false,
@@ -676,29 +767,49 @@ pub fn is_convertible_static_neutral(
 }
 
 pub fn is_convertible_dynamic(context_length: Level, left: &DynamicValue, right: &DynamicValue) -> bool {
+	use DynamicValue::*;
 	match (left, right) {
-		(DynamicValue::Universe, DynamicValue::Universe) => true,
-		(DynamicValue::Neutral(left), DynamicValue::Neutral(right)) =>
-			is_convertible_dynamic_neutral(context_length, left, right),
-		(DynamicValue::Function(lp, left), DynamicValue::Function(rp, right)) => is_convertible_dynamic(
+		(Universe, Universe) => true,
+		(Neutral(left), Neutral(right)) => is_convertible_dynamic_neutral(context_length, left, right),
+		(Function(lp, left), Function(rp, right)) => is_convertible_dynamic(
 			context_length.suc(),
 			&left(DynamicValue::Neutral(DynamicNeutral::Variable(*lp, context_length))),
 			&right(DynamicValue::Neutral(DynamicNeutral::Variable(*rp, context_length))),
 		),
-		(left @ DynamicValue::Neutral(_), DynamicValue::Function(rp, right)) => is_convertible_dynamic(
+		(left @ Neutral(_), Function(rp, right)) => is_convertible_dynamic(
 			context_length.suc(),
 			left,
 			&right(DynamicValue::Neutral(DynamicNeutral::Variable(*rp, context_length))),
 		),
-		(DynamicValue::Function(lp, left), right @ DynamicValue::Neutral(_)) => is_convertible_dynamic(
+		(Function(lp, left), right @ Neutral(_)) => is_convertible_dynamic(
 			context_length.suc(),
 			&left(DynamicValue::Neutral(DynamicNeutral::Variable(*lp, context_length))),
 			right,
 		),
-		(
-			DynamicValue::IndexedProduct(lp, left_base, left_family),
-			DynamicValue::IndexedProduct(rp, right_base, right_family),
-		) =>
+		(Pair(left_bp, left_fp), Pair(right_bp, right_fp)) =>
+			is_convertible_dynamic(context_length, left_bp, right_bp)
+				&& is_convertible_dynamic(context_length, left_fp, right_fp),
+		(Neutral(left), Pair(right_bp, right_fp)) =>
+			is_convertible_dynamic(
+				context_length,
+				&Neutral(DynamicNeutral::Project(rc!(left.clone()), Projection::Base)),
+				right_bp,
+			) && is_convertible_dynamic(
+				context_length,
+				&Neutral(DynamicNeutral::Project(rc!(left.clone()), Projection::Fiber)),
+				right_fp,
+			),
+		(Pair(left_bp, left_fp), Neutral(right)) =>
+			is_convertible_dynamic(
+				context_length,
+				left_bp,
+				&Neutral(DynamicNeutral::Project(rc!(right.clone()), Projection::Base)),
+			) && is_convertible_dynamic(
+				context_length,
+				left_fp,
+				&Neutral(DynamicNeutral::Project(rc!(right.clone()), Projection::Fiber)),
+			),
+		(IndexedProduct(lp, left_base, left_family), IndexedProduct(rp, right_base, right_family)) =>
 			is_convertible_dynamic(context_length, left_base, right_base)
 				&& is_convertible_dynamic(
 					context_length.suc(),
@@ -714,16 +825,15 @@ pub fn is_convertible_dynamic_neutral(
 	left: &DynamicNeutral,
 	right: &DynamicNeutral,
 ) -> bool {
+	use DynamicNeutral::*;
 	match (left, right) {
-		(DynamicNeutral::Variable(_, left), DynamicNeutral::Variable(_, right)) => left == right,
-		(
-			DynamicNeutral::Apply { callee: left, argument: left_argument },
-			DynamicNeutral::Apply { callee: right, argument: right_argument },
-		) =>
+		(Variable(_, left), Variable(_, right)) => left == right,
+		(Apply(left, left_argument), Apply(right, right_argument)) =>
 			is_convertible_dynamic_neutral(context_length, left, right)
 				&& is_convertible_dynamic(context_length, left_argument.as_ref(), right_argument.as_ref()),
-		(DynamicNeutral::Splice(left), DynamicNeutral::Splice(right)) =>
-			is_convertible_static_neutral(context_length, left, right),
+		(Project(left, left_projection), Project(right, right_projection)) =>
+			left_projection == right_projection && is_convertible_dynamic_neutral(context_length, left, right),
+		(Splice(left), Splice(right)) => is_convertible_static_neutral(context_length, left, right),
 		_ => false,
 	}
 }

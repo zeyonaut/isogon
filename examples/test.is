@@ -1,5 +1,7 @@
-let A : * = * -> *;
+let A : * = |PA : *| -> PA;
 def B : '* -> '* = |T| [A -> [T]];
-let C : * = *;
+let C : * = |PC : *| & PC;
+let D : * = * & *;
+let x : |T : *| & * -> * -> * = *, (|T| |K| A & T & K);
 
-[B [A -> C]]
+[B [x/! (x/.) C]]

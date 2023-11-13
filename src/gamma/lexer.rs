@@ -1,12 +1,17 @@
 use std::str::Chars;
 
+use super::common::Projection;
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Token {
 	Whitespace,
 	Identifier,
+	Project(Projection),
+	Amp,
 	Pipe,
 	Colon,
 	Semi,
+	Comma,
 	Equal,
 	ParenL,
 	ParenR,
@@ -73,9 +78,16 @@ impl<'s> Iterator for Lexer<'s> {
 				}
 				Identifier
 			}
+			'/' => match self.next_char()? {
+				'.' => Project(Projection::Base),
+				'!' => Project(Projection::Fiber),
+				_ => panic!("unrecognized character"),
+			},
+			'&' => Amp,
 			'|' => Pipe,
 			':' => Colon,
 			';' => Semi,
+			',' => Comma,
 			'=' => Equal,
 			'(' => ParenL,
 			')' => ParenR,
