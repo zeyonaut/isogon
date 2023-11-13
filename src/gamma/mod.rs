@@ -1,17 +1,31 @@
-use crate::gamma::{elaborator::elaborate_dynamic_closed, stager::stage};
+use lasso::Rodeo;
+
+use self::elaborator::DynamicTerm;
+use crate::gamma::{
+	elaborator::{elaborate_dynamic_closed, write_dynamic},
+	parser::Parser,
+	stager::stage,
+};
 
 mod common;
 mod elaborator;
+mod lexer;
 mod parser;
 mod stager;
 
-pub fn run(line: &str) {
-	let ("", term) = parser::parse_dynamic_eof(&line).unwrap() else {
-		panic!("parsing completed before end of input")
-	};
+fn pretty_print(term: &DynamicTerm, interner: &Rodeo) -> String {
+	let mut s = String::new();
+	write_dynamic(term, &mut s, interner).unwrap();
+	s
+}
+
+pub fn run(source: &str) {
+	let mut parser = Parser::new(source);
+	let Some(term) = parser.parse_dynamic() else { panic!() };
 	let (term, ty) = elaborate_dynamic_closed(term);
-	println!("elaborated term: {}", term);
-	println!("normalized type: {}", ty.reify());
+
+	println!("elaborated term: {}", pretty_print(&term, &parser.interner));
+	println!("normalized type: {}", pretty_print(&ty.reify(), &parser.interner));
 	let value = stage(term);
-	println!("staged term: {}", value.unstage());
+	println!("staged term: {}", pretty_print(&value.unstage(), &parser.interner));
 }

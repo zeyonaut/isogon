@@ -3,6 +3,7 @@ use std::{fmt::Debug, rc::Rc};
 use super::{
 	common::{Index, Level},
 	elaborator::{DynamicTerm, StaticTerm},
+	parser::Name,
 };
 use crate::utility::{bx, rc};
 
@@ -25,11 +26,11 @@ impl Debug for StaticValue {
 
 #[derive(Clone, Debug)]
 pub enum DynamicValue {
-	Variable(Level),
-	Let { assignee: Rc<str>, ty: Rc<Self>, argument: Rc<Self>, tail: Rc<Self> },
+	Variable(Name, Level),
+	Let { assignee: Name, ty: Rc<Self>, argument: Rc<Self>, tail: Rc<Self> },
 	Universe,
-	Pi { parameter: Rc<str>, base: Rc<Self>, family: Rc<Self> },
-	Function { parameter: Rc<str>, closure: Rc<Self> },
+	Pi { parameter: Name, base: Rc<Self>, family: Rc<Self> },
+	Function { parameter: Name, closure: Rc<Self> },
 	Apply { scrutinee: Rc<Self>, argument: Rc<Self> },
 }
 
@@ -41,22 +42,21 @@ impl DynamicValue {
 		) -> super::elaborator::DynamicTerm {
 			use DynamicValue::*;
 			match value {
-				Variable(Level(variable)) => DynamicTerm::Variable(Index(context_length - 1 - variable)),
-				Function { parameter, closure } => DynamicTerm::Lambda {
-					parameter: parameter.to_string(),
-					body: bx!(unstage_open(&closure, level.suc())),
-				},
+				Variable(name, Level(variable)) =>
+					DynamicTerm::Variable(*name, Index(context_length - 1 - variable)),
+				Function { parameter, closure } =>
+					DynamicTerm::Lambda { parameter: *parameter, body: bx!(unstage_open(closure, level.suc())) },
 				Apply { scrutinee, argument } => DynamicTerm::Apply {
 					scrutinee: bx!(unstage_open(scrutinee, level)),
 					argument: bx!(unstage_open(argument, level)),
 				},
 				Pi { parameter, base, family } => DynamicTerm::Pi {
-					parameter: parameter.to_string(),
+					parameter: *parameter,
 					base: bx!(unstage_open(base, level)),
 					family: bx!(unstage_open(family, level.suc())),
 				},
 				Let { assignee, ty, argument, tail } => DynamicTerm::Let {
-					assignee: assignee.to_string(),
+					assignee: *assignee,
 					ty: bx!(unstage_open(ty, level)),
 					argument: bx!(unstage_open(argument, level)),
 					tail: bx!(unstage_open(tail, level.suc())),
@@ -72,7 +72,7 @@ impl DynamicValue {
 #[derive(Clone, Debug)]
 pub enum Value {
 	Static(StaticValue),
-	Dynamic(Level),
+	Dynamic(Name, Level),
 }
 
 #[derive(Clone)]
@@ -91,8 +91,8 @@ impl Environment {
 		value.clone()
 	}
 	pub fn lookup_dynamic(&self, Index(i): Index) -> DynamicValue {
-		let Some(Value::Dynamic(level)) = self.values.get(self.values.len() - 1 - i) else { panic!() };
-		DynamicValue::Variable(*level)
+		let Some(Value::Dynamic(name, level)) = self.values.get(self.values.len() - 1 - i) else { panic!() };
+		DynamicValue::Variable(*name, *level)
 	}
 
 	#[must_use]
@@ -103,9 +103,9 @@ impl Environment {
 	}
 
 	#[must_use]
-	pub fn extend_dynamic(&self) -> Self {
+	pub fn extend_dynamic(&self, name: Name) -> Self {
 		let mut environment = self.clone();
-		environment.values.push(Value::Dynamic(self.dynamic_context_length));
+		environment.values.push(Value::Dynamic(name, self.dynamic_context_length));
 		environment.dynamic_context_length = environment.dynamic_context_length.suc();
 		environment
 	}
@@ -113,7 +113,7 @@ impl Environment {
 
 pub fn evaluate_static(environment: &Environment, term: StaticTerm) -> StaticValue {
 	match term {
-		StaticTerm::Variable(index) => environment.lookup_static(index),
+		StaticTerm::Variable(_, index) => environment.lookup_static(index),
 		StaticTerm::Lambda { body, .. } => {
 			let environment = environment.clone();
 			let body = *body;
@@ -141,28 +141,28 @@ pub fn stage(term: DynamicTerm) -> DynamicValue {
 
 pub fn evaluate_dynamic(environment: &Environment, term: DynamicTerm) -> DynamicValue {
 	match term {
-		DynamicTerm::Variable(index) => environment.lookup_dynamic(index),
+		DynamicTerm::Variable(_, index) => environment.lookup_dynamic(index),
 		DynamicTerm::Lambda { parameter, body } => DynamicValue::Function {
-			parameter: parameter.into(),
-			closure: rc!(evaluate_dynamic(&environment.extend_dynamic(), *body)),
+			parameter,
+			closure: rc!(evaluate_dynamic(&environment.extend_dynamic(parameter), *body)),
 		},
 		DynamicTerm::Apply { scrutinee, argument } => DynamicValue::Apply {
 			scrutinee: rc!(evaluate_dynamic(environment, *scrutinee)),
 			argument: rc!(evaluate_dynamic(environment, *argument)),
 		},
 		DynamicTerm::Pi { parameter, base, family } => DynamicValue::Pi {
-			parameter: parameter.into(),
+			parameter,
 			base: rc!(evaluate_dynamic(environment, *base)),
-			family: rc!(evaluate_dynamic(&environment.extend_dynamic(), *family)),
+			family: rc!(evaluate_dynamic(&environment.extend_dynamic(parameter), *family)),
 		},
 		DynamicTerm::Let { assignee, ty, argument, tail } => {
 			let ty = evaluate_dynamic(environment, *ty);
 			let argument = evaluate_dynamic(environment, *argument);
 			DynamicValue::Let {
-				assignee: assignee.into(),
+				assignee,
 				ty: rc!(ty),
 				argument: rc!(argument.clone()),
-				tail: rc!(evaluate_dynamic(&environment.extend_dynamic(), *tail)),
+				tail: rc!(evaluate_dynamic(&environment.extend_dynamic(assignee), *tail)),
 			}
 		}
 		DynamicTerm::Universe => DynamicValue::Universe,

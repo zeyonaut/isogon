@@ -1,256 +1,329 @@
-use nom::{
-	branch::alt,
-	bytes::complete::tag,
-	character::complete::{alpha1, alphanumeric1, multispace0},
-	combinator::recognize,
-	multi::many0,
-	sequence::{delimited, pair, preceded, terminated},
-	IResult,
-};
+use std::iter::Peekable;
 
-use crate::utility::bx;
+use lasso::{Rodeo, Spur};
+
+use super::lexer::{Lexeme, Lexer};
+use crate::{gamma::lexer::Token, utility::bx};
+
+pub type Name = Spur;
 
 #[derive(Debug, Clone)]
 pub enum StaticPreterm {
-	Variable(String),
-	Let { assignee: String, ty: Box<Self>, argument: Box<Self>, tail: Box<Self> },
+	Variable(Name),
+	Let { assignee: Name, ty: Box<Self>, argument: Box<Self>, tail: Box<Self> },
 	Lift(Box<DynamicPreterm>),
 	Quote(Box<DynamicPreterm>),
 	Universe,
-	Pi { parameter: String, base: Box<Self>, family: Box<Self> },
-	Lambda { parameter: String, body: Box<Self> },
+	Pi { parameter: Name, base: Box<Self>, family: Box<Self> },
+	Lambda { parameter: Name, body: Box<Self> },
 	Apply { scrutinee: Box<Self>, argument: Box<Self> },
 }
 
 #[derive(Debug, Clone)]
 pub enum DynamicPreterm {
-	Variable(String),
-	Let { assignee: String, ty: Box<Self>, argument: Box<Self>, tail: Box<Self> },
+	Variable(Name),
+	Let { assignee: Name, ty: Box<Self>, argument: Box<Self>, tail: Box<Self> },
 	Splice(Box<StaticPreterm>),
 	Universe,
-	Pi { parameter: String, base: Box<Self>, family: Box<Self> },
-	Lambda { parameter: String, body: Box<Self> },
+	Pi { parameter: Name, base: Box<Self>, family: Box<Self> },
+	Lambda { parameter: Name, body: Box<Self> },
 	Apply { scrutinee: Box<Self>, argument: Box<Self> },
 }
 
-pub fn parse_dynamic_eof(input: &str) -> IResult<&str, DynamicPreterm> {
-	terminated(parse_dynamic, multispace0)(input)
+pub struct Parser<'s> {
+	source: &'s str,
+	offset: usize,
+	lexer: Peekable<Lexer<'s>>,
+	pub interner: Rodeo,
 }
 
-fn parse_static(input: &str) -> IResult<&str, StaticPreterm> {
-	alt((parse_static_let, parse_static_explicit_pi, parse_static_lambda, parse_static_atomic))(input)
-}
-
-fn parse_dynamic(input: &str) -> IResult<&str, DynamicPreterm> {
-	alt((
-		parse_dynamic_let::<true>,
-		parse_dynamic_let::<false>,
-		parse_dynamic_lambda,
-		parse_dynamic_explicit_pi,
-		parse_dynamic_atomic,
-	))(input)
-}
-
-fn parse_static_lambda(input: &str) -> IResult<&str, StaticPreterm> {
-	let (input, parameter) = delimited(sym("|"), parse_identifier, sym("|"))(input)?;
-	let (input, body) = parse_static(input)?;
-	Ok((input, StaticPreterm::Lambda { parameter: parameter.to_string(), body: bx!(body) }))
-}
-
-fn parse_dynamic_lambda(input: &str) -> IResult<&str, DynamicPreterm> {
-	let (input, parameter) = delimited(sym("|"), parse_identifier, sym("|"))(input)?;
-	let (input, body) = parse_dynamic(input)?;
-	Ok((input, DynamicPreterm::Lambda { parameter: parameter.to_string(), body: bx!(body) }))
-}
-
-fn parse_static_let(input: &str) -> IResult<&str, StaticPreterm> {
-	let (input, _) = sym("let")(input)?;
-	let (input, assignee) = parse_identifier(input)?;
-	let (input, _) = sym(":")(input)?;
-	let (input, ty) = parse_static(input)?;
-	let (input, _) = sym("=")(input)?;
-	let (input, argument) = parse_static(input)?;
-	let (input, _) = sym(";")(input)?;
-	let (input, tail) = parse_static(input)?;
-	Ok((
-		input,
-		StaticPreterm::Let {
-			assignee: assignee.to_string(),
-			ty: bx!(ty),
-			argument: bx!(argument),
-			tail: bx!(tail),
-		},
-	))
-}
-
-fn parse_dynamic_let<const IS_DYNAMIC: bool>(input: &str) -> IResult<&str, DynamicPreterm> {
-	if IS_DYNAMIC {
-		let (input, _) = sym("let")(input)?;
-		let (input, assignee) = parse_identifier(input)?;
-		let (input, _) = sym(":")(input)?;
-		let (input, ty) = parse_dynamic(input)?;
-		let (input, _) = sym("=")(input)?;
-		let (input, argument) = parse_dynamic(input)?;
-		let (input, _) = sym(";")(input)?;
-		let (input, tail) = parse_dynamic(input)?;
-		Ok((
-			input,
-			DynamicPreterm::Let {
-				assignee: assignee.to_string(),
-				ty: bx!(ty),
-				argument: bx!(argument),
-				tail: bx!(tail),
-			},
-		))
-	} else {
-		let (input, _) = sym("def")(input)?;
-		let (input, assignee) = parse_identifier(input)?;
-		let (input, _) = sym(":")(input)?;
-		let (input, ty) = parse_static(input)?;
-		let (input, _) = sym("=")(input)?;
-		let (input, argument) = parse_static(input)?;
-		let (input, _) = sym(";")(input)?;
-		let (input, tail) = parse_dynamic(input)?;
-		Ok((
-			input,
-			DynamicPreterm::Splice(bx!(StaticPreterm::Let {
-				assignee: assignee.to_string(),
-				ty: bx!(ty),
-				argument: bx!(argument),
-				tail: bx!(StaticPreterm::Quote(bx!(tail))),
-			})),
-		))
+impl<'s> Parser<'s> {
+	pub fn new(source: &'s str) -> Self {
+		Self { source, offset: 0, lexer: Lexer::new(source).peekable(), interner: Rodeo::new() }
 	}
-}
 
-fn parse_static_explicit_pi(input: &str) -> IResult<&str, StaticPreterm> {
-	let (input, _) = sym("|")(input)?;
-	let (input, parameter) = parse_identifier(input)?;
-	let (input, _) = sym(":")(input)?;
-	let (input, base) = parse_static(input)?;
-	let (input, _) = sym("|")(input)?;
-	let (input, _) = sym("->")(input)?;
-	let (input, family) = parse_static(input)?;
-	Ok((input, StaticPreterm::Pi { parameter: parameter.to_string(), base: bx!(base), family: bx!(family) }))
-}
-
-fn parse_dynamic_explicit_pi(input: &str) -> IResult<&str, DynamicPreterm> {
-	let (input, _) = sym("|")(input)?;
-	let (input, parameter) = parse_identifier(input)?;
-	let (input, _) = sym(":")(input)?;
-	let (input, base) = parse_dynamic(input)?;
-	let (input, _) = sym("|")(input)?;
-	let (input, _) = sym("->")(input)?;
-	let (input, family) = parse_dynamic(input)?;
-	Ok((input, DynamicPreterm::Pi { parameter: parameter.to_string(), base: bx!(base), family: bx!(family) }))
-}
-
-fn parse_static_atomic(input: &str) -> IResult<&str, StaticPreterm> {
-	let (input, left) = parse_static_spine(input)?;
-	if let Ok((input, _)) = sym::<_, _, nom::error::Error<_>>("->")(input) {
-		let (input, right) = parse_static(input)?;
-		Ok((input, StaticPreterm::Pi { parameter: "_".to_string(), base: bx!(left), family: bx!(right) }))
-	} else {
-		Ok((input, left))
+	pub fn peek_lexeme(&mut self) -> Option<Lexeme> {
+		while let Some(lexeme) = self.lexer.peek() {
+			use Token::*;
+			if let Whitespace = lexeme.token {
+				self.offset += lexeme.len;
+				self.lexer.next();
+				continue;
+			} else {
+				return Some(*lexeme);
+			}
+		}
+		None
 	}
-}
 
-fn parse_dynamic_atomic(input: &str) -> IResult<&str, DynamicPreterm> {
-	let (input, left) = parse_dynamic_spine(input)?;
-	if let Ok((input, _)) = sym::<_, _, nom::error::Error<_>>("->")(input) {
-		let (input, right) = parse_dynamic(input)?;
-		Ok((input, DynamicPreterm::Pi { parameter: "_".to_string(), base: bx!(left), family: bx!(right) }))
-	} else {
-		Ok((input, left))
+	pub fn next_lexeme(&mut self) -> Option<(Lexeme, usize)> {
+		for lexeme in self.lexer.by_ref() {
+			let offset = self.offset;
+			self.offset += lexeme.len;
+			use Token::*;
+			if let Whitespace = lexeme.token {
+				continue;
+			} else {
+				return Some((lexeme, offset));
+			}
+		}
+		None
 	}
-}
 
-fn parse_static_spine(input: &str) -> IResult<&str, StaticPreterm> {
-	let (mut input, mut atom) = parse_static_atom(input)?;
-	while let Ok((next_input, argument)) = parse_static_atom(input) {
-		input = next_input;
-		atom = StaticPreterm::Apply { scrutinee: bx!(atom), argument: bx!(argument) }
+	pub fn identifier(&mut self, offset: usize, len: usize) -> Name {
+		let span = &self.source[offset..offset + len];
+		self.interner.get_or_intern(span)
 	}
-	Ok((input, atom))
-}
 
-fn parse_dynamic_spine(input: &str) -> IResult<&str, DynamicPreterm> {
-	let (mut input, mut atom) = parse_dynamic_atom(input)?;
-	while let Ok((next_input, argument)) = parse_dynamic_atom(input) {
-		input = next_input;
-		atom = DynamicPreterm::Apply { scrutinee: bx!(atom), argument: bx!(argument) }
+	pub fn parse_static(&mut self) -> Option<StaticPreterm> {
+		use StaticPreterm::*;
+		use Token::*;
+
+		let Lexeme { token, len } = self.peek_lexeme()?;
+		match token {
+			Identifier => {
+				let span = &self.source[self.offset..self.offset + len];
+				match span {
+					"let" => {
+						self.next_lexeme();
+						let name = {
+							let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
+								return None;
+							};
+							self.identifier(offset, len)
+						};
+						let Colon = self.next_lexeme()?.0.token else { return None };
+						let ty = self.parse_static()?;
+						let Equal = self.next_lexeme()?.0.token else { return None };
+						let argument = self.parse_static()?;
+						let Semi = self.next_lexeme()?.0.token else { return None };
+						let tail = self.parse_static()?;
+
+						Some(Let { assignee: name, ty: bx!(ty), argument: bx!(argument), tail: bx!(tail) })
+					}
+					_ => self.parse_static_atom_headed(),
+				}
+			}
+			Pipe => {
+				self.next_lexeme();
+				let name = {
+					let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
+						return None;
+					};
+					self.identifier(offset, len)
+				};
+				match self.peek_lexeme()?.token {
+					Pipe => {
+						self.next_lexeme();
+						let body = self.parse_static()?;
+						Some(Lambda { parameter: name, body: bx!(body) })
+					}
+					Colon => {
+						self.next_lexeme();
+						let base = self.parse_static()?;
+						let Pipe = self.next_lexeme()?.0.token else { return None };
+						let Arrow = self.next_lexeme()?.0.token else { return None };
+						let family = self.parse_static()?;
+						Some(Pi { parameter: name, base: bx!(base), family: bx!(family) })
+					}
+					_ => None,
+				}
+			}
+			_ => self.parse_static_atom_headed(),
+		}
 	}
-	Ok((input, atom))
-}
 
-fn parse_static_atom(input: &str) -> IResult<&str, StaticPreterm> {
-	alt((
-		parse_lift,
-		parse_quote,
-		parse_static_universe,
-		parse_static_variable,
-		delimited(sym("("), parse_static, sym("(")),
-	))(input)
-}
+	pub fn parse_dynamic(&mut self) -> Option<DynamicPreterm> {
+		use DynamicPreterm::*;
+		use Token::*;
 
-fn parse_dynamic_atom(input: &str) -> IResult<&str, DynamicPreterm> {
-	alt((
-		parse_splice,
-		parse_dynamic_universe,
-		parse_dynamic_variable,
-		delimited(sym("("), parse_dynamic, sym(")")),
-	))(input)
-}
+		let Lexeme { token, len } = self.peek_lexeme()?;
+		match token {
+			Identifier => {
+				let span = &self.source[self.offset..self.offset + len];
+				match span {
+					"let" => {
+						self.next_lexeme();
+						let name = {
+							let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
+								return None;
+							};
+							self.identifier(offset, len)
+						};
+						let Colon = self.next_lexeme()?.0.token else { return None };
+						let ty = self.parse_dynamic()?;
+						let Equal = self.next_lexeme()?.0.token else { return None };
+						let argument = self.parse_dynamic()?;
+						let Semi = self.next_lexeme()?.0.token else { return None };
+						let tail = self.parse_dynamic()?;
 
-fn parse_lift(input: &str) -> IResult<&str, StaticPreterm> {
-	let (input, _) = sym("^")(input)?;
-	let (input, liftee) = parse_dynamic_atom(input)?;
-	Ok((input, StaticPreterm::Lift(bx!(liftee))))
-}
+						Some(Let { assignee: name, ty: bx!(ty), argument: bx!(argument), tail: bx!(tail) })
+					}
+					"def" => {
+						self.next_lexeme();
+						let name = {
+							let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
+								return None;
+							};
+							self.identifier(offset, len)
+						};
+						let Colon = self.next_lexeme()?.0.token else { return None };
+						let ty = self.parse_static()?;
+						let Equal = self.next_lexeme()?.0.token else { return None };
+						let argument = self.parse_static()?;
+						let Semi = self.next_lexeme()?.0.token else { return None };
+						let tail = self.parse_dynamic()?;
 
-fn parse_quote(input: &str) -> IResult<&str, StaticPreterm> {
-	let (input, _) = sym("[")(input)?;
-	let (input, quotee) = parse_dynamic(input)?;
-	let (input, _) = sym("]")(input)?;
-	Ok((input, StaticPreterm::Quote(bx!(quotee))))
-}
+						Some(Splice(bx!(StaticPreterm::Let {
+							assignee: name,
+							ty: bx!(ty),
+							argument: bx!(argument),
+							tail: bx!(StaticPreterm::Quote(bx!(tail)))
+						})))
+					}
+					_ => self.parse_dynamic_atom_headed(),
+				}
+			}
+			Pipe => {
+				self.next_lexeme();
+				let name = {
+					let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
+						return None;
+					};
+					self.identifier(offset, len)
+				};
+				match self.peek_lexeme()?.token {
+					Pipe => {
+						self.next_lexeme();
+						let body = self.parse_dynamic()?;
+						Some(Lambda { parameter: name, body: bx!(body) })
+					}
+					Colon => {
+						self.next_lexeme();
+						let base = self.parse_dynamic()?;
+						let Pipe = self.next_lexeme()?.0.token else { return None };
+						let Arrow = self.next_lexeme()?.0.token else { return None };
+						let family = self.parse_dynamic()?;
+						Some(Pi { parameter: name, base: bx!(base), family: bx!(family) })
+					}
+					_ => None,
+				}
+			}
+			_ => self.parse_dynamic_atom_headed(),
+		}
+	}
 
-fn parse_splice(input: &str) -> IResult<&str, DynamicPreterm> {
-	let (input, _) = sym("[")(input)?;
-	let (input, splicee) = parse_static(input)?;
-	let (input, _) = sym("]")(input)?;
-	Ok((input, DynamicPreterm::Splice(bx!(splicee))))
-}
+	pub fn parse_static_atom_headed(&mut self) -> Option<StaticPreterm> {
+		use StaticPreterm::*;
+		use Token::*;
+		let term = self.parse_static_spine()?;
+		if let Some(Lexeme { token: Arrow, len: _ }) = self.peek_lexeme() {
+			self.next_lexeme();
+			let family = self.parse_static()?;
+			Some(Pi { parameter: self.interner.get_or_intern_static("_"), base: bx!(term), family: bx!(family) })
+		} else {
+			Some(term)
+		}
+	}
 
-fn parse_static_universe(input: &str) -> IResult<&str, StaticPreterm> {
-	let (input, _) = sym("*")(input)?;
-	Ok((input, StaticPreterm::Universe))
-}
+	pub fn parse_dynamic_atom_headed(&mut self) -> Option<DynamicPreterm> {
+		use DynamicPreterm::*;
+		use Token::*;
+		let term = self.parse_dynamic_spine()?;
+		if let Some(Lexeme { token: Arrow, len: _ }) = self.peek_lexeme() {
+			self.next_lexeme();
+			let family = self.parse_dynamic()?;
+			Some(Pi { parameter: self.interner.get_or_intern_static("_"), base: bx!(term), family: bx!(family) })
+		} else {
+			Some(term)
+		}
+	}
 
-fn parse_dynamic_universe(input: &str) -> IResult<&str, DynamicPreterm> {
-	let (input, _) = sym("*")(input)?;
-	Ok((input, DynamicPreterm::Universe))
-}
+	pub fn parse_static_spine(&mut self) -> Option<StaticPreterm> {
+		use StaticPreterm::*;
+		use Token::*;
+		let mut term = self.parse_static_atom()?;
+		while let Some(Lexeme { token, len: _ }) = self.peek_lexeme() {
+			match token {
+				Tick | SquareL | ParenL | Ast | Identifier => {
+					let atom = self.parse_static_atom()?;
+					term = Apply { scrutinee: bx!(term), argument: bx!(atom) };
+				}
+				_ => break,
+			}
+		}
+		Some(term)
+	}
 
-fn parse_static_variable(input: &str) -> IResult<&str, StaticPreterm> {
-	let (input, parsed) = parse_identifier(input)?;
-	Ok((input, StaticPreterm::Variable(parsed.to_string())))
-}
+	pub fn parse_dynamic_spine(&mut self) -> Option<DynamicPreterm> {
+		use DynamicPreterm::*;
+		use Token::*;
+		let mut term = self.parse_dynamic_atom()?;
+		while let Some(Lexeme { token, len: _ }) = self.peek_lexeme() {
+			match token {
+				SquareL | ParenL | Ast | Identifier => {
+					let atom = self.parse_dynamic_atom()?;
+					term = Apply { scrutinee: bx!(term), argument: bx!(atom) };
+				}
+				_ => break,
+			}
+		}
+		Some(term)
+	}
 
-fn parse_dynamic_variable(input: &str) -> IResult<&str, DynamicPreterm> {
-	let (input, parsed) = parse_identifier(input)?;
-	Ok((input, DynamicPreterm::Variable(parsed.to_string())))
-}
+	pub fn parse_static_atom(&mut self) -> Option<StaticPreterm> {
+		use StaticPreterm::*;
+		use Token::*;
+		let (Lexeme { token, len }, offset) = self.next_lexeme()?;
+		let term = match token {
+			Tick => {
+				let term = self.parse_dynamic_atom()?;
+				Lift(bx!(term))
+			}
+			SquareL => {
+				let term = self.parse_dynamic()?;
+				let SquareR = self.next_lexeme()?.0.token else {
+					return None;
+				};
+				Quote(bx!(term))
+			}
+			ParenL => {
+				let term = self.parse_static()?;
+				let ParenR = self.next_lexeme()?.0.token else {
+					return None;
+				};
+				term
+			}
+			Ast => Universe,
+			Identifier => Variable(self.identifier(offset, len)),
+			_ => return None,
+		};
+		Some(term)
+	}
 
-fn parse_identifier(input: &str) -> IResult<&str, &str> {
-	preceded(multispace0, recognize(pair(alpha1, many0(alt((alphanumeric1, tag("_")))))))(input)
-}
-
-fn sym<T, Input, Error: nom::error::ParseError<Input>>(t: T) -> impl Fn(Input) -> IResult<Input, Input, Error>
-where
-	Input: nom::InputTake + nom::InputTakeAtPosition + nom::Compare<T>,
-	T: nom::InputLength + Clone,
-	<Input as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone,
-{
-	move |input| preceded(multispace0, tag(t.clone()))(input)
+	fn parse_dynamic_atom(&mut self) -> Option<DynamicPreterm> {
+		use DynamicPreterm::*;
+		use Token::*;
+		let (Lexeme { token, len }, offset) = self.next_lexeme()?;
+		let term = match token {
+			SquareL => {
+				let term = self.parse_static()?;
+				let SquareR = self.next_lexeme()?.0.token else {
+					return None;
+				};
+				Splice(bx!(term))
+			}
+			ParenL => {
+				let term = self.parse_dynamic()?;
+				let ParenR = self.next_lexeme()?.0.token else {
+					return None;
+				};
+				term
+			}
+			Ast => Universe,
+			Identifier => Variable(self.identifier(offset, len)),
+			_ => return None,
+		};
+		Some(term)
+	}
 }
