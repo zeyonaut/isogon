@@ -31,5 +31,5 @@ pub fn run(source: &str) {
 	let term = value.unstage();
 	println!("staged term: {}", pretty_print(&term, &parser.interner));
 	let value = evaluate(term);
-	println!("evaluated:  {}", pretty_print(&value.reify(), &parser.interner));
+	println!("evaluated: {}", pretty_print(&value.reify(), &parser.interner));
 }

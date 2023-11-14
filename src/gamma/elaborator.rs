@@ -233,21 +233,19 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write!(f, "suc ")?;
 			write_dynamic_atom(prev, f, interner)
 		}
-		CaseNat { scrutinee, motive_parameter, motive: _, case_nil, case_suc_parameters, case_suc } => {
+		CaseNat { scrutinee, motive_parameter, motive, case_nil, case_suc_parameters, case_suc } => {
 			write_dynamic_spine(scrutinee, f, interner)?;
 			write!(f, " :: |{}| ", interner.resolve(motive_parameter))?;
-			// TODO: if we're printing this, we need to keep track of our context length when printing.
-			write!(f, "?")?;
-			//write_dynamic(motive, f, interner)?;
-			write!(f, " {{nil -> ")?;
-			write_dynamic_spine(case_nil, f, interner)?;
+			write_dynamic(motive, f, interner)?;
+			write!(f, " {{0 -> ")?;
+			write_dynamic(case_nil, f, interner)?;
 			write!(
 				f,
 				" | suc {} {} -> ",
 				interner.resolve(&case_suc_parameters.0),
 				interner.resolve(&case_suc_parameters.1)
 			)?;
-			write_dynamic_spine(case_suc, f, interner)?;
+			write_dynamic(case_suc, f, interner)?;
 			write!(f, "}}")
 		}
 	}

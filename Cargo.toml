@@ -8,6 +8,5 @@ edition = "2021"
 [dependencies]
 bitvec = "1.0.1"
 bpaf = "0.9.6"
-derivative = "2.2.0"
 lasso = "0.7.2"
 nom = "7.1.3"
