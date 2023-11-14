@@ -89,21 +89,57 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 #[derive(Clone, Debug)]
 pub enum DynamicTerm {
 	Variable(Name, Index),
-	Let { assignee: Name, ty: Box<Self>, argument: Box<Self>, tail: Box<Self> },
+	Let {
+		assignee: Name,
+		ty: Box<Self>,
+		argument: Box<Self>,
+		tail: Box<Self>,
+	},
 	Splice(Box<StaticTerm>),
 	Universe,
-	Pi { parameter: Name, base: Box<Self>, family: Box<Self> },
-	Lambda { parameter: Name, body: Box<Self> },
-	Apply { scrutinee: Box<Self>, argument: Box<Self> },
-	Sigma { parameter: Name, base: Box<Self>, family: Box<Self> },
-	Pair { basepoint: Box<Self>, fiberpoint: Box<Self> },
-	Project { scrutinee: Box<Self>, projection: Projection },
+	Pi {
+		parameter: Name,
+		base: Box<Self>,
+		family: Box<Self>,
+	},
+	Lambda {
+		parameter: Name,
+		body: Box<Self>,
+	},
+	Apply {
+		scrutinee: Box<Self>,
+		argument: Box<Self>,
+	},
+	Sigma {
+		parameter: Name,
+		base: Box<Self>,
+		family: Box<Self>,
+	},
+	Pair {
+		basepoint: Box<Self>,
+		fiberpoint: Box<Self>,
+	},
+	Project {
+		scrutinee: Box<Self>,
+		projection: Projection,
+	},
+	Nat,
+	Num(usize),
+	Suc(Box<Self>),
+	CaseNat {
+		scrutinee: Box<Self>,
+		motive_parameter: Name,
+		motive: Box<Self>,
+		case_nil: Box<Self>,
+		case_suc_parameters: (Name, Name),
+		case_suc: Box<Self>,
+	},
 }
 
 fn write_dynamic_spine(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use DynamicTerm::*;
 	match term {
-		Apply { .. } | Project { .. } => write_dynamic(term, f, interner),
+		Apply { .. } | Project { .. } | Suc(..) | CaseNat { .. } => write_dynamic(term, f, interner),
 		_ => write_dynamic_atom(term, f, interner),
 	}
 }
@@ -111,8 +147,16 @@ fn write_dynamic_spine(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo)
 fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use DynamicTerm::*;
 	match term {
-		Variable(..) | Universe | Splice(_) => write_dynamic(term, f, interner),
-		Lambda { .. } | Pair { .. } | Apply { .. } | Project { .. } | Pi { .. } | Sigma { .. } | Let { .. } => {
+		Variable(..) | Universe | Splice(_) | Nat | Num(..) => write_dynamic(term, f, interner),
+		Let { .. }
+		| Lambda { .. }
+		| Pair { .. }
+		| Apply { .. }
+		| Project { .. }
+		| Pi { .. }
+		| Sigma { .. }
+		| Suc(..)
+		| CaseNat { .. } => {
 			write!(f, "(")?;
 			write_dynamic(term, f, interner)?;
 			write!(f, ")")
@@ -123,28 +167,21 @@ fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) 
 pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use DynamicTerm::*;
 	match term {
+		Let { assignee, ty, argument, tail } => {
+			write!(f, "let {} : ", interner.resolve(assignee))?;
+			write_dynamic(ty, f, interner)?;
+			write!(f, " = ")?;
+			write_dynamic(argument, f, interner)?;
+			write!(f, "; ")?;
+			write_dynamic(tail, f, interner)
+		}
 		Variable(name, ..) => write!(f, "{}", interner.resolve(name)),
-		Lambda { parameter, body } => {
-			write!(f, "|{}| ", interner.resolve(parameter))?;
-			write_dynamic(body, f, interner)
+		Splice(splicee) => {
+			write!(f, "[")?;
+			write_static(splicee, f, interner)?;
+			write!(f, "]")
 		}
-		Pair { basepoint, fiberpoint } => {
-			write_dynamic_spine(basepoint, f, interner)?;
-			write!(f, ", ")?;
-			write_dynamic_spine(fiberpoint, f, interner)
-		}
-		Apply { scrutinee, argument } => {
-			write_dynamic_spine(scrutinee, f, interner)?;
-			write!(f, " ")?;
-			write_dynamic_atom(argument, f, interner)
-		}
-		Project { scrutinee, projection } => {
-			write_dynamic_spine(scrutinee, f, interner)?;
-			match projection {
-				Projection::Base => write!(f, "/."),
-				Projection::Fiber => write!(f, "/!"),
-			}
-		}
+		Universe => write!(f, "*"),
 		Pi { parameter, base, family } => {
 			let parameter = interner.resolve(parameter);
 			if parameter != "_" {
@@ -156,6 +193,15 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 				write!(f, " -> ")?;
 			}
 			write_dynamic(family, f, interner)
+		}
+		Lambda { parameter, body } => {
+			write!(f, "|{}| ", interner.resolve(parameter))?;
+			write_dynamic(body, f, interner)
+		}
+		Apply { scrutinee, argument } => {
+			write_dynamic_spine(scrutinee, f, interner)?;
+			write!(f, " ")?;
+			write_dynamic_atom(argument, f, interner)
 		}
 		Sigma { parameter, base, family } => {
 			let parameter = interner.resolve(parameter);
@@ -169,19 +215,40 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			}
 			write_dynamic(family, f, interner)
 		}
-		Let { assignee, ty, argument, tail } => {
-			write!(f, "let {} : ", interner.resolve(assignee))?;
-			write_dynamic(ty, f, interner)?;
-			write!(f, " = ")?;
-			write_dynamic(argument, f, interner)?;
-			write!(f, "; ")?;
-			write_dynamic(tail, f, interner)
+		Pair { basepoint, fiberpoint } => {
+			write_dynamic_spine(basepoint, f, interner)?;
+			write!(f, ", ")?;
+			write_dynamic_spine(fiberpoint, f, interner)
 		}
-		Universe => write!(f, "*"),
-		Splice(splicee) => {
-			write!(f, "[")?;
-			write_static(splicee, f, interner)?;
-			write!(f, "]")
+		Project { scrutinee, projection } => {
+			write_dynamic_spine(scrutinee, f, interner)?;
+			match projection {
+				Projection::Base => write!(f, "/."),
+				Projection::Fiber => write!(f, "/!"),
+			}
+		}
+		Nat => write!(f, "nat"),
+		Num(n) => write!(f, "{n}"),
+		Suc(prev) => {
+			write!(f, "suc ")?;
+			write_dynamic_atom(prev, f, interner)
+		}
+		CaseNat { scrutinee, motive_parameter, motive: _, case_nil, case_suc_parameters, case_suc } => {
+			write_dynamic_spine(scrutinee, f, interner)?;
+			write!(f, " :: |{}| ", interner.resolve(motive_parameter))?;
+			// TODO: if we're printing this, we need to keep track of our context length when printing.
+			write!(f, "?")?;
+			//write_dynamic(motive, f, interner)?;
+			write!(f, " {{nil -> ")?;
+			write_dynamic_spine(case_nil, f, interner)?;
+			write!(
+				f,
+				" | suc {} {} -> ",
+				interner.resolve(&case_suc_parameters.0),
+				interner.resolve(&case_suc_parameters.1)
+			)?;
+			write_dynamic_spine(case_suc, f, interner)?;
+			write!(f, "}}")
 		}
 	}
 }
@@ -205,9 +272,18 @@ pub enum StaticValue {
 #[derive(Clone)]
 pub enum DynamicNeutral {
 	Variable(Name, Level),
+	Splice(StaticNeutral),
 	Apply(Rc<Self>, Rc<DynamicValue>),
 	Project(Rc<Self>, Projection),
-	Splice(StaticNeutral),
+	CaseNat {
+		scrutinee: Rc<Self>,
+		motive_parameter: Name,
+		motive: Rc<dyn Fn(DynamicValue) -> DynamicValue>,
+		case_nil: Rc<DynamicValue>,
+		case_suc_parameters: (Name, Name),
+		case_suc: Rc<dyn Fn(DynamicValue, DynamicValue) -> DynamicValue>,
+	},
+	Suc(Rc<Self>),
 }
 
 #[derive(Clone)]
@@ -218,6 +294,8 @@ pub enum DynamicValue {
 	Function(Name, Rc<dyn Fn(Self) -> Self>),
 	IndexedSum(Name, Rc<Self>, Rc<dyn Fn(Self) -> Self>),
 	Pair(/* basepoint */ Rc<Self>, /* fiberpoint */ Rc<Self>),
+	Nat,
+	Num(usize),
 }
 
 impl DynamicValue {
@@ -337,6 +415,7 @@ fn reify_dynamic_open_neutral(neutral: &DynamicNeutral, level @ Level(context_le
 	use DynamicNeutral::*;
 	match neutral {
 		Variable(name, Level(level)) => DynamicTerm::Variable(*name, Index(context_length - 1 - level)),
+		Splice(splicee) => DynamicTerm::Splice(bx!(reify_static_open_neutral(splicee, level))),
 		Apply(callee, argument) => DynamicTerm::Apply {
 			scrutinee: bx!(reify_dynamic_open_neutral(callee, level)),
 			argument: bx!(reify_dynamic_open_value(argument, level)),
@@ -345,7 +424,25 @@ fn reify_dynamic_open_neutral(neutral: &DynamicNeutral, level @ Level(context_le
 			scrutinee: bx!(reify_dynamic_open_neutral(scrutinee, level)),
 			projection: *projection,
 		},
-		Splice(splicee) => DynamicTerm::Splice(bx!(reify_static_open_neutral(splicee, level))),
+		Suc(prev) => DynamicTerm::Suc(bx!(reify_dynamic_open_neutral(prev, level))),
+		CaseNat { scrutinee, motive_parameter, motive, case_nil, case_suc_parameters, case_suc } =>
+			DynamicTerm::CaseNat {
+				scrutinee: bx!(reify_dynamic_open_neutral(&scrutinee, level)),
+				motive_parameter: *motive_parameter,
+				motive: bx!(reify_dynamic_open_value(
+					&motive(DynamicValue::Neutral(DynamicNeutral::Variable(*motive_parameter, level))),
+					level.suc()
+				)),
+				case_nil: bx!(reify_dynamic_open_value(&case_nil, level)),
+				case_suc_parameters: *case_suc_parameters,
+				case_suc: bx!(reify_dynamic_open_value(
+					&case_suc(
+						DynamicValue::Neutral(Variable(case_suc_parameters.0, level)),
+						DynamicValue::Neutral(Variable(case_suc_parameters.1, level.suc()))
+					),
+					level.suc().suc()
+				)),
+			},
 	}
 }
 
@@ -381,6 +478,8 @@ fn reify_dynamic_open_value(value: &DynamicValue, level: Level) -> DynamicTerm {
 			basepoint: bx!(reify_dynamic_open_value(basepoint, level)),
 			fiberpoint: bx!(reify_dynamic_open_value(fiberpoint, level)),
 		},
+		Nat => DynamicTerm::Nat,
+		Num(n) => DynamicTerm::Num(*n),
 	}
 }
 
@@ -509,6 +608,22 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 				}
 			})
 			.unwrap(),
+		Let { assignee, ty, argument, tail } => {
+			let ty = verify_dynamic(context, *ty, DynamicValue::Universe);
+			let ty_value = evaluate_dynamic(&context.environment, ty.clone());
+			let argument = verify_dynamic(context, *argument, ty_value.clone());
+			// NOTE: Isn't this a problem, performance-wise? Does laziness help here? Testing necessary. (Having the value available in the environment is wanted for evaluation.)
+			let argument_value = evaluate_dynamic(&context.environment, argument.clone());
+			let (tail, tail_ty) = synthesize_dynamic(
+				&context.clone().extend(assignee, Value::Dynamic(ty_value), Value::Dynamic(argument_value)),
+				*tail,
+			);
+			(DynamicTerm::Let { assignee, ty: bx!(ty), argument: bx!(argument), tail: bx!(tail) }, tail_ty)
+		}
+		Splice(splicee) => {
+			let (splicee, StaticValue::Lift(liftee)) = synthesize_static(context, *splicee) else { panic!() };
+			(DynamicTerm::Splice(bx!(splicee)), liftee)
+		}
 		Lambda { .. } | Pair { .. } => panic!(),
 		Apply { scrutinee, argument } => {
 			let (scrutinee, scrutinee_ty) = synthesize_dynamic(context, *scrutinee);
@@ -552,21 +667,56 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 			);
 			(DynamicTerm::Sigma { parameter, base: bx!(base), family: bx!(family) }, DynamicValue::Universe)
 		}
-		Let { assignee, ty, argument, tail } => {
-			let ty = verify_dynamic(context, *ty, DynamicValue::Universe);
-			let ty_value = evaluate_dynamic(&context.environment, ty.clone());
-			let argument = verify_dynamic(context, *argument, ty_value.clone());
-			// NOTE: Isn't this a problem, performance-wise? Does laziness help here? Testing necessary. (Having the value available in the environment is wanted for evaluation.)
-			let argument_value = evaluate_dynamic(&context.environment, argument.clone());
-			let (tail, tail_ty) = synthesize_dynamic(
-				&context.clone().extend(assignee, Value::Dynamic(ty_value), Value::Dynamic(argument_value)),
-				*tail,
-			);
-			(DynamicTerm::Let { assignee, ty: bx!(ty), argument: bx!(argument), tail: bx!(tail) }, tail_ty)
+		Nat => (DynamicTerm::Nat, DynamicValue::Universe),
+		Num(n) => (DynamicTerm::Num(n), DynamicValue::Nat),
+		Suc(prev) => {
+			let prev = verify_dynamic(context, *prev, DynamicValue::Nat);
+			if let DynamicTerm::Num(p) = prev {
+				(DynamicTerm::Num(p + 1), DynamicValue::Nat)
+			} else {
+				(DynamicTerm::Suc(bx!(prev)), DynamicValue::Nat)
+			}
 		}
-		Splice(splicee) => {
-			let (splicee, StaticValue::Lift(liftee)) = synthesize_static(context, *splicee) else { panic!() };
-			(DynamicTerm::Splice(bx!(splicee)), liftee)
+		CaseNat { scrutinee, motive_parameter, motive, case_nil, case_suc_parameters, case_suc } => {
+			let scrutinee = verify_dynamic(context, *scrutinee, DynamicValue::Nat);
+			let scrutinee_value = evaluate_dynamic(&context.environment, scrutinee.clone());
+			let motive = verify_dynamic(
+				&context.clone().bind_dynamic(motive_parameter, DynamicValue::Nat),
+				*motive,
+				DynamicValue::Universe,
+			);
+			let motive_value = rc!({
+				let motive = motive.clone();
+				let environment = context.environment.clone();
+				move |value| evaluate_dynamic(&environment.extend(Value::Dynamic(value)), motive.clone())
+			});
+			let case_nil = verify_dynamic(context, *case_nil, motive_value(DynamicValue::Num(0)));
+			// NOTE: I'm not entirely sure this is 'right', as motive is is formed in a smaller context, but I believe this should be 'safe' because of de Bruijn levels.
+			let case_suc = verify_dynamic(
+				&context.clone().bind_dynamic(case_suc_parameters.0, DynamicValue::Nat).bind_dynamic(
+					case_suc_parameters.1,
+					motive_value(DynamicValue::Neutral(DynamicNeutral::Variable(
+						case_suc_parameters.0,
+						context.len(),
+					))),
+				),
+				*case_suc,
+				motive_value(DynamicValue::Neutral(DynamicNeutral::Suc(rc!(DynamicNeutral::Variable(
+					case_suc_parameters.0,
+					context.len()
+				))))),
+			);
+			(
+				DynamicTerm::CaseNat {
+					scrutinee: bx!(scrutinee),
+					motive_parameter,
+					motive: bx!(motive),
+					case_nil: bx!(case_nil),
+					case_suc_parameters,
+					case_suc: bx!(case_suc),
+				},
+				motive_value(scrutinee_value),
+			)
 		}
 	}
 }
@@ -609,7 +759,12 @@ pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue)
 			if is_convertible_dynamic(context.len(), &synthesized_ty, &ty) {
 				term
 			} else {
-				panic!()
+				println!("{:#?}", term);
+				panic!(
+					"synthesized type {:#?} did not match expected type {:#?}",
+					reify_dynamic_open_value(&synthesized_ty, context.len()),
+					reify_dynamic_open_value(&ty, context.len()),
+				);
 			}
 		}
 	}
@@ -715,6 +870,97 @@ fn evaluate_dynamic(environment: &Environment, term: DynamicTerm) -> DynamicValu
 			StaticValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Splice(neutral)),
 			_ => panic!(),
 		},
+		Nat => DynamicValue::Nat,
+		Num(n) => DynamicValue::Num(n),
+		Suc(prev) => match evaluate_dynamic(environment, *prev) {
+			DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Suc(rc!(neutral))),
+			DynamicValue::Num(n) => DynamicValue::Num(n + 1),
+			_ => panic!(),
+		},
+		CaseNat { scrutinee, motive_parameter, motive, case_nil, case_suc_parameters, case_suc } =>
+			match evaluate_dynamic(environment, *scrutinee) {
+				DynamicValue::Num(n) => {
+					fn evaluate_case_nat(
+						environment: &Environment,
+						n: usize,
+						case_nil: Box<DynamicTerm>,
+						case_suc: Box<DynamicTerm>,
+					) -> DynamicValue {
+						match n {
+							0 => evaluate_dynamic(environment, *case_nil),
+							n => {
+								let n = n - 1;
+								evaluate_dynamic(
+									&environment.extend(Value::Dynamic(DynamicValue::Num(n))).extend(Value::Dynamic(
+										evaluate_case_nat(environment, n, case_nil.clone(), case_suc.clone()),
+									)),
+									*case_suc,
+								)
+							}
+						}
+					}
+					evaluate_case_nat(environment, n, case_nil, case_suc)
+				}
+				DynamicValue::Neutral(neutral) => {
+					fn evaluate_case_nat_neutral(
+						environment: &Environment,
+						neutral: &DynamicNeutral,
+						motive_parameter: Name,
+						motive: Rc<dyn Fn(DynamicValue) -> DynamicValue>,
+						case_nil: Box<DynamicTerm>,
+						case_suc_parameters: (Name, Name),
+						case_suc: Box<DynamicTerm>,
+					) -> DynamicValue {
+						match neutral {
+							DynamicNeutral::Suc(prev) => evaluate_dynamic(
+								&environment
+									.extend(Value::Dynamic(DynamicValue::Neutral(prev.as_ref().clone())))
+									.extend(Value::Dynamic(evaluate_case_nat_neutral(
+										environment,
+										prev,
+										motive_parameter,
+										motive,
+										case_nil,
+										case_suc_parameters,
+										case_suc.clone(),
+									))),
+								*case_suc,
+							),
+							neutral => DynamicValue::Neutral(DynamicNeutral::CaseNat {
+								scrutinee: rc!(neutral.clone()),
+								motive_parameter,
+								motive,
+								case_nil: rc!(evaluate_dynamic(environment, *case_nil)),
+								case_suc_parameters,
+								case_suc: rc!({
+									let environment = environment.clone();
+									move |value_0, value_1| {
+										evaluate_dynamic(
+											&environment.extend(Value::Dynamic(value_0)).extend(Value::Dynamic(value_1)),
+											*case_suc.clone(),
+										)
+									}
+								}),
+							}),
+						}
+					}
+					let motive_value = rc!({
+						let motive = motive.clone();
+						let environment = environment.clone();
+						move |value| evaluate_dynamic(&environment.extend(Value::Dynamic(value)), *motive.clone())
+					});
+					evaluate_case_nat_neutral(
+						environment,
+						&neutral,
+						motive_parameter,
+						motive_value,
+						case_nil,
+						case_suc_parameters,
+						case_suc,
+					)
+				}
+				c => panic!("{:#?}", std::mem::discriminant(&c)),
+			},
 	}
 }
 
@@ -816,6 +1062,15 @@ pub fn is_convertible_dynamic(context_length: Level, left: &DynamicValue, right:
 					&left_family(DynamicValue::Neutral(DynamicNeutral::Variable(*lp, context_length))),
 					&right_family(DynamicValue::Neutral(DynamicNeutral::Variable(*rp, context_length))),
 				),
+		(IndexedSum(lp, left_base, left_family), IndexedSum(rp, right_base, right_family)) =>
+			is_convertible_dynamic(context_length, left_base, right_base)
+				&& is_convertible_dynamic(
+					context_length.suc(),
+					&left_family(DynamicValue::Neutral(DynamicNeutral::Variable(*lp, context_length))),
+					&right_family(DynamicValue::Neutral(DynamicNeutral::Variable(*rp, context_length))),
+				),
+		(Nat, Nat) => true,
+		(Num(left), Num(right)) => left == right,
 		_ => false,
 	}
 }
@@ -834,6 +1089,54 @@ pub fn is_convertible_dynamic_neutral(
 		(Project(left, left_projection), Project(right, right_projection)) =>
 			left_projection == right_projection && is_convertible_dynamic_neutral(context_length, left, right),
 		(Splice(left), Splice(right)) => is_convertible_static_neutral(context_length, left, right),
+		(Suc(left), Suc(right)) => is_convertible_dynamic_neutral(context_length, left, right),
+		(
+			CaseNat {
+				scrutinee: left_scrutinee,
+				motive_parameter: left_motive_parameter,
+				motive: left_motive,
+				case_nil: left_case_nil,
+				case_suc_parameters: left_case_suc_parameters,
+				case_suc: left_case_suc,
+			},
+			CaseNat {
+				scrutinee: right_scrutinee,
+				motive_parameter: right_motive_parameter,
+				motive: right_motive,
+				case_nil: right_case_nil,
+				case_suc_parameters: right_case_suc_parameters,
+				case_suc: right_case_suc,
+			},
+		) =>
+			is_convertible_dynamic_neutral(context_length, &left_scrutinee, &right_scrutinee)
+				&& is_convertible_dynamic(
+					context_length.suc(),
+					&left_motive(DynamicValue::Neutral(DynamicNeutral::Variable(
+						*left_motive_parameter,
+						context_length,
+					))),
+					&right_motive(DynamicValue::Neutral(DynamicNeutral::Variable(
+						*right_motive_parameter,
+						context_length,
+					))),
+				) && is_convertible_dynamic(context_length, &left_case_nil, &right_case_nil)
+				&& is_convertible_dynamic(
+					context_length.suc().suc(),
+					&left_case_suc(
+						DynamicValue::Neutral(DynamicNeutral::Variable(left_case_suc_parameters.0, context_length)),
+						DynamicValue::Neutral(DynamicNeutral::Variable(left_case_suc_parameters.1, context_length)),
+					),
+					&right_case_suc(
+						DynamicValue::Neutral(DynamicNeutral::Variable(
+							right_case_suc_parameters.0,
+							context_length,
+						)),
+						DynamicValue::Neutral(DynamicNeutral::Variable(
+							right_case_suc_parameters.1,
+							context_length,
+						)),
+					),
+				),
 		_ => false,
 	}
 }

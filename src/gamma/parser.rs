@@ -25,15 +25,48 @@ pub enum StaticPreterm {
 #[derive(Debug, Clone)]
 pub enum DynamicPreterm {
 	Variable(Name),
-	Let { assignee: Name, ty: Box<Self>, argument: Box<Self>, tail: Box<Self> },
+	Let {
+		assignee: Name,
+		ty: Box<Self>,
+		argument: Box<Self>,
+		tail: Box<Self>,
+	},
 	Splice(Box<StaticPreterm>),
 	Universe,
-	Pi { parameter: Name, base: Box<Self>, family: Box<Self> },
-	Lambda { parameter: Name, body: Box<Self> },
-	Apply { scrutinee: Box<Self>, argument: Box<Self> },
-	Sigma { parameter: Name, base: Box<Self>, family: Box<Self> },
-	Pair { basepoint: Box<Self>, fiberpoint: Box<Self> },
+	Pi {
+		parameter: Name,
+		base: Box<Self>,
+		family: Box<Self>,
+	},
+	Lambda {
+		parameter: Name,
+		body: Box<Self>,
+	},
+	Apply {
+		scrutinee: Box<Self>,
+		argument: Box<Self>,
+	},
+	Sigma {
+		parameter: Name,
+		base: Box<Self>,
+		family: Box<Self>,
+	},
+	Pair {
+		basepoint: Box<Self>,
+		fiberpoint: Box<Self>,
+	},
 	Project(Box<Self>, Projection),
+	Nat,
+	Num(usize),
+	Suc(Box<Self>),
+	CaseNat {
+		scrutinee: Box<Self>,
+		motive_parameter: Name,
+		motive: Box<Self>,
+		case_nil: Box<Self>,
+		case_suc_parameters: (Name, Name),
+		case_suc: Box<Self>,
+	},
 }
 
 pub struct Parser<'s> {
@@ -81,6 +114,7 @@ impl<'s> Parser<'s> {
 		self.interner.get_or_intern(span)
 	}
 
+	#[must_use]
 	pub fn consume(&mut self, token: Token) -> Option<()> {
 		(self.next_lexeme()?.0.token == token).then_some(())
 	}
@@ -295,16 +329,78 @@ impl<'s> Parser<'s> {
 	pub fn parse_dynamic_spine(&mut self) -> Option<DynamicPreterm> {
 		use DynamicPreterm::*;
 		use Token::*;
-		let mut term = self.parse_dynamic_atom()?;
+		let Lexeme { token, len } = self.peek_lexeme()?;
+
+		let mut term = if token == Identifier && &self.source[self.offset..self.offset + len] == "suc" {
+			self.next_lexeme();
+			Suc(bx!(self.parse_dynamic_atom()?))
+		} else {
+			self.parse_dynamic_atom()?
+		};
+
 		while let Some(Lexeme { token, len: _ }) = self.peek_lexeme() {
 			match token {
-				SquareL | ParenL | Ast | Identifier => {
+				SquareL | ParenL | Ast | Number | Identifier => {
 					let atom = self.parse_dynamic_atom()?;
 					term = Apply { scrutinee: bx!(term), argument: bx!(atom) };
 				}
 				Token::Project(projection) => {
 					self.next_lexeme();
 					term = DynamicPreterm::Project(bx!(term), projection);
+				}
+				TwoColon => {
+					self.next_lexeme();
+					self.consume(Pipe)?;
+					let motive_parameter = {
+						let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
+							return None;
+						};
+						self.identifier(offset, len)
+					};
+					self.consume(Pipe)?;
+					let motive = self.parse_dynamic()?;
+					self.consume(CurlyL)?;
+					self.consume(Pipe)?;
+					{
+						let (Lexeme { token: Number, len: 1 }, offset) = self.next_lexeme()? else {
+							return None;
+						};
+						(&self.source[offset..offset + 1] == "0").then_some(())?
+					}
+					self.consume(Arrow)?;
+					let case_nil = self.parse_dynamic()?;
+					self.consume(Pipe)?;
+					{
+						let (Lexeme { token: Identifier, len: 3 }, offset) = self.next_lexeme()? else {
+							return None;
+						};
+						(&self.source[offset..offset + 3] == "suc").then_some(())?
+					}
+					let case_suc_parameters = (
+						{
+							let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
+								return None;
+							};
+							self.identifier(offset, len)
+						},
+						{
+							let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
+								return None;
+							};
+							self.identifier(offset, len)
+						},
+					);
+					self.consume(Arrow)?;
+					let case_suc = self.parse_dynamic()?;
+					self.consume(CurlyR)?;
+					term = DynamicPreterm::CaseNat {
+						scrutinee: bx!(term),
+						motive_parameter,
+						motive: bx!(motive),
+						case_nil: bx!(case_nil),
+						case_suc_parameters,
+						case_suc: bx!(case_suc),
+					}
 				}
 				_ => break,
 			}
@@ -354,6 +450,8 @@ impl<'s> Parser<'s> {
 				term
 			}
 			Ast => Universe,
+			Number => Num(self.source[offset..offset + len].parse().unwrap()),
+			Identifier if &self.source[offset..offset + len] == "nat" => Nat,
 			Identifier => Variable(self.identifier(offset, len)),
 			_ => return None,
 		};

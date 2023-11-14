@@ -1,0 +1,13 @@
+let unit : *
+	= |A : *| -> A -> A;
+
+let list : nat -> *
+	= |n| n :: |n| * {
+		| 0       -> unit
+		| suc n T -> T & nat
+	};
+
+10 :: |n| list n {
+	| 0       -> |A| |a| a
+	| suc n k -> k, n
+}

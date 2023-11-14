@@ -6,10 +6,12 @@ use super::common::Projection;
 pub enum Token {
 	Whitespace,
 	Identifier,
+	Number,
 	Project(Projection),
 	Amp,
 	Pipe,
 	Colon,
+	TwoColon,
 	Semi,
 	Comma,
 	Equal,
@@ -17,6 +19,8 @@ pub enum Token {
 	ParenR,
 	SquareL,
 	SquareR,
+	CurlyL,
+	CurlyR,
 	Ast,
 	Tick,
 	Arrow,
@@ -78,6 +82,12 @@ impl<'s> Iterator for Lexer<'s> {
 				}
 				Identifier
 			}
+			'0'..='9' => {
+				while let Some('0'..='9') = self.peek_char() {
+					self.next_char();
+				}
+				Number
+			}
 			'/' => match self.next_char()? {
 				'.' => Project(Projection::Base),
 				'!' => Project(Projection::Fiber),
@@ -85,7 +95,13 @@ impl<'s> Iterator for Lexer<'s> {
 			},
 			'&' => Amp,
 			'|' => Pipe,
-			':' => Colon,
+			':' =>
+				if let Some(':') = self.peek_char() {
+					self.next_char();
+					TwoColon
+				} else {
+					Colon
+				},
 			';' => Semi,
 			',' => Comma,
 			'=' => Equal,
@@ -93,6 +109,8 @@ impl<'s> Iterator for Lexer<'s> {
 			')' => ParenR,
 			'[' => SquareL,
 			']' => SquareR,
+			'{' => CurlyL,
+			'}' => CurlyR,
 			'*' => Ast,
 			'\'' => Tick,
 			'-' if Some('>') == self.peek_char() => {

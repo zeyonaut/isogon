@@ -27,14 +27,50 @@ impl Debug for StaticValue {
 #[derive(Clone, Debug)]
 pub enum DynamicValue {
 	Variable(Name, Level),
-	Let { assignee: Name, ty: Rc<Self>, argument: Rc<Self>, tail: Rc<Self> },
+	Let {
+		assignee: Name,
+		ty: Rc<Self>,
+		argument: Rc<Self>,
+		tail: Rc<Self>,
+	},
 	Universe,
-	Pi { parameter: Name, base: Rc<Self>, family: Rc<Self> },
-	Function { parameter: Name, closure: Rc<Self> },
-	Apply { scrutinee: Rc<Self>, argument: Rc<Self> },
-	Sigma { parameter: Name, base: Rc<Self>, family: Rc<Self> },
-	Pair { basepoint: Rc<Self>, fiberpoint: Rc<Self> },
-	Project { scrutinee: Rc<Self>, projection: Projection },
+	Pi {
+		parameter: Name,
+		base: Rc<Self>,
+		family: Rc<Self>,
+	},
+	Function {
+		parameter: Name,
+		closure: Rc<Self>,
+	},
+	Apply {
+		scrutinee: Rc<Self>,
+		argument: Rc<Self>,
+	},
+	Sigma {
+		parameter: Name,
+		base: Rc<Self>,
+		family: Rc<Self>,
+	},
+	Pair {
+		basepoint: Rc<Self>,
+		fiberpoint: Rc<Self>,
+	},
+	Project {
+		scrutinee: Rc<Self>,
+		projection: Projection,
+	},
+	Nat,
+	Num(usize),
+	Suc(Rc<Self>),
+	CaseNat {
+		scrutinee: Rc<Self>,
+		motive_parameter: Name,
+		motive: Rc<Self>,
+		case_nil: Rc<Self>,
+		case_suc_parameters: (Name, Name),
+		case_suc: Rc<Self>,
+	},
 }
 
 impl DynamicValue {
@@ -78,6 +114,18 @@ impl DynamicValue {
 					tail: bx!(unstage_open(tail, level.suc())),
 				},
 				Universe => DynamicTerm::Universe,
+				Nat => DynamicTerm::Nat,
+				Num(n) => DynamicTerm::Num(*n),
+				Suc(prev) => DynamicTerm::Suc(bx!(unstage_open(prev, level))),
+				CaseNat { scrutinee, motive_parameter, motive, case_nil, case_suc_parameters, case_suc } =>
+					DynamicTerm::CaseNat {
+						scrutinee: bx!(unstage_open(scrutinee, level)),
+						motive_parameter: *motive_parameter,
+						motive: bx!(unstage_open(motive, level.suc())),
+						case_nil: bx!(unstage_open(case_nil, level)),
+						case_suc_parameters: *case_suc_parameters,
+						case_suc: bx!(unstage_open(case_suc, level.suc().suc())),
+					},
 			}
 		}
 
@@ -128,26 +176,27 @@ impl Environment {
 }
 
 pub fn evaluate_static(environment: &Environment, term: StaticTerm) -> StaticValue {
+	use StaticTerm::*;
 	match term {
-		StaticTerm::Variable(_, index) => environment.lookup_static(index),
-		StaticTerm::Lambda { body, .. } => {
+		Variable(_, index) => environment.lookup_static(index),
+		Lambda { body, .. } => {
 			let environment = environment.clone();
 			let body = *body;
 			StaticValue::Function(Rc::new(move |value| {
 				evaluate_static(&environment.extend_static(value), body.clone())
 			}))
 		}
-		StaticTerm::Apply { scrutinee, argument } => {
+		Apply { scrutinee, argument } => {
 			let StaticValue::Function(closure) = evaluate_static(environment, *scrutinee) else { panic!() };
 			let argument = evaluate_static(environment, *argument);
 			closure(argument)
 		}
-		StaticTerm::Pi { .. } => StaticValue::Type,
-		StaticTerm::Let { argument, tail, .. } =>
+		Pi { .. } => StaticValue::Type,
+		Let { argument, tail, .. } =>
 			evaluate_static(&environment.extend_static(evaluate_static(environment, *argument)), *tail),
-		StaticTerm::Universe => StaticValue::Type,
-		StaticTerm::Lift(_) => StaticValue::Type,
-		StaticTerm::Quote(term) => StaticValue::Quote(rc!(evaluate_dynamic(environment, *term))),
+		Universe => StaticValue::Type,
+		Lift(_) => StaticValue::Type,
+		Quote(term) => StaticValue::Quote(rc!(evaluate_dynamic(environment, *term))),
 	}
 }
 
@@ -156,46 +205,58 @@ pub fn stage(term: DynamicTerm) -> DynamicValue {
 }
 
 pub fn evaluate_dynamic(environment: &Environment, term: DynamicTerm) -> DynamicValue {
+	use DynamicTerm::*;
 	match term {
-		DynamicTerm::Variable(_, index) => environment.lookup_dynamic(index),
-		DynamicTerm::Lambda { parameter, body } => DynamicValue::Function {
+		Variable(_, index) => environment.lookup_dynamic(index),
+		Lambda { parameter, body } => DynamicValue::Function {
 			parameter,
 			closure: rc!(evaluate_dynamic(&environment.extend_dynamic(parameter), *body)),
 		},
-		DynamicTerm::Pair { basepoint, fiberpoint } => DynamicValue::Pair {
+		Pair { basepoint, fiberpoint } => DynamicValue::Pair {
 			basepoint: rc!(evaluate_dynamic(environment, *basepoint)),
 			fiberpoint: rc!(evaluate_dynamic(environment, *fiberpoint)),
 		},
-		DynamicTerm::Apply { scrutinee, argument } => DynamicValue::Apply {
+		Apply { scrutinee, argument } => DynamicValue::Apply {
 			scrutinee: rc!(evaluate_dynamic(environment, *scrutinee)),
 			argument: rc!(evaluate_dynamic(environment, *argument)),
 		},
-		DynamicTerm::Project { scrutinee, projection } =>
+		Project { scrutinee, projection } =>
 			DynamicValue::Project { scrutinee: rc!(evaluate_dynamic(environment, *scrutinee)), projection },
-		DynamicTerm::Pi { parameter, base, family } => DynamicValue::Pi {
+		Pi { parameter, base, family } => DynamicValue::Pi {
 			parameter,
 			base: rc!(evaluate_dynamic(environment, *base)),
 			family: rc!(evaluate_dynamic(&environment.extend_dynamic(parameter), *family)),
 		},
-		DynamicTerm::Sigma { parameter, base, family } => DynamicValue::Sigma {
+		Sigma { parameter, base, family } => DynamicValue::Sigma {
 			parameter,
 			base: rc!(evaluate_dynamic(environment, *base)),
 			family: rc!(evaluate_dynamic(&environment.extend_dynamic(parameter), *family)),
 		},
-		DynamicTerm::Let { assignee, ty, argument, tail } => {
-			let ty = evaluate_dynamic(environment, *ty);
-			let argument = evaluate_dynamic(environment, *argument);
-			DynamicValue::Let {
-				assignee,
-				ty: rc!(ty),
-				argument: rc!(argument.clone()),
-				tail: rc!(evaluate_dynamic(&environment.extend_dynamic(assignee), *tail)),
-			}
-		}
-		DynamicTerm::Universe => DynamicValue::Universe,
-		DynamicTerm::Splice(term) => {
+		Let { assignee, ty, argument, tail } => DynamicValue::Let {
+			assignee,
+			ty: rc!(evaluate_dynamic(environment, *ty)),
+			argument: rc!(evaluate_dynamic(environment, *argument)),
+			tail: rc!(evaluate_dynamic(&environment.extend_dynamic(assignee), *tail)),
+		},
+		Universe => DynamicValue::Universe,
+		Splice(term) => {
 			let StaticValue::Quote(value) = evaluate_static(environment, *term) else { panic!() };
 			value.as_ref().clone()
 		}
+		Nat => DynamicValue::Nat,
+		Num(n) => DynamicValue::Num(n),
+		Suc(prev) => DynamicValue::Suc(rc!(evaluate_dynamic(environment, *prev))),
+		CaseNat { scrutinee, motive_parameter, motive, case_nil, case_suc_parameters, case_suc } =>
+			DynamicValue::CaseNat {
+				scrutinee: rc!(evaluate_dynamic(environment, *scrutinee)),
+				motive_parameter,
+				motive: rc!(evaluate_dynamic(&environment.extend_dynamic(motive_parameter), *motive)),
+				case_nil: rc!(evaluate_dynamic(environment, *case_nil)),
+				case_suc_parameters,
+				case_suc: rc!(evaluate_dynamic(
+					&environment.extend_dynamic(case_suc_parameters.0).extend_dynamic(case_suc_parameters.1),
+					*case_suc
+				)),
+			},
 	}
 }
