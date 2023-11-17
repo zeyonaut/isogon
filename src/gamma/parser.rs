@@ -1,14 +1,12 @@
 use std::iter::Peekable;
 
-use lasso::{Rodeo, Spur};
+use lasso::Rodeo;
 
 use super::{
-	common::Projection,
-	lexer::{Lexeme, Lexer},
+	common::{Name, Projection},
+	lexer::{Keyword, Lexeme, Lexer, Token},
 };
-use crate::{gamma::lexer::Token, utility::bx};
-
-pub type Name = Spur;
+use crate::utility::bx;
 
 #[derive(Debug, Clone)]
 pub enum StaticPreterm {
@@ -123,30 +121,26 @@ impl<'s> Parser<'s> {
 		use StaticPreterm::*;
 		use Token::*;
 
-		let Lexeme { token, len } = self.peek_lexeme()?;
-		match token {
-			Identifier => {
-				let span = &self.source[self.offset..self.offset + len];
-				match span {
-					"let" => {
-						self.next_lexeme();
-						let name = {
-							let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
-								return None;
-							};
-							self.identifier(offset, len)
-						};
-						self.consume(Colon)?;
-						let ty = self.parse_static()?;
-						self.consume(Equal)?;
-						let argument = self.parse_static()?;
-						self.consume(Semi)?;
-						let tail = self.parse_static()?;
+		use self::Keyword;
 
-						Some(Let { assignee: name, ty: bx!(ty), argument: bx!(argument), tail: bx!(tail) })
-					}
-					_ => self.parse_static_atom_headed(),
-				}
+		let Lexeme { token, len: _ } = self.peek_lexeme()?;
+		match token {
+			Keyword(Keyword::Let) => {
+				self.next_lexeme();
+				let name = {
+					let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
+						return None;
+					};
+					self.identifier(offset, len)
+				};
+				self.consume(Colon)?;
+				let ty = self.parse_static()?;
+				self.consume(Equal)?;
+				let argument = self.parse_static()?;
+				self.consume(Semi)?;
+				let tail = self.parse_static()?;
+
+				Some(Let { assignee: name, ty: bx!(ty), argument: bx!(argument), tail: bx!(tail) })
 			}
 			Pipe => {
 				self.next_lexeme();
@@ -181,52 +175,48 @@ impl<'s> Parser<'s> {
 		use DynamicPreterm::*;
 		use Token::*;
 
-		let Lexeme { token, len } = self.peek_lexeme()?;
+		use self::Keyword;
+
+		let Lexeme { token, len: _ } = self.peek_lexeme()?;
 		match token {
-			Identifier => {
-				let span = &self.source[self.offset..self.offset + len];
-				match span {
-					"let" => {
-						self.next_lexeme();
-						let name = {
-							let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
-								return None;
-							};
-							self.identifier(offset, len)
-						};
-						self.consume(Colon)?;
-						let ty = self.parse_dynamic()?;
-						self.consume(Equal)?;
-						let argument = self.parse_dynamic()?;
-						self.consume(Semi)?;
-						let tail = self.parse_dynamic()?;
+			Keyword(Keyword::Let) => {
+				self.next_lexeme();
+				let name = {
+					let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
+						return None;
+					};
+					self.identifier(offset, len)
+				};
+				self.consume(Colon)?;
+				let ty = self.parse_dynamic()?;
+				self.consume(Equal)?;
+				let argument = self.parse_dynamic()?;
+				self.consume(Semi)?;
+				let tail = self.parse_dynamic()?;
 
-						Some(Let { assignee: name, ty: bx!(ty), argument: bx!(argument), tail: bx!(tail) })
-					}
-					"def" => {
-						self.next_lexeme();
-						let name = {
-							let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
-								return None;
-							};
-							self.identifier(offset, len)
-						};
-						self.consume(Colon)?;
-						let ty = self.parse_static()?;
-						self.consume(Equal)?;
-						let argument = self.parse_static()?;
-						self.consume(Semi)?;
-						let tail = self.parse_dynamic()?;
+				Some(Let { assignee: name, ty: bx!(ty), argument: bx!(argument), tail: bx!(tail) })
+			}
+			Keyword(Keyword::Def) => {
+				self.next_lexeme();
+				let name = {
+					let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
+						return None;
+					};
+					self.identifier(offset, len)
+				};
+				self.consume(Colon)?;
+				let ty = self.parse_static()?;
+				self.consume(Equal)?;
+				let argument = self.parse_static()?;
+				self.consume(Semi)?;
+				let tail = self.parse_dynamic()?;
 
-						Some(Splice(bx!(StaticPreterm::Let {
-							assignee: name,
-							ty: bx!(ty),
-							argument: bx!(argument),
-							tail: bx!(StaticPreterm::Quote(bx!(tail)))
-						})))
-					}
-					_ => self.parse_dynamic_atom_headed(),
-				}
+				Some(Splice(bx!(StaticPreterm::Let {
+					assignee: name,
+					ty: bx!(ty),
+					argument: bx!(argument),
+					tail: bx!(StaticPreterm::Quote(bx!(tail)))
+				})))
 			}
 			Pipe => {
 				self.next_lexeme();
@@ -329,9 +319,9 @@ impl<'s> Parser<'s> {
 	pub fn parse_dynamic_spine(&mut self) -> Option<DynamicPreterm> {
 		use DynamicPreterm::*;
 		use Token::*;
-		let Lexeme { token, len } = self.peek_lexeme()?;
+		let Lexeme { token, len: _ } = self.peek_lexeme()?;
 
-		let mut term = if token == Identifier && &self.source[self.offset..self.offset + len] == "suc" {
+		let mut term = if token == Keyword(self::Keyword::Suc) {
 			self.next_lexeme();
 			Suc(bx!(self.parse_dynamic_atom()?))
 		} else {
@@ -370,12 +360,7 @@ impl<'s> Parser<'s> {
 					self.consume(Arrow)?;
 					let case_nil = self.parse_dynamic()?;
 					self.consume(Pipe)?;
-					{
-						let (Lexeme { token: Identifier, len: 3 }, offset) = self.next_lexeme()? else {
-							return None;
-						};
-						(&self.source[offset..offset + 3] == "suc").then_some(())?
-					}
+					self.consume(Keyword(self::Keyword::Suc))?;
 					let case_suc_parameters = (
 						{
 							let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
@@ -437,6 +422,8 @@ impl<'s> Parser<'s> {
 	fn parse_dynamic_atom(&mut self) -> Option<DynamicPreterm> {
 		use DynamicPreterm::*;
 		use Token::*;
+
+		use self::Keyword;
 		let (Lexeme { token, len }, offset) = self.next_lexeme()?;
 		let term = match token {
 			SquareL => {
@@ -451,7 +438,7 @@ impl<'s> Parser<'s> {
 			}
 			Ast => Universe,
 			Number => Num(self.source[offset..offset + len].parse().unwrap()),
-			Identifier if &self.source[offset..offset + len] == "nat" => Nat,
+			Keyword(Keyword::Nat) => Nat,
 			Identifier => Variable(self.identifier(offset, len)),
 			_ => return None,
 		};

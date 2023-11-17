@@ -4,7 +4,6 @@ let add : nat -> nat -> nat
 		| suc n k -> suc k
 	};
 
-
 let fib2 : nat -> (nat & nat) -> (nat & nat)
 	= |n| |x| n :: |n| (nat & nat) {
 		| 0       -> x
