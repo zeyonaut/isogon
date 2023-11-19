@@ -35,50 +35,68 @@ pub enum Keyword {
 	Suc,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Lexeme {
 	pub token: Token,
-	pub len: usize,
+	pub range: (usize, usize),
 }
 
 impl Lexeme {
-	pub fn new(token: Token, len: usize) -> Self {
-		Self { token, len }
+	pub fn new(token: Token, range: (usize, usize)) -> Self {
+		Self { token, range }
 	}
 }
 
-pub struct Lexer<'s> {
-	source: &'s str,
+pub struct LexError(pub usize, pub LexErrorKind);
+
+pub enum LexErrorKind {
+	UnrecognizedLexemePrefix,
+	UnexpectedCharacter(&'static [char]),
+	UnexpectedEnd(&'static [char]),
+}
+
+struct Scanner<'s> {
+	len: usize,
 	chars: Chars<'s>,
-	len_remaining: usize,
 }
 
-impl<'s> Lexer<'s> {
+impl<'s> Scanner<'s> {
 	pub fn new(source: &'s str) -> Self {
-		Self { source, chars: source.chars(), len_remaining: source.len() }
+		Self { len: source.len(), chars: source.chars() }
 	}
 
-	fn next_char(&mut self) -> Option<char> {
+	pub fn position(&self) -> usize {
+		self.len - self.chars.as_str().len()
+	}
+
+	pub fn previous_position(&self) -> usize {
+		self.position() - 1
+	}
+
+	pub fn next(&mut self) -> Option<(char, usize)> {
+		let position = self.position();
+		Some((self.chars.next()?, position))
+	}
+
+	pub fn pop(&mut self) -> Option<char> {
 		self.chars.next()
 	}
 
-	fn peek_char(&mut self) -> Option<char> {
+	pub fn peek(&mut self) -> Option<char> {
 		self.chars.clone().next()
 	}
+}
 
-	fn advance_len(&mut self) -> usize {
-		let len = self.len_remaining;
-		self.len_remaining = self.chars.as_str().len();
-		len - self.len_remaining
-	}
+pub struct LexedSource {
+	pub lexemes: Vec<Lexeme>,
+}
 
-	fn keyword_or_identifier(&self) -> Token {
+impl LexedSource {
+	fn keyword_or_identifier(string: &str) -> Token {
 		use Token::*;
 
 		use self::Keyword::*;
-		match &self.source
-			[self.source.len() - self.len_remaining..self.source.len() - self.chars.as_str().len()]
-		{
+		match string {
 			"def" => Keyword(Def),
 			"let" => Keyword(Let),
 			"suc" => Keyword(Suc),
@@ -86,64 +104,76 @@ impl<'s> Lexer<'s> {
 			_ => Identifier,
 		}
 	}
-}
 
-impl<'s> Iterator for Lexer<'s> {
-	type Item = Lexeme;
-
-	fn next(&mut self) -> Option<Self::Item> {
+	pub fn new(source: &str) -> Result<Self, LexError> {
+		use LexErrorKind::*;
 		use Token::*;
-		let initial = self.next_char()?;
-		let token = match initial {
-			' ' | '\n' | '\t' => {
-				while let Some(' ' | '\n' | '\t') = self.peek_char() {
-					self.next_char();
+		let mut scanner = Scanner::new(source);
+		let mut lexemes = Vec::new();
+		while let Some((initial, start)) = scanner.next() {
+			let token = match initial {
+				' ' | '\n' | '\t' => {
+					while let Some(' ' | '\n' | '\t') = scanner.peek() {
+						scanner.pop();
+					}
+					Whitespace
 				}
-				Whitespace
-			}
-			'a'..='z' | 'A'..='Z' => {
-				while let Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_') = self.peek_char() {
-					self.next_char();
+				'a'..='z' | 'A'..='Z' => {
+					while let Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_') = scanner.peek() {
+						scanner.pop();
+					}
+					Self::keyword_or_identifier(&source[start..scanner.position()])
 				}
-				self.keyword_or_identifier()
-			}
-			'0'..='9' => {
-				while let Some('0'..='9') = self.peek_char() {
-					self.next_char();
+				'0'..='9' => {
+					while let Some('0'..='9') = scanner.peek() {
+						scanner.pop();
+					}
+					Number
 				}
-				Number
-			}
-			'/' => match self.next_char()? {
-				'.' => Project(Projection::Base),
-				'!' => Project(Projection::Fiber),
-				_ => panic!("unrecognized character"),
-			},
-			'&' => Amp,
-			'|' => Pipe,
-			':' =>
-				if let Some(':') = self.peek_char() {
-					self.next_char();
-					TwoColon
-				} else {
-					Colon
-				},
-			';' => Semi,
-			',' => Comma,
-			'=' => Equal,
-			'(' => ParenL,
-			')' => ParenR,
-			'[' => SquareL,
-			']' => SquareR,
-			'{' => CurlyL,
-			'}' => CurlyR,
-			'*' => Ast,
-			'\'' => Tick,
-			'-' if Some('>') == self.peek_char() => {
-				self.next_char();
-				Arrow
-			}
-			_ => panic!("unrecognized character"),
-		};
-		Some(Lexeme::new(token, self.advance_len()))
+				'/' => {
+					const EXPECTED: [char; 2] = ['.', '!'];
+					match scanner.pop() {
+						Some('.') => Project(Projection::Base),
+						Some('!') => Project(Projection::Fiber),
+						Some(_) =>
+							return Err(LexError(scanner.previous_position(), UnexpectedCharacter(&EXPECTED))),
+						None => return Err(LexError(scanner.previous_position(), UnexpectedEnd(&EXPECTED))),
+					}
+				}
+				'&' => Amp,
+				'|' => Pipe,
+				':' =>
+					if let Some(':') = scanner.peek() {
+						scanner.pop();
+						TwoColon
+					} else {
+						Colon
+					},
+				';' => Semi,
+				',' => Comma,
+				'=' => Equal,
+				'(' => ParenL,
+				')' => ParenR,
+				'[' => SquareL,
+				']' => SquareR,
+				'{' => CurlyL,
+				'}' => CurlyR,
+				'*' => Ast,
+				'\'' => Tick,
+				'-' => {
+					const EXPECTED: [char; 1] = ['>'];
+					match scanner.pop() {
+						Some('>') => Arrow,
+						Some(_) =>
+							return Err(LexError(scanner.previous_position(), UnexpectedCharacter(&EXPECTED))),
+						None => return Err(LexError(scanner.previous_position(), UnexpectedEnd(&EXPECTED))),
+					}
+				}
+				_ => return Err(LexError(scanner.previous_position(), UnrecognizedLexemePrefix)),
+			};
+			lexemes.push(Lexeme::new(token, (start, scanner.position())))
+		}
+
+		Ok(Self { lexemes })
 	}
 }

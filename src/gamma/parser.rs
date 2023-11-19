@@ -1,10 +1,8 @@
-use std::iter::Peekable;
-
 use lasso::Rodeo;
 
 use super::{
 	common::{Name, Projection},
-	lexer::{Keyword, Lexeme, Lexer, Token},
+	lexer::{Keyword, LexedSource, Lexeme, Token},
 };
 use crate::utility::bx;
 
@@ -69,22 +67,33 @@ pub enum DynamicPreterm {
 
 pub struct Parser<'s> {
 	source: &'s str,
-	offset: usize,
-	lexer: Peekable<Lexer<'s>>,
+	lexeme_index: usize,
+	lexed_source: LexedSource,
 	pub interner: Rodeo,
 }
 
 impl<'s> Parser<'s> {
-	pub fn new(source: &'s str) -> Self {
-		Self { source, offset: 0, lexer: Lexer::new(source).peekable(), interner: Rodeo::new() }
+	pub fn new(source: &'s str, lexed_source: LexedSource) -> Self {
+		Self { source, lexeme_index: 0, lexed_source, interner: Rodeo::new() }
 	}
 
 	pub fn peek_lexeme(&mut self) -> Option<Lexeme> {
-		while let Some(lexeme) = self.lexer.peek() {
+		while let Some(lexeme) = self.lexed_source.lexemes.get(self.lexeme_index) {
 			use Token::*;
 			if let Whitespace = lexeme.token {
-				self.offset += lexeme.len;
-				self.lexer.next();
+				self.lexeme_index += 1;
+			} else {
+				return Some(*lexeme);
+			}
+		}
+		None
+	}
+
+	pub fn next_lexeme(&mut self) -> Option<Lexeme> {
+		while let Some(lexeme) = self.lexed_source.lexemes.get(self.lexeme_index) {
+			use Token::*;
+			self.lexeme_index += 1;
+			if let Whitespace = lexeme.token {
 				continue;
 			} else {
 				return Some(*lexeme);
@@ -93,28 +102,22 @@ impl<'s> Parser<'s> {
 		None
 	}
 
-	pub fn next_lexeme(&mut self) -> Option<(Lexeme, usize)> {
-		for lexeme in self.lexer.by_ref() {
-			let offset = self.offset;
-			self.offset += lexeme.len;
-			use Token::*;
-			if let Whitespace = lexeme.token {
-				continue;
-			} else {
-				return Some((lexeme, offset));
-			}
-		}
-		None
-	}
-
-	pub fn identifier(&mut self, offset: usize, len: usize) -> Name {
-		let span = &self.source[offset..offset + len];
+	pub fn identifier(&mut self, range: (usize, usize)) -> Name {
+		let span = &self.source[range.0..range.1];
 		self.interner.get_or_intern(span)
 	}
 
 	#[must_use]
+	pub fn parse_identifier(&mut self) -> Option<Name> {
+		let Lexeme { token: Token::Identifier, range } = self.next_lexeme()? else {
+			return None;
+		};
+		Some(self.identifier(range))
+	}
+
+	#[must_use]
 	pub fn consume(&mut self, token: Token) -> Option<()> {
-		(self.next_lexeme()?.0.token == token).then_some(())
+		(self.next_lexeme()?.token == token).then_some(())
 	}
 
 	pub fn parse_static(&mut self) -> Option<StaticPreterm> {
@@ -123,16 +126,11 @@ impl<'s> Parser<'s> {
 
 		use self::Keyword;
 
-		let Lexeme { token, len: _ } = self.peek_lexeme()?;
+		let Lexeme { token, .. } = self.peek_lexeme()?;
 		match token {
 			Keyword(Keyword::Let) => {
 				self.next_lexeme();
-				let name = {
-					let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
-						return None;
-					};
-					self.identifier(offset, len)
-				};
+				let name = self.parse_identifier()?;
 				self.consume(Colon)?;
 				let ty = self.parse_static()?;
 				self.consume(Equal)?;
@@ -144,12 +142,7 @@ impl<'s> Parser<'s> {
 			}
 			Pipe => {
 				self.next_lexeme();
-				let name = {
-					let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
-						return None;
-					};
-					self.identifier(offset, len)
-				};
+				let name = self.parse_identifier()?;
 				match self.peek_lexeme()?.token {
 					Pipe => {
 						self.next_lexeme();
@@ -177,16 +170,11 @@ impl<'s> Parser<'s> {
 
 		use self::Keyword;
 
-		let Lexeme { token, len: _ } = self.peek_lexeme()?;
+		let Lexeme { token, .. } = self.peek_lexeme()?;
 		match token {
 			Keyword(Keyword::Let) => {
 				self.next_lexeme();
-				let name = {
-					let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
-						return None;
-					};
-					self.identifier(offset, len)
-				};
+				let name = self.parse_identifier()?;
 				self.consume(Colon)?;
 				let ty = self.parse_dynamic()?;
 				self.consume(Equal)?;
@@ -198,12 +186,7 @@ impl<'s> Parser<'s> {
 			}
 			Keyword(Keyword::Def) => {
 				self.next_lexeme();
-				let name = {
-					let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
-						return None;
-					};
-					self.identifier(offset, len)
-				};
+				let name = self.parse_identifier()?;
 				self.consume(Colon)?;
 				let ty = self.parse_static()?;
 				self.consume(Equal)?;
@@ -220,12 +203,7 @@ impl<'s> Parser<'s> {
 			}
 			Pipe => {
 				self.next_lexeme();
-				let name = {
-					let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
-						return None;
-					};
-					self.identifier(offset, len)
-				};
+				let name = self.parse_identifier()?;
 				match self.peek_lexeme()?.token {
 					Pipe => {
 						self.next_lexeme();
@@ -236,7 +214,7 @@ impl<'s> Parser<'s> {
 						self.next_lexeme();
 						let base = self.parse_dynamic()?;
 						self.consume(Pipe)?;
-						match self.next_lexeme()?.0.token {
+						match self.next_lexeme()?.token {
 							Arrow => {
 								let family = self.parse_dynamic()?;
 								Some(Pi { parameter: name, base: bx!(base), family: bx!(family) })
@@ -259,7 +237,7 @@ impl<'s> Parser<'s> {
 		use StaticPreterm::*;
 		use Token::*;
 		let term = self.parse_static_spine()?;
-		if let Some(Lexeme { token: Arrow, len: _ }) = self.peek_lexeme() {
+		if let Some(Lexeme { token: Arrow, .. }) = self.peek_lexeme() {
 			self.next_lexeme();
 			let family = self.parse_static()?;
 			Some(Pi { parameter: self.interner.get_or_intern_static("_"), base: bx!(term), family: bx!(family) })
@@ -304,7 +282,7 @@ impl<'s> Parser<'s> {
 		use StaticPreterm::*;
 		use Token::*;
 		let mut term = self.parse_static_atom()?;
-		while let Some(Lexeme { token, len: _ }) = self.peek_lexeme() {
+		while let Some(Lexeme { token, .. }) = self.peek_lexeme() {
 			match token {
 				Tick | SquareL | ParenL | Ast | Identifier => {
 					let atom = self.parse_static_atom()?;
@@ -319,7 +297,7 @@ impl<'s> Parser<'s> {
 	pub fn parse_dynamic_spine(&mut self) -> Option<DynamicPreterm> {
 		use DynamicPreterm::*;
 		use Token::*;
-		let Lexeme { token, len: _ } = self.peek_lexeme()?;
+		let Lexeme { token, .. } = self.peek_lexeme()?;
 
 		let mut term = if token == Keyword(self::Keyword::Suc) {
 			self.next_lexeme();
@@ -328,7 +306,7 @@ impl<'s> Parser<'s> {
 			self.parse_dynamic_atom()?
 		};
 
-		while let Some(Lexeme { token, len: _ }) = self.peek_lexeme() {
+		while let Some(Lexeme { token, .. }) = self.peek_lexeme() {
 			match token {
 				SquareL | ParenL | Ast | Number | Identifier => {
 					let atom = self.parse_dynamic_atom()?;
@@ -341,40 +319,22 @@ impl<'s> Parser<'s> {
 				TwoColon => {
 					self.next_lexeme();
 					self.consume(Pipe)?;
-					let motive_parameter = {
-						let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
-							return None;
-						};
-						self.identifier(offset, len)
-					};
+					let motive_parameter = self.parse_identifier()?;
 					self.consume(Pipe)?;
 					let motive = self.parse_dynamic()?;
 					self.consume(CurlyL)?;
 					self.consume(Pipe)?;
 					{
-						let (Lexeme { token: Number, len: 1 }, offset) = self.next_lexeme()? else {
+						let Lexeme { token: Number, range } = self.next_lexeme()? else {
 							return None;
 						};
-						(&self.source[offset..offset + 1] == "0").then_some(())?
+						(&self.source[range.0..range.1] == "0").then_some(())?
 					}
 					self.consume(Arrow)?;
 					let case_nil = self.parse_dynamic()?;
 					self.consume(Pipe)?;
 					self.consume(Keyword(self::Keyword::Suc))?;
-					let case_suc_parameters = (
-						{
-							let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
-								return None;
-							};
-							self.identifier(offset, len)
-						},
-						{
-							let (Lexeme { token: Identifier, len }, offset) = self.next_lexeme()? else {
-								return None;
-							};
-							self.identifier(offset, len)
-						},
-					);
+					let case_suc_parameters = (self.parse_identifier()?, self.parse_identifier()?);
 					self.consume(Arrow)?;
 					let case_suc = self.parse_dynamic()?;
 					self.consume(CurlyR)?;
@@ -396,7 +356,7 @@ impl<'s> Parser<'s> {
 	pub fn parse_static_atom(&mut self) -> Option<StaticPreterm> {
 		use StaticPreterm::*;
 		use Token::*;
-		let (Lexeme { token, len }, offset) = self.next_lexeme()?;
+		let Lexeme { token, range } = self.next_lexeme()?;
 		let term = match token {
 			Tick => {
 				let term = self.parse_dynamic_atom()?;
@@ -413,7 +373,7 @@ impl<'s> Parser<'s> {
 				term
 			}
 			Ast => Universe,
-			Identifier => Variable(self.identifier(offset, len)),
+			Identifier => Variable(self.identifier(range)),
 			_ => return None,
 		};
 		Some(term)
@@ -424,7 +384,7 @@ impl<'s> Parser<'s> {
 		use Token::*;
 
 		use self::Keyword;
-		let (Lexeme { token, len }, offset) = self.next_lexeme()?;
+		let Lexeme { token, range } = self.next_lexeme()?;
 		let term = match token {
 			SquareL => {
 				let term = self.parse_static()?;
@@ -437,9 +397,9 @@ impl<'s> Parser<'s> {
 				term
 			}
 			Ast => Universe,
-			Number => Num(self.source[offset..offset + len].parse().unwrap()),
+			Number => Num(self.source[range.0..range.1].parse().unwrap()),
 			Keyword(Keyword::Nat) => Nat,
-			Identifier => Variable(self.identifier(offset, len)),
+			Identifier => Variable(self.identifier(range)),
 			_ => return None,
 		};
 		Some(term)
