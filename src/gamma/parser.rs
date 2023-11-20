@@ -9,13 +9,47 @@ use crate::utility::bx;
 #[derive(Debug, Clone)]
 pub enum StaticPreterm {
 	Variable(Name),
-	Let { assignee: Name, ty: Box<Self>, argument: Box<Self>, tail: Box<Self> },
+	Let {
+		assignee: Name,
+		ty: Box<Self>,
+		argument: Box<Self>,
+		tail: Box<Self>,
+	},
 	Lift(Box<DynamicPreterm>),
 	Quote(Box<DynamicPreterm>),
 	Universe,
-	Pi { parameter: Name, base: Box<Self>, family: Box<Self> },
-	Lambda { parameter: Name, body: Box<Self> },
-	Apply { scrutinee: Box<Self>, argument: Box<Self> },
+	Pi {
+		parameter: Name,
+		base: Box<Self>,
+		family: Box<Self>,
+	},
+	Lambda {
+		parameter: Name,
+		body: Box<Self>,
+	},
+	Apply {
+		scrutinee: Box<Self>,
+		argument: Box<Self>,
+	},
+	Nat,
+	Num(usize),
+	Suc(Box<Self>),
+	CaseNat {
+		scrutinee: Box<Self>,
+		motive_parameter: Name,
+		motive: Box<Self>,
+		case_nil: Box<Self>,
+		case_suc_parameters: (Name, Name),
+		case_suc: Box<Self>,
+	},
+	Bool,
+	BoolValue(bool),
+	CaseBool {
+		scrutinee: Box<Self>,
+		motive: Binder<Box<Self>>,
+		case_false: Box<Self>,
+		case_true: Box<Self>,
+	},
 }
 
 #[derive(Debug, Clone)]
@@ -289,12 +323,75 @@ impl<'s> Parser<'s> {
 	pub fn parse_static_spine(&mut self) -> Option<StaticPreterm> {
 		use StaticPreterm::*;
 		use Token::*;
-		let mut term = self.parse_static_atom()?;
+
+		let Lexeme { token, .. } = self.peek_lexeme()?;
+
+		let mut term = if token == Keyword(self::Keyword::Suc) {
+			self.next_lexeme();
+			Suc(bx!(self.parse_static_atom()?))
+		} else {
+			self.parse_static_atom()?
+		};
+
 		while let Some(Lexeme { token, .. }) = self.peek_lexeme() {
 			match token {
-				Tick | SquareL | ParenL | Ast | Identifier => {
-					let atom = self.parse_static_atom()?;
-					term = Apply { scrutinee: bx!(term), argument: bx!(atom) };
+				_ if Self::is_static_atom_start(token) => {
+					term = Apply { scrutinee: bx!(term), argument: bx!(self.parse_static_atom()?) };
+				}
+				TwoColon => {
+					self.next_lexeme();
+					if let Some(Keyword(self::Keyword::Bool)) = self.peek_lexeme().map(|x| x.token) {
+						self.next_lexeme();
+						self.consume(Pipe)?;
+						let motive_parameter = self.parse_identifier()?;
+						self.consume(Pipe)?;
+						let motive = self.parse_static()?;
+						self.consume(CurlyL)?;
+						self.consume(Pipe)?;
+						self.consume(Keyword(self::Keyword::False))?;
+						self.consume(Arrow)?;
+						let case_false = self.parse_static()?;
+						self.consume(Pipe)?;
+						self.consume(Keyword(self::Keyword::True))?;
+						self.consume(Arrow)?;
+						let case_true = self.parse_static()?;
+						self.consume(CurlyR)?;
+						term = StaticPreterm::CaseBool {
+							scrutinee: bx!(term),
+							motive: bind([motive_parameter], bx!(motive)),
+							case_false: bx!(case_false),
+							case_true: bx!(case_true),
+						}
+					} else {
+						self.consume(Pipe)?;
+						let motive_parameter = self.parse_identifier()?;
+						self.consume(Pipe)?;
+						let motive = self.parse_static()?;
+						self.consume(CurlyL)?;
+						self.consume(Pipe)?;
+						{
+							let Lexeme { token: Number, range } = self.next_lexeme()? else {
+								return None;
+							};
+							(&self.source[range.0..range.1] == "0").then_some(())? // TODO: Wrap this.
+						}
+						self.consume(Arrow)?;
+						let case_nil = self.parse_static()?;
+						self.consume(Pipe)?;
+						self.consume(Keyword(self::Keyword::Suc))?;
+						let case_suc_parameters = (self.parse_identifier()?, self.parse_identifier()?);
+						self.consume(Arrow)?;
+						let case_suc = self.parse_static()?;
+						self.consume(CurlyR)?;
+						term = StaticPreterm::CaseNat {
+							scrutinee: bx!(term),
+							motive_parameter,
+							motive: bx!(motive),
+							case_nil: bx!(case_nil),
+							case_suc_parameters,
+							case_suc: bx!(case_suc),
+						}
+					}
 				}
 				_ => break,
 			}
@@ -384,9 +481,25 @@ impl<'s> Parser<'s> {
 		Some(term)
 	}
 
+	fn is_static_atom_start(token: Token) -> bool {
+		use Token::*;
+
+		use self::Keyword;
+		matches!(
+			token,
+			Tick
+				| SquareL | ParenL
+				| Ast | Number
+				| Keyword(Keyword::Nat | Keyword::Bool | Keyword::False | Keyword::True)
+				| Identifier
+		)
+	}
+
 	pub fn parse_static_atom(&mut self) -> Option<StaticPreterm> {
 		use StaticPreterm::*;
 		use Token::*;
+
+		use self::Keyword;
 		let Lexeme { token, range } = self.next_lexeme()?;
 		let term = match token {
 			Tick => {
@@ -404,6 +517,11 @@ impl<'s> Parser<'s> {
 				term
 			}
 			Ast => Universe,
+			Number => Num(self.source[range.0..range.1].parse().unwrap()),
+			Keyword(Keyword::Nat) => Nat,
+			Keyword(Keyword::Bool) => Bool,
+			Keyword(Keyword::False) => BoolValue(false),
+			Keyword(Keyword::True) => BoolValue(true),
 			Identifier => Variable(self.identifier(range)),
 			_ => return None,
 		};
@@ -436,7 +554,6 @@ impl<'s> Parser<'s> {
 				Splice(bx!(term))
 			}
 			ParenL => {
-				println!("right?");
 				let term = self.parse_dynamic()?;
 				self.consume(ParenR)?;
 				term

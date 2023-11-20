@@ -11,6 +11,8 @@ pub enum StaticValue {
 	Type,
 	Quote(Rc<DynamicValue>),
 	Function(Closure<Environment, StaticTerm>),
+	Num(usize),
+	BoolValue(bool),
 }
 
 impl Debug for StaticValue {
@@ -19,6 +21,7 @@ impl Debug for StaticValue {
 			Self::Type => write!(f, "Type"),
 			Self::Quote(quotee) => f.debug_tuple("Quote").field(quotee).finish(),
 			Self::Function(_) => f.debug_tuple("Function").field(&format_args!("_")).finish(),
+			_ => write!(f, "<...>"),
 		}
 	}
 }
@@ -129,13 +132,32 @@ impl Stage for StaticTerm {
 			Lambda(function) => StaticValue::Function(function.stage(environment)),
 			Apply { scrutinee, argument } => {
 				let StaticValue::Function(function) = scrutinee.stage(environment) else { panic!() };
-				function.stage_with(environment, [*argument])
+				// TODO: The environment argument is useless in this position: make a separate trait for this (as in EvaluateWith/EvaluateAt).
+				function.stage_with(environment, [argument.stage(environment)])
 			}
 			Pi { .. } => StaticValue::Type,
-			Let { argument, tail, .. } => tail.stage_with(environment, [*argument]),
+			Let { argument, tail, .. } => tail.stage_with(environment, [argument.stage(environment)]),
 			Universe => StaticValue::Type,
 			Lift(_) => StaticValue::Type,
 			Quote(term) => StaticValue::Quote(rc!(term.stage(environment))),
+			Nat => StaticValue::Type,
+			Num(n) => StaticValue::Num(n),
+			Suc(p) => {
+				let StaticValue::Num(p) = p.stage(environment) else { panic!() };
+				StaticValue::Num(p + 1)
+			}
+			CaseNat { scrutinee, motive: _, case_nil, case_suc } => {
+				let StaticValue::Num(n) = scrutinee.stage(environment) else { panic!() };
+				(0..n).fold(case_nil.stage(environment), |previous, i| {
+					case_suc.clone().stage_with(environment, [StaticValue::Num(i), previous])
+				})
+			}
+			Bool => StaticValue::Type,
+			BoolValue(b) => StaticValue::BoolValue(b),
+			CaseBool { scrutinee, motive: _, case_false, case_true } => {
+				let StaticValue::BoolValue(b) = scrutinee.stage(environment) else { panic!() };
+				if b { case_true } else { case_false }.stage(environment)
+			}
 		}
 	}
 }
@@ -200,28 +222,20 @@ impl Stage for DynamicTerm {
 pub trait StageWith<const N: usize> {
 	type ObjectTerm;
 	/// Transforms a core term under a binder into an object term, taking arguments.
-	fn stage_with<T>(self, environment: &Environment, arguments: [T; N]) -> Self::ObjectTerm
-	where
-		T: Stage<ObjectTerm = Self::ObjectTerm>;
+	fn stage_with(self, environment: &Environment, arguments: [Self::ObjectTerm; N]) -> Self::ObjectTerm;
 }
 
 impl<const N: usize> StageWith<N> for Binder<Box<StaticTerm>, N> {
 	type ObjectTerm = StaticValue;
-	fn stage_with<T>(self, environment: &Environment, terms: [T; N]) -> Self::ObjectTerm
-	where
-		T: Stage<ObjectTerm = Self::ObjectTerm>,
-	{
-		self.body.stage(&environment.extend(terms.map(|term| Value::Static(term.stage(environment)))))
+	fn stage_with(self, environment: &Environment, terms: [Self::ObjectTerm; N]) -> Self::ObjectTerm {
+		self.body.stage(&environment.extend(terms.map(Value::Static)))
 	}
 }
 
 impl<const N: usize> StageWith<N> for Closure<Environment, StaticTerm, N> {
 	type ObjectTerm = StaticValue;
-	fn stage_with<T>(self, environment: &Environment, terms: [T; N]) -> Self::ObjectTerm
-	where
-		T: Stage<ObjectTerm = Self::ObjectTerm>,
-	{
-		self.body.stage(&self.environment.extend(terms.map(|term| Value::Static(term.stage(environment)))))
+	fn stage_with(self, _: &Environment, terms: [Self::ObjectTerm; N]) -> Self::ObjectTerm {
+		self.body.stage(&self.environment.extend(terms.map(Value::Static)))
 	}
 }
 

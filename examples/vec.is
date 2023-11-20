@@ -1,0 +1,37 @@
+let unit : *
+	= |A : *| -> A -> A;
+
+let tt : unit
+	= |A| |a| a;
+
+def bitvec : nat -> '*
+	= |n| n :: |n| '* {
+		| 0       -> [unit]
+		| suc n T -> [bool & [T]]
+	};
+
+def not : bool -> bool
+	= |b| b :: bool |b| bool {
+		| false -> true
+		| true  -> false
+	};
+
+def lower : bool -> 'bool
+	= |b| b :: bool |b| 'bool {
+		| false -> [false]
+		| true  -> [true]
+	};
+
+def is_even : nat -> bool
+	= |n| n :: |n| bool {
+		| 0       -> true
+		| suc n x -> not x
+	};
+
+def make_bitvec : |n : nat| -> '[bitvec n]
+	= |n| n :: |n| '[bitvec n] {
+		| 0 -> [tt]
+		| suc n v -> [[lower (is_even n)], [v]]
+	};
+
+[make_bitvec 7]

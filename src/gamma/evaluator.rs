@@ -10,6 +10,19 @@ use crate::utility::{bx, rc};
 pub enum StaticNeutral {
 	Variable(Name, Level),
 	Apply(Rc<Self>, Rc<StaticValue>),
+	CaseNat {
+		scrutinee: Rc<Self>,
+		motive: Rc<Closure<Environment, StaticTerm>>,
+		case_nil: Rc<StaticValue>,
+		case_suc: Rc<Closure<Environment, StaticTerm, 2>>,
+	},
+	Suc(Rc<Self>),
+	CaseBool {
+		scrutinee: Rc<Self>,
+		motive: Rc<Closure<Environment, StaticTerm>>,
+		case_false: Rc<StaticValue>,
+		case_true: Rc<StaticValue>,
+	},
 }
 
 #[derive(Clone)]
@@ -20,6 +33,10 @@ pub enum StaticValue {
 	Quote(DynamicValue),
 	IndexedProduct(Rc<Self>, Rc<Closure<Environment, StaticTerm>>),
 	Function(Rc<Closure<Environment, StaticTerm>>),
+	Nat,
+	Num(usize),
+	Bool,
+	BoolValue(bool),
 }
 
 #[derive(Clone)]
@@ -139,6 +156,49 @@ impl Evaluate for StaticTerm {
 			Universe => StaticValue::Universe,
 			Lift(liftee) => StaticValue::Lift(liftee.evaluate(environment)),
 			Quote(quotee) => StaticValue::Quote(quotee.evaluate(environment)),
+			Nat => StaticValue::Nat,
+			Num(n) => StaticValue::Num(n),
+			Suc(prev) => match prev.evaluate(environment) {
+				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::Suc(rc!(neutral))),
+				StaticValue::Num(n) => StaticValue::Num(n + 1),
+				_ => panic!(),
+			},
+			CaseNat { scrutinee, motive, case_nil, case_suc } => match scrutinee.evaluate(environment) {
+				StaticValue::Num(n) => (0..n).fold(case_nil.evaluate(environment), |previous, i| {
+					case_suc.evaluate_at(environment, [StaticValue::Num(i), previous])
+				}),
+				StaticValue::Neutral(neutral) => {
+					let mut neutrals = vec![&neutral];
+					while let StaticNeutral::Suc(previous) = neutrals.last().unwrap() {
+						neutrals.push(&previous);
+					}
+					let result = StaticValue::Neutral(StaticNeutral::CaseNat {
+						scrutinee: rc!(neutrals.pop().unwrap().clone()),
+						motive: rc!(motive.evaluate(environment)),
+						case_nil: rc!(case_nil.evaluate(environment)),
+						case_suc: rc!(case_suc.clone().evaluate(environment)),
+					});
+					neutrals
+						.into_iter()
+						.rev()
+						.cloned()
+						.map(StaticValue::Neutral)
+						.fold(result, |previous, number| case_suc.evaluate_at(environment, [number, previous]))
+				}
+				_ => panic!(),
+			},
+			Bool => StaticValue::Bool,
+			BoolValue(b) => StaticValue::BoolValue(b),
+			CaseBool { scrutinee, motive, case_false, case_true } => match scrutinee.evaluate(environment) {
+				StaticValue::BoolValue(b) => if b { case_true } else { case_false }.evaluate(environment),
+				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::CaseBool {
+					scrutinee: rc!(neutral),
+					motive: rc!(motive.evaluate(environment)),
+					case_false: rc!(case_false.evaluate(environment)),
+					case_true: rc!(case_true.evaluate(environment)),
+				}),
+				_ => panic!(),
+			},
 		}
 	}
 }
@@ -323,6 +383,19 @@ impl Reify for StaticNeutral {
 			Variable(name, Level(level)) => StaticTerm::Variable(*name, Index(context_length - 1 - level)),
 			Apply(callee, argument) =>
 				StaticTerm::Apply { scrutinee: bx!(callee.reify(level)), argument: bx!(argument.reify(level)) },
+			Suc(prev) => StaticTerm::Suc(bx!(prev.reify(level))),
+			CaseNat { scrutinee, motive, case_nil, case_suc } => StaticTerm::CaseNat {
+				scrutinee: bx!(scrutinee.reify(level)),
+				motive: motive.reify(level),
+				case_nil: bx!(case_nil.reify(level)),
+				case_suc: case_suc.reify(level),
+			},
+			CaseBool { scrutinee, motive, case_false, case_true } => StaticTerm::CaseBool {
+				scrutinee: bx!(scrutinee.reify(level)),
+				motive: motive.reify(level),
+				case_false: bx!(case_false.reify(level)),
+				case_true: bx!(case_true.reify(level)),
+			},
 		}
 	}
 }
@@ -338,6 +411,10 @@ impl Reify for StaticValue {
 			Function(function) => StaticTerm::Lambda(function.reify(level)),
 			Lift(liftee) => StaticTerm::Lift(bx!(liftee.reify(level))),
 			Quote(quotee) => StaticTerm::Quote(bx!(quotee.reify(level))),
+			Nat => StaticTerm::Nat,
+			Num(n) => StaticTerm::Num(*n),
+			Bool => StaticTerm::Bool,
+			BoolValue(b) => StaticTerm::BoolValue(*b),
 		}
 	}
 }

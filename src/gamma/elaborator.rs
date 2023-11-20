@@ -14,13 +14,37 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum StaticTerm {
 	Variable(Name, Index),
-	Let { ty: Box<Self>, argument: Box<Self>, tail: Binder<Box<Self>> },
+	Let {
+		ty: Box<Self>,
+		argument: Box<Self>,
+		tail: Binder<Box<Self>>,
+	},
 	Lift(Box<DynamicTerm>),
 	Quote(Box<DynamicTerm>),
 	Universe,
 	Pi(Box<Self>, Binder<Box<Self>>),
 	Lambda(Binder<Box<Self>>),
-	Apply { scrutinee: Box<Self>, argument: Box<Self> },
+	Apply {
+		scrutinee: Box<Self>,
+		argument: Box<Self>,
+	},
+	Nat,
+	Num(usize),
+	Suc(Box<Self>),
+	CaseNat {
+		scrutinee: Box<Self>,
+		motive: Binder<Box<Self>>,
+		case_nil: Box<Self>,
+		case_suc: Binder<Box<Self>, 2>,
+	},
+	Bool,
+	BoolValue(bool),
+	CaseBool {
+		scrutinee: Box<Self>,
+		motive: Binder<Box<Self>>,
+		case_false: Box<Self>,
+		case_true: Box<Self>,
+	},
 }
 
 #[derive(Clone, Debug)]
@@ -167,6 +191,73 @@ pub fn synthesize_static(context: &Context, term: StaticPreterm) -> (StaticTerm,
 		Quote(quotee) => {
 			let (quotee, quotee_ty) = synthesize_dynamic(context, *quotee);
 			(StaticTerm::Quote(bx!(quotee)), StaticValue::Lift(quotee_ty))
+		}
+
+		Nat => (StaticTerm::Nat, StaticValue::Universe),
+		Num(n) => (StaticTerm::Num(n), StaticValue::Nat),
+		Suc(prev) => {
+			let prev = verify_static(context, *prev, StaticValue::Nat);
+			if let StaticTerm::Num(p) = prev {
+				(StaticTerm::Num(p + 1), StaticValue::Nat)
+			} else {
+				(StaticTerm::Suc(bx!(prev)), StaticValue::Nat)
+			}
+		}
+		CaseNat { scrutinee, motive_parameter, motive, case_nil, case_suc_parameters, case_suc } => {
+			let scrutinee = verify_static(context, *scrutinee, StaticValue::Nat);
+			let scrutinee_value = scrutinee.clone().evaluate(&context.environment);
+			let motive = verify_static(
+				&context.clone().bind_static(motive_parameter, StaticValue::Nat),
+				*motive,
+				StaticValue::Universe,
+			);
+			let motive_value = Closure::new(context.environment.clone(), [motive_parameter], motive.clone());
+			let case_nil = verify_static(context, *case_nil, motive_value.evaluate_with([StaticValue::Num(0)]));
+			// NOTE: I'm not entirely sure this is 'right', as motive is is formed in a smaller context, but I believe this should be 'safe' because of de Bruijn levels.
+			let case_suc = verify_static(
+				&context.clone().bind_static(case_suc_parameters.0, StaticValue::Nat).bind_static(
+					case_suc_parameters.1,
+					motive_value.evaluate_with([(case_suc_parameters.0, context.len()).into()]),
+				),
+				*case_suc,
+				motive_value.evaluate_with([StaticValue::Neutral(StaticNeutral::Suc(rc!(
+					StaticNeutral::Variable(case_suc_parameters.0, context.len())
+				)))]),
+			);
+			(
+				StaticTerm::CaseNat {
+					scrutinee: bx!(scrutinee),
+					motive: bind([motive_parameter], bx!(motive)),
+					case_nil: bx!(case_nil),
+					case_suc: bind([case_suc_parameters.0, case_suc_parameters.1], bx!(case_suc)),
+				},
+				motive_value.evaluate_with([scrutinee_value]),
+			)
+		}
+		Bool => (StaticTerm::Bool, StaticValue::Universe),
+		BoolValue(b) => (StaticTerm::BoolValue(b), StaticValue::Bool),
+		CaseBool { scrutinee, motive, case_false, case_true } => {
+			let scrutinee = verify_static(context, *scrutinee, StaticValue::Bool);
+			let scrutinee_value = scrutinee.clone().evaluate(&context.environment);
+			let motive_term = verify_static(
+				&context.clone().bind_static(motive.parameter(), StaticValue::Bool),
+				*motive.body,
+				StaticValue::Universe,
+			);
+			let motive_value = Closure::new(context.environment.clone(), motive.parameters, motive_term.clone());
+			let case_false =
+				verify_static(context, *case_false, motive_value.evaluate_with([StaticValue::BoolValue(false)]));
+			let case_true =
+				verify_static(context, *case_true, motive_value.evaluate_with([StaticValue::BoolValue(true)]));
+			(
+				StaticTerm::CaseBool {
+					scrutinee: bx!(scrutinee),
+					motive: bind(motive.parameters, bx!(motive_term)),
+					case_false: bx!(case_false),
+					case_true: bx!(case_true),
+				},
+				motive_value.evaluate_with([scrutinee_value]),
+			)
 		}
 	}
 }

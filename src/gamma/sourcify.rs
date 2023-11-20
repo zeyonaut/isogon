@@ -10,7 +10,7 @@ use super::{
 fn write_static_spine(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use StaticTerm::*;
 	match term {
-		Apply { .. } => write_static(term, f, interner),
+		Apply { .. } | Suc(..) | CaseNat { .. } | CaseBool { .. } => write_static(term, f, interner),
 		_ => write_static_atom(term, f, interner),
 	}
 }
@@ -18,8 +18,9 @@ fn write_static_spine(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -
 fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use StaticTerm::*;
 	match term {
-		Variable(..) | Universe | Lift(_) | Quote(_) => write_static(term, f, interner),
-		Lambda { .. } | Apply { .. } | Pi { .. } | Let { .. } => {
+		Variable(..) | Universe | Lift(_) | Quote(_) | Nat | Num(..) | Bool | BoolValue(..) =>
+			write_static(term, f, interner),
+		Let { .. } | Lambda { .. } | Apply { .. } | Pi { .. } | Suc(..) | CaseNat { .. } | CaseBool { .. } => {
 			write!(f, "(")?;
 			write_static(term, f, interner)?;
 			write!(f, ")")
@@ -47,7 +48,7 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 				write_static(base, f, interner)?;
 				write!(f, "| -> ")?;
 			} else {
-				write_static(base, f, interner)?;
+				write_static_spine(base, f, interner)?;
 				write!(f, " -> ")?;
 			}
 			write_static(&family.body, f, interner)
@@ -69,6 +70,39 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			write!(f, "[")?;
 			write_dynamic(quotee, f, interner)?;
 			write!(f, "]")
+		}
+		Nat => write!(f, "nat"),
+		Num(n) => write!(f, "{n}"),
+		Suc(prev) => {
+			write!(f, "suc ")?;
+			write_static_atom(prev, f, interner)
+		}
+		CaseNat { scrutinee, motive, case_nil, case_suc } => {
+			write_static_spine(scrutinee, f, interner)?;
+			write!(f, " :: |{}| ", interner.resolve(&motive.parameter()))?;
+			write_static(&motive.body, f, interner)?;
+			write!(f, " {{0 -> ")?;
+			write_static(case_nil, f, interner)?;
+			write!(
+				f,
+				" | suc {} {} -> ",
+				interner.resolve(&case_suc.parameters[0]),
+				interner.resolve(&case_suc.parameters[1])
+			)?;
+			write_static(&case_suc.body, f, interner)?;
+			write!(f, "}}")
+		}
+		Bool => write!(f, "bool"),
+		BoolValue(b) => write!(f, "{}", if *b { "true" } else { "false" }),
+		CaseBool { scrutinee, motive, case_false, case_true } => {
+			write_static_spine(scrutinee, f, interner)?;
+			write!(f, " :: bool |{}| ", interner.resolve(&motive.parameter()))?;
+			write_static(&motive.body, f, interner)?;
+			write!(f, " {{false -> ")?;
+			write_static(case_false, f, interner)?;
+			write!(f, " | true -> ")?;
+			write_static(case_true, f, interner)?;
+			write!(f, "}}")
 		}
 	}
 }
@@ -158,7 +192,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 		Pair { basepoint, fiberpoint } => {
 			write_dynamic_spine(basepoint, f, interner)?;
 			write!(f, ", ")?;
-			write_dynamic_spine(fiberpoint, f, interner)
+			write_dynamic(fiberpoint, f, interner)
 		}
 		Project(scrutinee, projection) => {
 			write_dynamic_spine(scrutinee, f, interner)?;
