@@ -10,6 +10,7 @@ use crate::utility::{bx, rc};
 pub enum StaticNeutral {
 	Variable(Name, Level),
 	Apply(Rc<Self>, Rc<StaticValue>),
+	Project(Rc<Self>, Projection),
 	CaseNat {
 		scrutinee: Rc<Self>,
 		motive: Rc<Closure<Environment, StaticTerm>>,
@@ -33,6 +34,8 @@ pub enum StaticValue {
 	Quote(DynamicValue),
 	IndexedProduct(Rc<Self>, Rc<Closure<Environment, StaticTerm>>),
 	Function(Rc<Closure<Environment, StaticTerm>>),
+	IndexedSum(Rc<Self>, Rc<Closure<Environment, StaticTerm>>),
+	Pair(/* basepoint */ Rc<Self>, /* fiberpoint */ Rc<Self>),
 	Nat,
 	Num(usize),
 	Bool,
@@ -143,6 +146,8 @@ impl Evaluate for StaticTerm {
 		use StaticTerm::*;
 		match self {
 			Variable(_, index) => environment.lookup_static(index),
+			Pi(base, family) =>
+				StaticValue::IndexedProduct(rc!(base.evaluate(environment)), rc!(family.evaluate(environment))),
 			Lambda(function) => StaticValue::Function(rc!(function.evaluate(environment))),
 			Apply { scrutinee, argument } => match scrutinee.evaluate(environment) {
 				StaticValue::Function(function) => function.evaluate_with([argument.evaluate(environment)]),
@@ -150,8 +155,19 @@ impl Evaluate for StaticTerm {
 					StaticValue::Neutral(StaticNeutral::Apply(rc!(neutral), rc!(argument.evaluate(environment)))),
 				_ => panic!(),
 			},
-			Pi(base, family) =>
-				StaticValue::IndexedProduct(rc!(base.evaluate(environment)), rc!(family.evaluate(environment))),
+			Sigma(base, family) =>
+				StaticValue::IndexedSum(rc!(base.evaluate(environment)), rc!(family.evaluate(environment))),
+			Pair { basepoint, fiberpoint } =>
+				StaticValue::Pair(rc!(basepoint.evaluate(environment)), rc!(fiberpoint.evaluate(environment))),
+			Project(scrutinee, projection) => match scrutinee.evaluate(environment) {
+				StaticValue::Pair(basepoint, fiberpoint) => match projection {
+					Projection::Base => basepoint.as_ref().clone(),
+					Projection::Fiber => fiberpoint.as_ref().clone(),
+				},
+				StaticValue::Neutral(neutral) =>
+					StaticValue::Neutral(StaticNeutral::Project(rc!(neutral), projection)),
+				_ => panic!(),
+			},
 			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate(environment)]),
 			Universe => StaticValue::Universe,
 			Lift(liftee) => StaticValue::Lift(liftee.evaluate(environment)),
@@ -383,6 +399,7 @@ impl Reify for StaticNeutral {
 			Variable(name, Level(level)) => StaticTerm::Variable(*name, Index(context_length - 1 - level)),
 			Apply(callee, argument) =>
 				StaticTerm::Apply { scrutinee: bx!(callee.reify(level)), argument: bx!(argument.reify(level)) },
+			Project(scrutinee, projection) => StaticTerm::Project(bx!(scrutinee.reify(level)), *projection),
 			Suc(prev) => StaticTerm::Suc(bx!(prev.reify(level))),
 			CaseNat { scrutinee, motive, case_nil, case_suc } => StaticTerm::CaseNat {
 				scrutinee: bx!(scrutinee.reify(level)),
@@ -409,6 +426,11 @@ impl Reify for StaticValue {
 			Universe => StaticTerm::Universe,
 			IndexedProduct(base, family) => StaticTerm::Pi(bx!(base.reify(level)), family.reify(level)),
 			Function(function) => StaticTerm::Lambda(function.reify(level)),
+			IndexedSum(base, family) => StaticTerm::Sigma(bx!(base.reify(level)), family.reify(level)),
+			Pair(basepoint, fiberpoint) => StaticTerm::Pair {
+				basepoint: bx!(basepoint.reify(level)),
+				fiberpoint: bx!(fiberpoint.reify(level)),
+			},
 			Lift(liftee) => StaticTerm::Lift(bx!(liftee.reify(level))),
 			Quote(quotee) => StaticTerm::Quote(bx!(quotee.reify(level))),
 			Nat => StaticTerm::Nat,

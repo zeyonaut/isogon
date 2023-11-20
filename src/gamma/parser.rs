@@ -31,6 +31,16 @@ pub enum StaticPreterm {
 		scrutinee: Box<Self>,
 		argument: Box<Self>,
 	},
+	Sigma {
+		parameter: Name,
+		base: Box<Self>,
+		family: Box<Self>,
+	},
+	Pair {
+		basepoint: Box<Self>,
+		fiberpoint: Box<Self>,
+	},
+	Project(Box<Self>, Projection),
 	Nat,
 	Num(usize),
 	Suc(Box<Self>),
@@ -279,12 +289,31 @@ impl<'s> Parser<'s> {
 		use StaticPreterm::*;
 		use Token::*;
 		let term = self.parse_static_spine()?;
-		if let Some(Lexeme { token: Arrow, .. }) = self.peek_lexeme() {
-			self.next_lexeme();
-			let family = self.parse_static()?;
-			Some(Pi { parameter: self.interner.get_or_intern_static("_"), base: bx!(term), family: bx!(family) })
-		} else {
-			Some(term)
+		match self.peek_lexeme().map(|lexeme| lexeme.token) {
+			Some(Arrow) => {
+				self.next_lexeme();
+				let family = self.parse_static()?;
+				Some(Pi {
+					parameter: self.interner.get_or_intern_static("_"),
+					base: bx!(term),
+					family: bx!(family),
+				})
+			}
+			Some(Amp) => {
+				self.next_lexeme();
+				let family = self.parse_static()?;
+				Some(Sigma {
+					parameter: self.interner.get_or_intern_static("_"),
+					base: bx!(term),
+					family: bx!(family),
+				})
+			}
+			Some(Comma) => {
+				self.next_lexeme();
+				let rest = self.parse_static_atom_headed()?;
+				Some(Pair { basepoint: bx!(term), fiberpoint: bx!(rest) })
+			}
+			_ => Some(term),
 		}
 	}
 
@@ -337,6 +366,10 @@ impl<'s> Parser<'s> {
 			match token {
 				_ if Self::is_static_atom_start(token) => {
 					term = Apply { scrutinee: bx!(term), argument: bx!(self.parse_static_atom()?) };
+				}
+				Token::Project(projection) => {
+					self.next_lexeme();
+					term = StaticPreterm::Project(bx!(term), projection);
 				}
 				TwoColon => {
 					self.next_lexeme();

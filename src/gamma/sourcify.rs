@@ -10,7 +10,8 @@ use super::{
 fn write_static_spine(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use StaticTerm::*;
 	match term {
-		Apply { .. } | Suc(..) | CaseNat { .. } | CaseBool { .. } => write_static(term, f, interner),
+		Apply { .. } | Project { .. } | Suc(..) | CaseNat { .. } | CaseBool { .. } =>
+			write_static(term, f, interner),
 		_ => write_static_atom(term, f, interner),
 	}
 }
@@ -20,7 +21,16 @@ fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) ->
 	match term {
 		Variable(..) | Universe | Lift(_) | Quote(_) | Nat | Num(..) | Bool | BoolValue(..) =>
 			write_static(term, f, interner),
-		Let { .. } | Lambda { .. } | Apply { .. } | Pi { .. } | Suc(..) | CaseNat { .. } | CaseBool { .. } => {
+		Let { .. }
+		| Lambda { .. }
+		| Pair { .. }
+		| Apply { .. }
+		| Project { .. }
+		| Pi { .. }
+		| Sigma { .. }
+		| Suc(..)
+		| CaseNat { .. }
+		| CaseBool { .. } => {
 			write!(f, "(")?;
 			write_static(term, f, interner)?;
 			write!(f, ")")
@@ -32,15 +42,6 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 	use StaticTerm::*;
 	match term {
 		Variable(name, ..) => write!(f, "{}", interner.resolve(name)),
-		Lambda(function) => {
-			write!(f, "|{}| ", interner.resolve(&function.parameter()))?;
-			write_static(&function.body, f, interner)
-		}
-		Apply { scrutinee, argument } => {
-			write_static_spine(scrutinee, f, interner)?;
-			write!(f, " ")?;
-			write_static_atom(argument, f, interner)
-		}
 		Pi(base, family) => {
 			let parameter = interner.resolve(&family.parameter());
 			if parameter != "_" {
@@ -52,6 +53,39 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 				write!(f, " -> ")?;
 			}
 			write_static(&family.body, f, interner)
+		}
+		Lambda(function) => {
+			write!(f, "|{}| ", interner.resolve(&function.parameter()))?;
+			write_static(&function.body, f, interner)
+		}
+		Apply { scrutinee, argument } => {
+			write_static_spine(scrutinee, f, interner)?;
+			write!(f, " ")?;
+			write_static_atom(argument, f, interner)
+		}
+		Sigma(base, family) => {
+			let parameter = interner.resolve(&family.parameter());
+			if parameter != "_" {
+				write!(f, "|{parameter} : ")?;
+				write_static(base, f, interner)?;
+				write!(f, "| & ")?;
+			} else {
+				write_static_spine(base, f, interner)?;
+				write!(f, " & ")?;
+			}
+			write_static(&family.body, f, interner)
+		}
+		Pair { basepoint, fiberpoint } => {
+			write_static_spine(basepoint, f, interner)?;
+			write!(f, ", ")?;
+			write_static(fiberpoint, f, interner)
+		}
+		Project(scrutinee, projection) => {
+			write_static_spine(scrutinee, f, interner)?;
+			match projection {
+				Projection::Base => write!(f, "/."),
+				Projection::Fiber => write!(f, "/!"),
+			}
 		}
 		Let { ty, argument, tail } => {
 			write!(f, "let {} : ", interner.resolve(&tail.parameter()))?;

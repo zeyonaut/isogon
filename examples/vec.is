@@ -28,10 +28,16 @@ def is_even : nat -> bool
 		| suc n x -> not x
 	};
 
-def make_bitvec : |n : nat| -> '[bitvec n]
-	= |n| n :: |n| '[bitvec n] {
-		| 0 -> [tt]
-		| suc n v -> [[lower (is_even n)], [v]]
+def pred : nat -> nat
+	= |n| n :: |n| nat {
+		| 0       -> 0
+		| suc n x -> n
 	};
 
-[make_bitvec 7]
+def make_bitvec : |n : nat| -> '[bitvec n]
+	= |n| n :: |n| nat & '[bitvec n] {
+		| 0       -> pred n, [tt]
+		| suc n v -> pred (v/.), [[lower (is_even (v/.))], [v/!]]
+	}/!;
+
+[make_bitvec 8]

@@ -28,6 +28,12 @@ pub enum StaticTerm {
 		scrutinee: Box<Self>,
 		argument: Box<Self>,
 	},
+	Sigma(Box<Self>, Binder<Box<Self>>),
+	Pair {
+		basepoint: Box<Self>,
+		fiberpoint: Box<Self>,
+	},
+	Project(Box<Self>, Projection),
 	Nat,
 	Num(usize),
 	Suc(Box<Self>),
@@ -147,7 +153,7 @@ pub fn synthesize_static(context: &Context, term: StaticPreterm) -> (StaticTerm,
 				}
 			})
 			.unwrap(),
-		Lambda { .. } => panic!(),
+		Lambda { .. } | Pair { .. } => panic!(),
 		Apply { scrutinee, argument } => {
 			let (scrutinee, scrutinee_ty) = synthesize_static(context, *scrutinee);
 			let StaticValue::IndexedProduct(base, family) = scrutinee_ty else { panic!() };
@@ -156,6 +162,18 @@ pub fn synthesize_static(context: &Context, term: StaticPreterm) -> (StaticTerm,
 				StaticTerm::Apply { scrutinee: bx!(scrutinee), argument: bx!(argument.clone()) },
 				family.evaluate_with([argument.evaluate(&context.environment)]),
 			)
+		}
+		Project(scrutinee, projection) => {
+			let (scrutinee, scrutinee_ty) = synthesize_static(context, *scrutinee);
+			let StaticValue::IndexedSum(base, family) = scrutinee_ty else { panic!() };
+			match projection {
+				Projection::Base => (StaticTerm::Project(bx!(scrutinee), projection), base.as_ref().clone()),
+				Projection::Fiber => {
+					let basepoint = StaticTerm::Project(bx!(scrutinee.clone()), Projection::Base);
+					let basepoint = basepoint.evaluate(&context.environment);
+					(StaticTerm::Project(bx!(scrutinee), projection), family.evaluate_with([basepoint]))
+				}
+			}
 		}
 		Universe => (StaticTerm::Universe, StaticValue::Universe),
 		Pi { parameter, base, family } => {
@@ -167,6 +185,16 @@ pub fn synthesize_static(context: &Context, term: StaticPreterm) -> (StaticTerm,
 				StaticValue::Universe,
 			);
 			(StaticTerm::Pi(bx!(base), bind([parameter], bx!(family))), StaticValue::Universe)
+		}
+		Sigma { parameter, base, family } => {
+			let base = verify_static(context, *base, StaticValue::Universe);
+			let base_value = base.clone().evaluate(&context.environment);
+			let family = verify_static(
+				&context.clone().bind_static(parameter, base_value),
+				*family,
+				StaticValue::Universe,
+			);
+			(StaticTerm::Sigma(bx!(base), bind([parameter], bx!(family))), StaticValue::Universe)
 		}
 		Let { assignee, ty, argument, tail } => {
 			let ty = verify_static(context, *ty, StaticValue::Universe);
@@ -272,6 +300,12 @@ pub fn verify_static(context: &Context, term: StaticPreterm, ty: StaticValue) ->
 				family.evaluate_with([(parameter, context.len()).into()]),
 			);
 			StaticTerm::Lambda(bind([parameter], bx!(body)))
+		}
+		(Pair { basepoint, fiberpoint }, StaticValue::IndexedSum(base, family)) => {
+			let basepoint = verify_static(context, *basepoint, base.as_ref().clone());
+			let basepoint_value = basepoint.clone().evaluate(&context.environment);
+			let fiberpoint = verify_static(context, *fiberpoint, family.evaluate_with([basepoint_value]));
+			StaticTerm::Pair { basepoint: bx!(basepoint), fiberpoint: bx!(fiberpoint) }
 		}
 		(Let { assignee, ty, argument, tail }, _) => {
 			let ty = verify_static(context, *ty, StaticValue::Universe);

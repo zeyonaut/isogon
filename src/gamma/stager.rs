@@ -11,6 +11,7 @@ pub enum StaticValue {
 	Type,
 	Quote(Rc<DynamicValue>),
 	Function(Closure<Environment, StaticTerm>),
+	Pair(Rc<Self>, Rc<Self>),
 	Num(usize),
 	BoolValue(bool),
 }
@@ -135,7 +136,17 @@ impl Stage for StaticTerm {
 				// TODO: The environment argument is useless in this position: make a separate trait for this (as in EvaluateWith/EvaluateAt).
 				function.stage_with(environment, [argument.stage(environment)])
 			}
-			Pi { .. } => StaticValue::Type,
+			Pi(..) => StaticValue::Type,
+			Sigma(..) => StaticValue::Type,
+			Pair { basepoint, fiberpoint } =>
+				StaticValue::Pair(rc!(basepoint.stage(environment)), rc!(fiberpoint.stage(environment))),
+			Project(scrutinee, projection) => {
+				let StaticValue::Pair(basepoint, fiberpoint) = scrutinee.stage(environment) else { panic!() };
+				match projection {
+					Projection::Base => basepoint.as_ref().clone(),
+					Projection::Fiber => fiberpoint.as_ref().clone(),
+				}
+			}
 			Let { argument, tail, .. } => tail.stage_with(environment, [argument.stage(environment)]),
 			Universe => StaticValue::Type,
 			Lift(_) => StaticValue::Type,
