@@ -53,6 +53,14 @@ pub enum DynamicValue {
 		case_nil: Rc<Self>,
 		case_suc: Binder<Rc<Self>, 2>,
 	},
+	Bool,
+	BoolValue(bool),
+	CaseBool {
+		scrutinee: Rc<Self>,
+		motive: Binder<Rc<Self>>,
+		case_false: Rc<Self>,
+		case_true: Rc<Self>,
+	},
 }
 
 #[derive(Clone, Debug)]
@@ -177,6 +185,14 @@ impl Stage for DynamicTerm {
 				case_nil: rc!(case_nil.stage(environment)),
 				case_suc: case_suc.stage(environment),
 			},
+			Bool => DynamicValue::Bool,
+			BoolValue(b) => DynamicValue::BoolValue(b),
+			CaseBool { scrutinee, motive, case_false, case_true } => DynamicValue::CaseBool {
+				scrutinee: rc!(scrutinee.stage(environment)),
+				motive: motive.stage(environment),
+				case_false: rc!(case_false.stage(environment)),
+				case_true: rc!(case_true.stage(environment)),
+			},
 		}
 	}
 }
@@ -254,6 +270,14 @@ impl Unstage for DynamicValue {
 				motive: motive.unstage(level),
 				case_nil: bx!(case_nil.unstage(level)),
 				case_suc: case_suc.unstage(level),
+			},
+			Bool => DynamicTerm::Bool,
+			BoolValue(b) => DynamicTerm::BoolValue(*b),
+			CaseBool { scrutinee, motive, case_false, case_true } => DynamicTerm::CaseBool {
+				scrutinee: bx!(scrutinee.unstage(level)),
+				motive: motive.unstage(level),
+				case_false: bx!(case_false.unstage(level)),
+				case_true: bx!(case_true.unstage(level)),
 			},
 		}
 	}

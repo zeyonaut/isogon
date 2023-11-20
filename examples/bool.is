@@ -1,0 +1,13 @@
+let T : bool -> *
+	= |b| b :: bool |x| * {
+		| false -> nat  & bool
+		| true  -> bool & nat
+	};
+
+let test : |b : bool| -> T b
+	= |b| b :: bool |x| T x {
+		| false -> 0, false
+		| true  -> true, 1
+	};
+
+test false

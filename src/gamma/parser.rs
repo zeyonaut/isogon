@@ -1,7 +1,7 @@
 use lasso::Rodeo;
 
 use super::{
-	common::{Name, Projection},
+	common::{bind, Binder, Name, Projection},
 	lexer::{Keyword, LexedSource, Lexeme, Token},
 };
 use crate::utility::bx;
@@ -62,6 +62,14 @@ pub enum DynamicPreterm {
 		case_nil: Box<Self>,
 		case_suc_parameters: (Name, Name),
 		case_suc: Box<Self>,
+	},
+	Bool,
+	BoolValue(bool),
+	CaseBool {
+		scrutinee: Box<Self>,
+		motive: Binder<Box<Self>>,
+		case_false: Box<Self>,
+		case_true: Box<Self>,
 	},
 }
 
@@ -308,9 +316,8 @@ impl<'s> Parser<'s> {
 
 		while let Some(Lexeme { token, .. }) = self.peek_lexeme() {
 			match token {
-				SquareL | ParenL | Ast | Number | Identifier => {
-					let atom = self.parse_dynamic_atom()?;
-					term = Apply { scrutinee: bx!(term), argument: bx!(atom) };
+				_ if Self::is_dynamic_atom_start(token) => {
+					term = Apply { scrutinee: bx!(term), argument: bx!(self.parse_dynamic_atom()?) };
 				}
 				Token::Project(projection) => {
 					self.next_lexeme();
@@ -318,33 +325,57 @@ impl<'s> Parser<'s> {
 				}
 				TwoColon => {
 					self.next_lexeme();
-					self.consume(Pipe)?;
-					let motive_parameter = self.parse_identifier()?;
-					self.consume(Pipe)?;
-					let motive = self.parse_dynamic()?;
-					self.consume(CurlyL)?;
-					self.consume(Pipe)?;
-					{
-						let Lexeme { token: Number, range } = self.next_lexeme()? else {
-							return None;
-						};
-						(&self.source[range.0..range.1] == "0").then_some(())?
-					}
-					self.consume(Arrow)?;
-					let case_nil = self.parse_dynamic()?;
-					self.consume(Pipe)?;
-					self.consume(Keyword(self::Keyword::Suc))?;
-					let case_suc_parameters = (self.parse_identifier()?, self.parse_identifier()?);
-					self.consume(Arrow)?;
-					let case_suc = self.parse_dynamic()?;
-					self.consume(CurlyR)?;
-					term = DynamicPreterm::CaseNat {
-						scrutinee: bx!(term),
-						motive_parameter,
-						motive: bx!(motive),
-						case_nil: bx!(case_nil),
-						case_suc_parameters,
-						case_suc: bx!(case_suc),
+					if let Some(Keyword(self::Keyword::Bool)) = self.peek_lexeme().map(|x| x.token) {
+						self.next_lexeme();
+						self.consume(Pipe)?;
+						let motive_parameter = self.parse_identifier()?;
+						self.consume(Pipe)?;
+						let motive = self.parse_dynamic()?;
+						self.consume(CurlyL)?;
+						self.consume(Pipe)?;
+						self.consume(Keyword(self::Keyword::False))?;
+						self.consume(Arrow)?;
+						let case_false = self.parse_dynamic()?;
+						self.consume(Pipe)?;
+						self.consume(Keyword(self::Keyword::True))?;
+						self.consume(Arrow)?;
+						let case_true = self.parse_dynamic()?;
+						self.consume(CurlyR)?;
+						term = DynamicPreterm::CaseBool {
+							scrutinee: bx!(term),
+							motive: bind([motive_parameter], bx!(motive)),
+							case_false: bx!(case_false),
+							case_true: bx!(case_true),
+						}
+					} else {
+						self.consume(Pipe)?;
+						let motive_parameter = self.parse_identifier()?;
+						self.consume(Pipe)?;
+						let motive = self.parse_dynamic()?;
+						self.consume(CurlyL)?;
+						self.consume(Pipe)?;
+						{
+							let Lexeme { token: Number, range } = self.next_lexeme()? else {
+								return None;
+							};
+							(&self.source[range.0..range.1] == "0").then_some(())? // TODO: Wrap this.
+						}
+						self.consume(Arrow)?;
+						let case_nil = self.parse_dynamic()?;
+						self.consume(Pipe)?;
+						self.consume(Keyword(self::Keyword::Suc))?;
+						let case_suc_parameters = (self.parse_identifier()?, self.parse_identifier()?);
+						self.consume(Arrow)?;
+						let case_suc = self.parse_dynamic()?;
+						self.consume(CurlyR)?;
+						term = DynamicPreterm::CaseNat {
+							scrutinee: bx!(term),
+							motive_parameter,
+							motive: bx!(motive),
+							case_nil: bx!(case_nil),
+							case_suc_parameters,
+							case_suc: bx!(case_suc),
+						}
 					}
 				}
 				_ => break,
@@ -379,6 +410,19 @@ impl<'s> Parser<'s> {
 		Some(term)
 	}
 
+	fn is_dynamic_atom_start(token: Token) -> bool {
+		use Token::*;
+
+		use self::Keyword;
+		matches!(
+			token,
+			SquareL
+				| ParenL | Ast
+				| Number | Keyword(Keyword::Nat | Keyword::Bool | Keyword::False | Keyword::True)
+				| Identifier
+		)
+	}
+
 	fn parse_dynamic_atom(&mut self) -> Option<DynamicPreterm> {
 		use DynamicPreterm::*;
 		use Token::*;
@@ -392,6 +436,7 @@ impl<'s> Parser<'s> {
 				Splice(bx!(term))
 			}
 			ParenL => {
+				println!("right?");
 				let term = self.parse_dynamic()?;
 				self.consume(ParenR)?;
 				term
@@ -399,6 +444,9 @@ impl<'s> Parser<'s> {
 			Ast => Universe,
 			Number => Num(self.source[range.0..range.1].parse().unwrap()),
 			Keyword(Keyword::Nat) => Nat,
+			Keyword(Keyword::Bool) => Bool,
+			Keyword(Keyword::False) => BoolValue(false),
+			Keyword(Keyword::True) => BoolValue(true),
 			Identifier => Variable(self.identifier(range)),
 			_ => return None,
 		};

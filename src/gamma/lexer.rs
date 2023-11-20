@@ -33,6 +33,9 @@ pub enum Keyword {
 	Let,
 	Nat,
 	Suc,
+	Bool,
+	True,
+	False,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -101,6 +104,9 @@ impl LexedSource {
 			"let" => Keyword(Let),
 			"suc" => Keyword(Suc),
 			"nat" => Keyword(Nat),
+			"bool" => Keyword(Bool),
+			"true" => Keyword(True),
+			"false" => Keyword(False),
 			_ => Identifier,
 		}
 	}

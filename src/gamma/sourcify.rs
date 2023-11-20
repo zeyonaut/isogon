@@ -76,7 +76,8 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 fn write_dynamic_spine(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use DynamicTerm::*;
 	match term {
-		Apply { .. } | Project { .. } | Suc(..) | CaseNat { .. } => write_dynamic(term, f, interner),
+		Apply { .. } | Project { .. } | Suc(..) | CaseNat { .. } | CaseBool { .. } =>
+			write_dynamic(term, f, interner),
 		_ => write_dynamic_atom(term, f, interner),
 	}
 }
@@ -84,7 +85,8 @@ fn write_dynamic_spine(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo)
 fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use DynamicTerm::*;
 	match term {
-		Variable(..) | Universe | Splice(_) | Nat | Num(..) => write_dynamic(term, f, interner),
+		Variable(..) | Universe | Splice(_) | Nat | Num(..) | Bool | BoolValue(..) =>
+			write_dynamic(term, f, interner),
 		Let { .. }
 		| Lambda { .. }
 		| Pair { .. }
@@ -93,7 +95,8 @@ fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) 
 		| Pi { .. }
 		| Sigma { .. }
 		| Suc(..)
-		| CaseNat { .. } => {
+		| CaseNat { .. }
+		| CaseBool { .. } => {
 			write!(f, "(")?;
 			write_dynamic(term, f, interner)?;
 			write!(f, ")")
@@ -183,6 +186,18 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 				interner.resolve(&case_suc.parameters[1])
 			)?;
 			write_dynamic(&case_suc.body, f, interner)?;
+			write!(f, "}}")
+		}
+		Bool => write!(f, "bool"),
+		BoolValue(b) => write!(f, "{}", if *b { "true" } else { "false" }),
+		CaseBool { scrutinee, motive, case_false, case_true } => {
+			write_dynamic_spine(scrutinee, f, interner)?;
+			write!(f, " :: bool |{}| ", interner.resolve(&motive.parameter()))?;
+			write_dynamic(&motive.body, f, interner)?;
+			write!(f, " {{false -> ")?;
+			write_dynamic(case_false, f, interner)?;
+			write!(f, " | true -> ")?;
+			write_dynamic(case_true, f, interner)?;
 			write!(f, "}}")
 		}
 	}

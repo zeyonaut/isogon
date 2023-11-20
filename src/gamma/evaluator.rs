@@ -35,6 +35,12 @@ pub enum DynamicNeutral {
 		case_suc: Rc<Closure<Environment, DynamicTerm, 2>>,
 	},
 	Suc(Rc<Self>),
+	CaseBool {
+		scrutinee: Rc<Self>,
+		motive: Rc<Closure<Environment, DynamicTerm>>,
+		case_false: Rc<DynamicValue>,
+		case_true: Rc<DynamicValue>,
+	},
 }
 
 #[derive(Clone)]
@@ -47,6 +53,8 @@ pub enum DynamicValue {
 	Pair(/* basepoint */ Rc<Self>, /* fiberpoint */ Rc<Self>),
 	Nat,
 	Num(usize),
+	Bool,
+	BoolValue(bool),
 }
 
 impl From<(Name, Level)> for StaticValue {
@@ -199,7 +207,19 @@ impl Evaluate for DynamicTerm {
 						.map(DynamicValue::Neutral)
 						.fold(result, |previous, number| case_suc.evaluate_at(environment, [number, previous]))
 				}
-				c => panic!("{:#?}", std::mem::discriminant(&c)),
+				_ => panic!(),
+			},
+			Bool => DynamicValue::Bool,
+			BoolValue(b) => DynamicValue::BoolValue(b),
+			CaseBool { scrutinee, motive, case_false, case_true } => match scrutinee.evaluate(environment) {
+				DynamicValue::BoolValue(b) => if b { case_true } else { case_false }.evaluate(environment),
+				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::CaseBool {
+					scrutinee: rc!(neutral),
+					motive: rc!(motive.evaluate(environment)),
+					case_false: rc!(case_false.evaluate(environment)),
+					case_true: rc!(case_true.evaluate(environment)),
+				}),
+				_ => panic!(),
 			},
 		}
 	}
@@ -339,6 +359,12 @@ impl Reify for DynamicNeutral {
 				case_nil: bx!(case_nil.reify(level)),
 				case_suc: case_suc.reify(level),
 			},
+			CaseBool { scrutinee, motive, case_false, case_true } => DynamicTerm::CaseBool {
+				scrutinee: bx!(scrutinee.reify(level)),
+				motive: motive.reify(level),
+				case_false: bx!(case_false.reify(level)),
+				case_true: bx!(case_true.reify(level)),
+			},
 		}
 	}
 }
@@ -359,6 +385,8 @@ impl Reify for DynamicValue {
 			},
 			Nat => DynamicTerm::Nat,
 			Num(n) => DynamicTerm::Num(*n),
+			Bool => DynamicTerm::Bool,
+			BoolValue(b) => DynamicTerm::BoolValue(*b),
 		}
 	}
 }

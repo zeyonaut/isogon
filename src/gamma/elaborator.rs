@@ -54,6 +54,14 @@ pub enum DynamicTerm {
 		case_nil: Box<Self>,
 		case_suc: Binder<Box<Self>, 2>,
 	},
+	Bool,
+	BoolValue(bool),
+	CaseBool {
+		scrutinee: Box<Self>,
+		motive: Binder<Box<Self>>,
+		case_false: Box<Self>,
+		case_true: Box<Self>,
+	},
 }
 
 #[derive(Clone)]
@@ -170,7 +178,7 @@ pub fn verify_static(context: &Context, term: StaticPreterm, ty: StaticValue) ->
 			let body = verify_static(
 				&context.clone().bind_static(parameter, base.as_ref().clone()),
 				*body,
-				family.evaluate_with([base.as_ref().clone()]),
+				family.evaluate_with([(parameter, context.len()).into()]),
 			);
 			StaticTerm::Lambda(bind([parameter], bx!(body)))
 		}
@@ -330,6 +338,34 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 				motive_value.evaluate_with([scrutinee_value]),
 			)
 		}
+		Bool => (DynamicTerm::Bool, DynamicValue::Universe),
+		BoolValue(b) => (DynamicTerm::BoolValue(b), DynamicValue::Bool),
+		CaseBool { scrutinee, motive, case_false, case_true } => {
+			let scrutinee = verify_dynamic(context, *scrutinee, DynamicValue::Bool);
+			let scrutinee_value = scrutinee.clone().evaluate(&context.environment);
+			let motive_term = verify_dynamic(
+				&context.clone().bind_dynamic(motive.parameter(), DynamicValue::Bool),
+				*motive.body,
+				DynamicValue::Universe,
+			);
+			let motive_value = Closure::new(context.environment.clone(), motive.parameters, motive_term.clone());
+			let case_false = verify_dynamic(
+				context,
+				*case_false,
+				motive_value.evaluate_with([DynamicValue::BoolValue(false)]),
+			);
+			let case_true =
+				verify_dynamic(context, *case_true, motive_value.evaluate_with([DynamicValue::BoolValue(true)]));
+			(
+				DynamicTerm::CaseBool {
+					scrutinee: bx!(scrutinee),
+					motive: bind(motive.parameters, bx!(motive_term)),
+					case_false: bx!(case_false),
+					case_true: bx!(case_true),
+				},
+				motive_value.evaluate_with([scrutinee_value]),
+			)
+		}
 	}
 }
 
@@ -340,7 +376,7 @@ pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue)
 			let body = verify_dynamic(
 				&context.clone().bind_dynamic(parameter, base.as_ref().clone()),
 				*body,
-				family.evaluate_with([base.as_ref().clone()]),
+				family.evaluate_with([(parameter, context.len()).into()]),
 			);
 			DynamicTerm::Lambda(bind([parameter], bx!(body)))
 		}

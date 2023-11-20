@@ -76,8 +76,9 @@ impl Conversion<DynamicValue> for Level {
 			| (IndexedSum(left_base, left_family), IndexedSum(right_base, right_family)) =>
 				self.can_convert(&**left_base, &right_base)
 					&& (self + 1).can_convert(&left_family.autolyze(self), &right_family.autolyze(self)),
-			(Nat, Nat) => true,
+			(Nat, Nat) | (Bool, Bool) => true,
 			(Num(left), Num(right)) => left == right,
+			(BoolValue(left), BoolValue(right)) => left == right,
 			_ => false,
 		}
 	}
@@ -102,6 +103,14 @@ impl Conversion<DynamicNeutral> for Level {
 					&& (self + 1).can_convert(&l_motive.autolyze(self), &r_motive.autolyze(self))
 					&& self.can_convert(&**l_case_nil, r_case_nil)
 					&& (self + 2).can_convert(&l_case_suc.autolyze(self), &r_case_suc.autolyze(self)),
+			(
+				CaseBool { scrutinee: l_scrutinee, motive: l_motive, case_false: l_case_f, case_true: l_case_t },
+				CaseBool { scrutinee: r_scrutinee, motive: r_motive, case_false: r_case_f, case_true: r_case_t },
+			) =>
+				self.can_convert(&**l_scrutinee, r_scrutinee)
+					&& (self + 1).can_convert(&l_motive.autolyze(self), &r_motive.autolyze(self))
+					&& self.can_convert(&**l_case_f, r_case_f)
+					&& self.can_convert(&**r_case_t, r_case_t),
 			_ => false,
 		}
 	}

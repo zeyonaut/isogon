@@ -7,7 +7,10 @@ let list : nat -> *
 		| suc n T -> T & nat
 	};
 
-10 :: |n| list n {
-	| 0       -> |A| |a| a
-	| suc n k -> k, n
-}
+let make_list : |n : nat| -> list n
+	= |n| n :: |n| list n {
+		| 0       -> |A| |a| a
+		| suc n k -> k, n
+	};
+
+make_list 10
