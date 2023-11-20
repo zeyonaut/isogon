@@ -1,5 +1,5 @@
 use super::{
-	common::{bind, Binder, Index, Level, Name, Projection},
+	common::{bind, Binder, Copyability, Index, Level, Name, Projection},
 	conversion::Conversion,
 	evaluator::{
 		DynamicNeutral, DynamicValue, Environment, Evaluate, Reify, StaticNeutral, StaticValue, Value,
@@ -43,6 +43,9 @@ pub enum StaticTerm {
 		case_nil: Box<Self>,
 		case_suc: Binder<Box<Self>, 2>,
 	},
+	CopyabilityType,
+	Copyability(Copyability),
+	MaxCopyability(Box<Self>, Box<Self>),
 	Bool,
 	BoolValue(bool),
 	CaseBool {
@@ -62,7 +65,9 @@ pub enum DynamicTerm {
 		tail: Binder<Box<Self>>,
 	},
 	Splice(Box<StaticTerm>),
-	Universe,
+	Universe {
+		copyability: Box<StaticTerm>,
+	},
 	Pi(Box<Self>, Binder<Box<Self>>),
 	Lambda(Binder<Box<Self>>),
 	Apply {
@@ -153,6 +158,13 @@ pub fn synthesize_static(context: &Context, term: StaticPreterm) -> (StaticTerm,
 				}
 			})
 			.unwrap(),
+		CopyabilityType => (StaticTerm::CopyabilityType, StaticValue::Universe),
+		Copyability(c) => (StaticTerm::Copyability(c), StaticValue::CopyabilityType),
+		MaxCopyability(a, b) => {
+			let a = verify_static(context, *a, StaticValue::CopyabilityType);
+			let b = verify_static(context, *b, StaticValue::CopyabilityType);
+			(StaticTerm::MaxCopyability(bx!(a), bx!(b)), StaticValue::CopyabilityType)
+		}
 		Lambda { .. } | Pair { .. } => panic!(),
 		Apply { scrutinee, argument } => {
 			let (scrutinee, scrutinee_ty) = synthesize_static(context, *scrutinee);
@@ -212,8 +224,7 @@ pub fn synthesize_static(context: &Context, term: StaticPreterm) -> (StaticTerm,
 			)
 		}
 		Lift(liftee) => {
-			// NOTE: Does verifying work when dynamic universes are indexed?
-			let liftee = verify_dynamic(context, *liftee, DynamicValue::Universe);
+			let (liftee, _) = elaborate_dynamic_type(context, *liftee);
 			(StaticTerm::Lift(bx!(liftee)), StaticValue::Universe)
 		}
 		Quote(quotee) => {
@@ -359,7 +370,7 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 			})
 			.unwrap(),
 		Let { assignee, ty, argument, tail } => {
-			let ty = verify_dynamic(context, *ty, DynamicValue::Universe);
+			let (ty, _) = elaborate_dynamic_type(context, *ty);
 			let ty_value = ty.clone().evaluate(&context.environment);
 			let argument = verify_dynamic(context, *argument, ty_value.clone());
 			// NOTE: Isn't this a problem, performance-wise? Does laziness help here? Testing necessary. (Having the value available in the environment is wanted for evaluation.)
@@ -400,28 +411,40 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 				}
 			}
 		}
-		Universe => (DynamicTerm::Universe, DynamicValue::Universe),
+		Universe { copyability } => {
+			let copyability = verify_static(context, *copyability, StaticValue::CopyabilityType);
+			let copyability_value = copyability.clone().evaluate(&context.environment);
+
+			(
+				DynamicTerm::Universe { copyability: bx!(copyability.clone()) },
+				DynamicValue::Universe { copyability: rc!(copyability_value) },
+			)
+		}
 		Pi { parameter, base, family } => {
-			let base = verify_dynamic(context, *base, DynamicValue::Universe);
+			let (base, _) = elaborate_dynamic_type(context, *base);
 			let base_value = base.clone().evaluate(&context.environment);
-			let family = verify_dynamic(
-				&context.clone().bind_dynamic(parameter, base_value),
-				*family,
-				DynamicValue::Universe,
-			);
-			(DynamicTerm::Pi(bx!(base), bind([parameter], bx!(family))), DynamicValue::Universe)
+			let (family, _) =
+				elaborate_dynamic_type(&context.clone().bind_dynamic(parameter, base_value), *family);
+			(
+				DynamicTerm::Pi(bx!(base), bind([parameter], bx!(family))),
+				DynamicValue::Universe { copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)) },
+			)
 		}
 		Sigma { parameter, base, family } => {
-			let base = verify_dynamic(context, *base, DynamicValue::Universe);
+			let (base, base_copyability) = elaborate_dynamic_type(context, *base);
 			let base_value = base.clone().evaluate(&context.environment);
-			let family = verify_dynamic(
-				&context.clone().bind_dynamic(parameter, base_value),
-				*family,
-				DynamicValue::Universe,
-			);
-			(DynamicTerm::Sigma(bx!(base), bind([parameter], bx!(family))), DynamicValue::Universe)
+			let (family, family_copyability) =
+				elaborate_dynamic_type(&context.clone().bind_dynamic(parameter, base_value), *family);
+			let copyability = StaticValue::max_copyability(base_copyability, family_copyability);
+			(
+				DynamicTerm::Sigma(bx!(base), bind([parameter], bx!(family))),
+				DynamicValue::Universe { copyability: rc!(copyability) },
+			)
 		}
-		Nat => (DynamicTerm::Nat, DynamicValue::Universe),
+		Nat => (
+			DynamicTerm::Nat,
+			DynamicValue::Universe { copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)) },
+		),
 		Num(n) => (DynamicTerm::Num(n), DynamicValue::Nat),
 		Suc(prev) => {
 			let prev = verify_dynamic(context, *prev, DynamicValue::Nat);
@@ -434,10 +457,9 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 		CaseNat { scrutinee, motive_parameter, motive, case_nil, case_suc_parameters, case_suc } => {
 			let scrutinee = verify_dynamic(context, *scrutinee, DynamicValue::Nat);
 			let scrutinee_value = scrutinee.clone().evaluate(&context.environment);
-			let motive = verify_dynamic(
+			let (motive, _) = elaborate_dynamic_type(
 				&context.clone().bind_dynamic(motive_parameter, DynamicValue::Nat),
 				*motive,
-				DynamicValue::Universe,
 			);
 			let motive_value = Closure::new(context.environment.clone(), [motive_parameter], motive.clone());
 			let case_nil =
@@ -463,15 +485,17 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 				motive_value.evaluate_with([scrutinee_value]),
 			)
 		}
-		Bool => (DynamicTerm::Bool, DynamicValue::Universe),
+		Bool => (
+			DynamicTerm::Bool,
+			DynamicValue::Universe { copyability: rc!(StaticValue::Copyability(Copyability::Trivial)) },
+		),
 		BoolValue(b) => (DynamicTerm::BoolValue(b), DynamicValue::Bool),
 		CaseBool { scrutinee, motive, case_false, case_true } => {
 			let scrutinee = verify_dynamic(context, *scrutinee, DynamicValue::Bool);
 			let scrutinee_value = scrutinee.clone().evaluate(&context.environment);
-			let motive_term = verify_dynamic(
+			let (motive_term, _) = elaborate_dynamic_type(
 				&context.clone().bind_dynamic(motive.parameter(), DynamicValue::Bool),
 				*motive.body,
-				DynamicValue::Universe,
 			);
 			let motive_value = Closure::new(context.environment.clone(), motive.parameters, motive_term.clone());
 			let case_false = verify_dynamic(
@@ -512,7 +536,7 @@ pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue)
 			DynamicTerm::Pair { basepoint: bx!(basepoint), fiberpoint: bx!(fiberpoint) }
 		}
 		(Let { assignee, ty, argument, tail }, _) => {
-			let ty = verify_dynamic(context, *ty, DynamicValue::Universe);
+			let (ty, _) = elaborate_dynamic_type(context, *ty);
 			let ty_value = ty.clone().evaluate(&context.environment);
 			let argument = verify_dynamic(context, *argument, ty_value.clone());
 			let argument_value = argument.clone().evaluate(&context.environment);
@@ -541,4 +565,11 @@ pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue)
 			}
 		}
 	}
+}
+
+pub fn elaborate_dynamic_type(context: &Context, term: DynamicPreterm) -> (DynamicTerm, StaticValue) {
+	let (term, DynamicValue::Universe { copyability }) = synthesize_dynamic(context, term) else {
+		panic!("tried to elaborate a non-type dynamic term as a type");
+	};
+	(term, copyability.as_ref().clone())
 }

@@ -1,8 +1,8 @@
-let unit : *
-	= |A : *| -> A -> A;
+let unit : * c1
+	= |A : * c0| -> A -> A;
 
-let list : nat -> *
-	= |n| n :: |n| * {
+let list : nat -> * c1
+	= |n| n :: |n| * c1 {
 		| 0       -> unit
 		| suc n T -> T & nat
 	};

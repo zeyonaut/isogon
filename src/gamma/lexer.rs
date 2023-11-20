@@ -36,6 +36,10 @@ pub enum Keyword {
 	Bool,
 	True,
 	False,
+	CMax,
+	C0,
+	C1,
+	Copy,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -107,6 +111,10 @@ impl LexedSource {
 			"bool" => Keyword(Bool),
 			"true" => Keyword(True),
 			"false" => Keyword(False),
+			"cmax" => Keyword(CMax),
+			"c0" => Keyword(C0),
+			"c1" => Keyword(C1),
+			"copy" => Keyword(Copy),
 			_ => Identifier,
 		}
 	}

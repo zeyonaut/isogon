@@ -1,5 +1,5 @@
-let T : bool -> *
-	= |b| b :: bool |x| * {
+let T : bool -> * c1
+	= |b| b :: bool |x| * c1 {
 		| false -> nat  & bool
 		| true  -> bool & nat
 	};

@@ -1,7 +1,7 @@
 use lasso::Rodeo;
 
 use super::{
-	common::{bind, Binder, Name, Projection},
+	common::{bind, Binder, Copyability, Name, Projection},
 	lexer::{Keyword, LexedSource, Lexeme, Token},
 };
 use crate::utility::bx;
@@ -60,6 +60,9 @@ pub enum StaticPreterm {
 		case_false: Box<Self>,
 		case_true: Box<Self>,
 	},
+	CopyabilityType,
+	Copyability(Copyability),
+	MaxCopyability(Box<Self>, Box<Self>),
 }
 
 #[derive(Debug, Clone)]
@@ -72,7 +75,9 @@ pub enum DynamicPreterm {
 		tail: Box<Self>,
 	},
 	Splice(Box<StaticPreterm>),
-	Universe,
+	Universe {
+		copyability: Box<StaticPreterm>,
+	},
 	Pi {
 		parameter: Name,
 		base: Box<Self>,
@@ -355,11 +360,16 @@ impl<'s> Parser<'s> {
 
 		let Lexeme { token, .. } = self.peek_lexeme()?;
 
-		let mut term = if token == Keyword(self::Keyword::Suc) {
-			self.next_lexeme();
-			Suc(bx!(self.parse_static_atom()?))
-		} else {
-			self.parse_static_atom()?
+		let mut term = match token {
+			Keyword(self::Keyword::Suc) => {
+				self.next_lexeme();
+				Suc(bx!(self.parse_static_atom()?))
+			}
+			Keyword(self::Keyword::CMax) => {
+				self.next_lexeme();
+				MaxCopyability(bx!(self.parse_static_atom()?), bx!(self.parse_static_atom()?))
+			}
+			_ => self.parse_static_atom()?,
 		};
 
 		while let Some(Lexeme { token, .. }) = self.peek_lexeme() {
@@ -523,8 +533,12 @@ impl<'s> Parser<'s> {
 			Tick
 				| SquareL | ParenL
 				| Ast | Number
-				| Keyword(Keyword::Nat | Keyword::Bool | Keyword::False | Keyword::True)
-				| Identifier
+				| Keyword(
+					Keyword::Nat
+						| Keyword::Bool | Keyword::False
+						| Keyword::True | Keyword::C0
+						| Keyword::C1 | Keyword::Copy
+				) | Identifier
 		)
 	}
 
@@ -555,6 +569,9 @@ impl<'s> Parser<'s> {
 			Keyword(Keyword::Bool) => Bool,
 			Keyword(Keyword::False) => BoolValue(false),
 			Keyword(Keyword::True) => BoolValue(true),
+			Keyword(Keyword::C0) => Copyability(self::Copyability::Trivial),
+			Keyword(Keyword::C1) => Copyability(self::Copyability::Nontrivial),
+			Keyword(Keyword::Copy) => CopyabilityType,
 			Identifier => Variable(self.identifier(range)),
 			_ => return None,
 		};
@@ -591,7 +608,10 @@ impl<'s> Parser<'s> {
 				self.consume(ParenR)?;
 				term
 			}
-			Ast => Universe,
+			Ast => {
+				let copyability = self.parse_static_atom()?;
+				DynamicPreterm::Universe { copyability: bx!(copyability) }
+			}
 			Number => Num(self.source[range.0..range.1].parse().unwrap()),
 			Keyword(Keyword::Nat) => Nat,
 			Keyword(Keyword::Bool) => Bool,

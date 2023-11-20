@@ -1,7 +1,7 @@
 use std::{fmt::Debug, rc::Rc};
 
 use super::{
-	common::{Binder, Closure, Index, Level, Name, Projection},
+	common::{Binder, Closure, Copyability, Index, Level, Name, Projection},
 	elaborator::{DynamicTerm, StaticTerm},
 };
 use crate::utility::{bx, rc};
@@ -14,6 +14,7 @@ pub enum StaticValue {
 	Pair(Rc<Self>, Rc<Self>),
 	Num(usize),
 	BoolValue(bool),
+	Copyability(Copyability),
 }
 
 impl Debug for StaticValue {
@@ -35,7 +36,7 @@ pub enum DynamicValue {
 		argument: Rc<Self>,
 		tail: Binder<Rc<Self>>,
 	},
-	Universe,
+	Universe(Copyability),
 	Pi(Rc<Self>, Binder<Rc<Self>>),
 	Function(Binder<Rc<Self>>),
 	Apply {
@@ -130,6 +131,13 @@ impl Stage for StaticTerm {
 		use StaticTerm::*;
 		match self {
 			Variable(_, index) => environment.lookup_static(index),
+			CopyabilityType => StaticValue::Type,
+			Copyability(c) => StaticValue::Copyability(c),
+			MaxCopyability(a, b) => {
+				let StaticValue::Copyability(a) = a.stage(environment) else { panic!() };
+				let StaticValue::Copyability(b) = b.stage(environment) else { panic!() };
+				StaticValue::Copyability(std::cmp::max(a, b))
+			}
 			Lambda(function) => StaticValue::Function(function.stage(environment)),
 			Apply { scrutinee, argument } => {
 				let StaticValue::Function(function) = scrutinee.stage(environment) else { panic!() };
@@ -204,7 +212,10 @@ impl Stage for DynamicTerm {
 				argument: rc!(argument.stage(environment)),
 				tail: tail.stage(environment),
 			},
-			Universe => DynamicValue::Universe,
+			Universe { copyability } => {
+				let StaticValue::Copyability(c) = copyability.stage(environment) else { panic!() };
+				DynamicValue::Universe(c)
+			}
 			Splice(term) => {
 				let StaticValue::Quote(value) = term.stage(environment) else { panic!() };
 				value.as_ref().clone()
@@ -286,7 +297,8 @@ impl Unstage for DynamicValue {
 				argument: bx!(argument.unstage(level)),
 				tail: tail.unstage(level),
 			},
-			Universe => DynamicTerm::Universe,
+			Universe(copyability) =>
+				DynamicTerm::Universe { copyability: bx!(StaticTerm::Copyability(*copyability)) },
 			Nat => DynamicTerm::Nat,
 			Num(n) => DynamicTerm::Num(*n),
 			Suc(prev) => DynamicTerm::Suc(bx!(prev.unstage(level))),

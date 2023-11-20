@@ -80,3 +80,9 @@ impl<E, T> Closure<E, T, 1> {
 		parameter
 	}
 }
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
+pub enum Copyability {
+	Trivial = 0,
+	Nontrivial = 1,
+}

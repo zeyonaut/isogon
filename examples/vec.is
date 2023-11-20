@@ -1,12 +1,12 @@
-let unit : *
-	= |A : *| -> A -> A;
+def unit : copy -> '* c1
+	= |c| [|A : * c| -> A -> A];
 
-let tt : unit
+let tt : [unit c0]
 	= |A| |a| a;
 
-def bitvec : nat -> '*
-	= |n| n :: |n| '* {
-		| 0       -> [unit]
+def bitvec : nat -> '* c1
+	= |n| n :: |n| '* c1 {
+		| 0       -> unit c0
 		| suc n T -> [bool & [T]]
 	};
 

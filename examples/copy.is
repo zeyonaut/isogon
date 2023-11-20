@@ -1,0 +1,7 @@
+def sigma : |x : copy| -> |B : '* x| -> |y : copy| -> '([B] -> * y) -> '* (cmax x y)
+	= |x| |B| |y| |F| [|b : [B]| & [F] b];
+
+[sigma c1 [nat] c0 [|n| n :: |n| * c0 {
+	| 0       -> bool
+	| suc n a -> bool & bool
+}]]

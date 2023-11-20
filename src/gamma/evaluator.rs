@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use super::{
-	common::{bind, Binder, Closure, Index, Level, Name, Projection},
+	common::{bind, Binder, Closure, Copyability, Index, Level, Name, Projection},
 	elaborator::{DynamicTerm, StaticTerm},
 };
 use crate::utility::{bx, rc};
@@ -24,12 +24,15 @@ pub enum StaticNeutral {
 		case_false: Rc<StaticValue>,
 		case_true: Rc<StaticValue>,
 	},
+	MaxCopyability(Rc<Self>, Rc<Self>),
 }
 
 #[derive(Clone)]
 pub enum StaticValue {
 	Neutral(StaticNeutral),
 	Universe,
+	CopyabilityType,
+	Copyability(Copyability),
 	Lift(DynamicValue),
 	Quote(DynamicValue),
 	IndexedProduct(Rc<Self>, Rc<Closure<Environment, StaticTerm>>),
@@ -66,7 +69,7 @@ pub enum DynamicNeutral {
 #[derive(Clone)]
 pub enum DynamicValue {
 	Neutral(DynamicNeutral),
-	Universe,
+	Universe { copyability: Rc<StaticValue> },
 	IndexedProduct(Rc<Self>, Rc<Closure<Environment, DynamicTerm>>),
 	Function(Rc<Closure<Environment, DynamicTerm>>),
 	IndexedSum(Rc<Self>, Rc<Closure<Environment, DynamicTerm>>),
@@ -75,6 +78,20 @@ pub enum DynamicValue {
 	Num(usize),
 	Bool,
 	BoolValue(bool),
+}
+
+impl StaticValue {
+	pub fn max_copyability(a: Self, b: Self) -> Self {
+		use Copyability as C;
+		match (a, b) {
+			(Self::Copyability(C::Nontrivial), _) => Self::Copyability(C::Nontrivial),
+			(Self::Copyability(C::Trivial), b) => b,
+			(_, Self::Copyability(C::Nontrivial)) => Self::Copyability(C::Nontrivial),
+			(a, Self::Copyability(C::Trivial)) => a,
+			(Self::Neutral(a), Self::Neutral(b)) => Self::Neutral(StaticNeutral::MaxCopyability(rc!(a), rc!(b))),
+			_ => panic!(),
+		}
+	}
 }
 
 impl From<(Name, Level)> for StaticValue {
@@ -146,6 +163,13 @@ impl Evaluate for StaticTerm {
 		use StaticTerm::*;
 		match self {
 			Variable(_, index) => environment.lookup_static(index),
+			CopyabilityType => StaticValue::CopyabilityType,
+			Copyability(c) => StaticValue::Copyability(c),
+			MaxCopyability(a, b) => {
+				let a = a.evaluate(environment);
+				let b = b.evaluate(environment);
+				StaticValue::max_copyability(a, b)
+			}
 			Pi(base, family) =>
 				StaticValue::IndexedProduct(rc!(base.evaluate(environment)), rc!(family.evaluate(environment))),
 			Lambda(function) => StaticValue::Function(rc!(function.evaluate(environment))),
@@ -248,7 +272,8 @@ impl Evaluate for DynamicTerm {
 			Sigma(base, family) =>
 				DynamicValue::IndexedSum(rc!(base.evaluate(environment)), rc!(family.evaluate(environment))),
 			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate(environment)]),
-			Universe => DynamicValue::Universe,
+			Universe { copyability } =>
+				DynamicValue::Universe { copyability: rc!(copyability.evaluate(environment)) },
 			Splice(splicee) => match splicee.evaluate(environment) {
 				StaticValue::Quote(quotee) => quotee,
 				StaticValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Splice(neutral)),
@@ -397,6 +422,7 @@ impl Reify for StaticNeutral {
 		use StaticNeutral::*;
 		match self {
 			Variable(name, Level(level)) => StaticTerm::Variable(*name, Index(context_length - 1 - level)),
+			MaxCopyability(a, b) => StaticTerm::MaxCopyability(bx!(a.reify(level)), bx!(b.reify(level))),
 			Apply(callee, argument) =>
 				StaticTerm::Apply { scrutinee: bx!(callee.reify(level)), argument: bx!(argument.reify(level)) },
 			Project(scrutinee, projection) => StaticTerm::Project(bx!(scrutinee.reify(level)), *projection),
@@ -437,6 +463,8 @@ impl Reify for StaticValue {
 			Num(n) => StaticTerm::Num(*n),
 			Bool => StaticTerm::Bool,
 			BoolValue(b) => StaticTerm::BoolValue(*b),
+			CopyabilityType => StaticTerm::CopyabilityType,
+			Copyability(c) => StaticTerm::Copyability(*c),
 		}
 	}
 }
@@ -474,7 +502,7 @@ impl Reify for DynamicValue {
 		use DynamicValue::*;
 		match self {
 			Neutral(neutral) => neutral.reify(level),
-			Universe => DynamicTerm::Universe,
+			Universe { copyability } => DynamicTerm::Universe { copyability: bx!(copyability.reify(level)) },
 			IndexedProduct(base, family) => DynamicTerm::Pi(bx!(base.reify(level)), family.reify(level)),
 			Function(function) => DynamicTerm::Lambda(function.reify(level)),
 			IndexedSum(base, family) => DynamicTerm::Sigma(bx!(base.reify(level)), family.reify(level)),

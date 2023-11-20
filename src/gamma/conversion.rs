@@ -13,7 +13,7 @@ impl Conversion<StaticValue> for Level {
 	fn can_convert(self, left: &StaticValue, right: &StaticValue) -> bool {
 		use StaticValue::*;
 		match (left, right) {
-			(Universe, Universe) => true,
+			(Universe, Universe) | (Nat, Nat) | (Bool, Bool) | (CopyabilityType, CopyabilityType) => true,
 			(Lift(left), Lift(right)) | (Quote(left), Quote(right)) => self.can_convert(left, right),
 			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
 			(Function(left), Function(right)) =>
@@ -32,9 +32,9 @@ impl Conversion<StaticValue> for Level {
 			| (IndexedSum(left_base, left_family), IndexedSum(right_base, right_family)) =>
 				self.can_convert(&**left_base, right_base)
 					&& (self + 1).can_convert(&left_family.autolyze(self), &right_family.autolyze(self)),
-			(Nat, Nat) | (Bool, Bool) => true,
 			(Num(left), Num(right)) => left == right,
 			(BoolValue(left), BoolValue(right)) => left == right,
+			(Copyability(left), Copyability(right)) => left == right,
 			_ => false,
 		}
 	}
@@ -45,6 +45,8 @@ impl Conversion<StaticNeutral> for Level {
 		use StaticNeutral::*;
 		match (left, right) {
 			(Variable(_, left), Variable(_, right)) => left == right,
+			(MaxCopyability(a_left, b_left), MaxCopyability(a_right, b_right)) =>
+				self.can_convert(&**a_left, a_right) && self.can_convert(&**b_left, b_right),
 			(Apply(left, left_argument), Apply(right, right_argument)) =>
 				self.can_convert(&**left, &right) && self.can_convert(&**left_argument, &right_argument),
 			(Project(left, left_projection), Project(right, right_projection)) =>
@@ -76,7 +78,8 @@ impl Conversion<DynamicValue> for Level {
 		use DynamicValue::*;
 		use Projection::*;
 		match (left, right) {
-			(Universe, Universe) => true,
+			(Universe { copyability: left_copyability }, Universe { copyability: right_copyability }) =>
+				self.can_convert(&**left_copyability, right_copyability),
 			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
 			(Function(left), Function(right)) =>
 				(self + 1).can_convert(&left.autolyze(self), &right.autolyze(self)),

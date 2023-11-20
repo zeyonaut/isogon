@@ -3,13 +3,14 @@ use std::fmt::Write;
 use lasso::Rodeo;
 
 use super::{
-	common::Projection,
+	common::{Copyability, Projection},
 	elaborator::{DynamicTerm, StaticTerm},
 };
 
 fn write_static_spine(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use StaticTerm::*;
 	match term {
+		// Any case which is not already covered by write_static_atom.
 		Apply { .. } | Project { .. } | Suc(..) | CaseNat { .. } | CaseBool { .. } =>
 			write_static(term, f, interner),
 		_ => write_static_atom(term, f, interner),
@@ -19,8 +20,8 @@ fn write_static_spine(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -
 fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use StaticTerm::*;
 	match term {
-		Variable(..) | Universe | Lift(_) | Quote(_) | Nat | Num(..) | Bool | BoolValue(..) =>
-			write_static(term, f, interner),
+		Variable(..) | Universe | Lift(_) | Quote(_) | Nat | Num(..) | Bool | BoolValue(..)
+		| Copyability(..) | CopyabilityType | MaxCopyability(..) => write_static(term, f, interner),
 		Let { .. }
 		| Lambda { .. }
 		| Pair { .. }
@@ -40,8 +41,19 @@ fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) ->
 
 fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use StaticTerm::*;
+
+	use self::Copyability as C;
 	match term {
 		Variable(name, ..) => write!(f, "{}", interner.resolve(name)),
+		CopyabilityType => write!(f, "copy"),
+		Copyability(C::Trivial) => write!(f, "c0"),
+		Copyability(C::Nontrivial) => write!(f, "c1"),
+		MaxCopyability(a, b) => {
+			write!(f, "cmax ")?;
+			write_static_atom(a, f, interner)?;
+			write!(f, " ")?;
+			write_static_atom(b, f, interner)
+		}
 		Pi(base, family) => {
 			let parameter = interner.resolve(&family.parameter());
 			if parameter != "_" {
@@ -153,7 +165,7 @@ fn write_dynamic_spine(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo)
 fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use DynamicTerm::*;
 	match term {
-		Variable(..) | Universe | Splice(_) | Nat | Num(..) | Bool | BoolValue(..) =>
+		Variable(..) | Universe { .. } | Splice(_) | Nat | Num(..) | Bool | BoolValue(..) =>
 			write_dynamic(term, f, interner),
 		Let { .. }
 		| Lambda { .. }
@@ -189,7 +201,10 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write_static(splicee, f, interner)?;
 			write!(f, "]")
 		}
-		Universe => write!(f, "*"),
+		Universe { copyability } => {
+			write!(f, "* ")?;
+			write_static_atom(&copyability, f, interner)
+		}
 		Pi(base, family) => {
 			let parameter = interner.resolve(&family.parameter());
 			if parameter != "_" {

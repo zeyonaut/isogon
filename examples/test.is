@@ -1,7 +1,7 @@
-let A : * = |PA : *| -> PA;
-def B : '* -> '* = |T| [A -> [T]];
-let C : * = |PC : *| & PC;
-let D : * = * & *;
-let x : |T : *| & * -> * -> * = *, (|T| |K| A & T & K);
+let A : * c1 = |PA : * c0| -> PA;
+def B : '* c1 -> '* c1 = |T| [A -> [T]];
+let C : * c0 = |PC : * c0| & PC;
+let D : * c0 = * c0 & * c0;
+let x : |T : * c0| & * c0 -> * c0 -> * c1 = * c0, (|T| |K| A & T & K);
 
 [B [x/! (x/.) C]]
