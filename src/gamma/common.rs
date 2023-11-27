@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use lasso::Spur;
 
 // de Bruijn index: zero is the newest bound parameter.
@@ -85,4 +87,13 @@ impl<E, T> Closure<E, T, 1> {
 pub enum Copyability {
 	Trivial = 0,
 	Nontrivial = 1,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
+pub enum ReprAtom {
+	Class,
+	Pointer,
+	Byte,
+	Nat,
+	Fun,
 }

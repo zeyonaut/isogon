@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use super::{
-	common::{bind, Binder, Closure, Copyability, Index, Level, Name, Projection},
+	common::{bind, Binder, Closure, Copyability, Index, Level, Name, Projection, ReprAtom},
 	elaborator::{DynamicTerm, StaticTerm},
 };
 use crate::utility::{bx, rc};
@@ -25,6 +25,7 @@ pub enum StaticNeutral {
 		case_true: Rc<StaticValue>,
 	},
 	MaxCopyability(Rc<Self>, Rc<Self>),
+	ReprUniv(Rc<Self>),
 }
 
 #[derive(Clone)]
@@ -33,6 +34,12 @@ pub enum StaticValue {
 	Universe,
 	CopyabilityType,
 	Copyability(Copyability),
+	ReprType,
+	ReprNone,
+	ReprAtom(ReprAtom),
+	// NOTE: This is a little type-unsafe in exchange for less redundant code; we need to make sure that these two never contain a ReprNone.
+	ReprPair(Rc<Self>, Rc<Self>),
+	ReprMax(Rc<Self>, Rc<Self>),
 	Lift(DynamicValue),
 	Quote(DynamicValue),
 	IndexedProduct(Rc<Self>, Rc<Closure<Environment, StaticTerm>>),
@@ -64,12 +71,14 @@ pub enum DynamicNeutral {
 		case_false: Rc<DynamicValue>,
 		case_true: Rc<DynamicValue>,
 	},
+	Unwrap(Rc<Self>),
+	UnRc(Rc<Self>),
 }
 
 #[derive(Clone)]
 pub enum DynamicValue {
 	Neutral(DynamicNeutral),
-	Universe { copyability: Rc<StaticValue> },
+	Universe { copyability: Rc<StaticValue>, representation: Rc<StaticValue> },
 	IndexedProduct(Rc<Self>, Rc<Closure<Environment, DynamicTerm>>),
 	Function(Rc<Closure<Environment, DynamicTerm>>),
 	IndexedSum(Rc<Self>, Rc<Closure<Environment, DynamicTerm>>),
@@ -78,6 +87,10 @@ pub enum DynamicValue {
 	Num(usize),
 	Bool,
 	BoolValue(bool),
+	WrapType(Rc<Self>),
+	WrapNew(Rc<Self>),
+	RcType(Rc<Self>),
+	RcNew(Rc<Self>),
 }
 
 impl StaticValue {
@@ -89,6 +102,31 @@ impl StaticValue {
 			(_, Self::Copyability(C::Nontrivial)) => Self::Copyability(C::Nontrivial),
 			(a, Self::Copyability(C::Trivial)) => a,
 			(Self::Neutral(a), Self::Neutral(b)) => Self::Neutral(StaticNeutral::MaxCopyability(rc!(a), rc!(b))),
+			_ => panic!(),
+		}
+	}
+
+	pub fn pair_representation(a: Self, b: Self) -> Self {
+		match (a, b) {
+			(Self::ReprNone, b) => b,
+			(a, Self::ReprNone) => a,
+			(a, b) => Self::ReprPair(rc!(a), rc!(b)),
+		}
+	}
+
+	pub fn max_representation(a: Self, b: Self) -> Self {
+		match (a, b) {
+			(Self::ReprNone, b) => b,
+			(a, Self::ReprNone) => a,
+			(a, b) => Self::ReprMax(rc!(a), rc!(b)),
+		}
+	}
+
+	pub fn univ_representation(c: Self) -> Self {
+		match c {
+			StaticValue::Neutral(n) => StaticValue::Neutral(StaticNeutral::ReprUniv(rc!(n))),
+			StaticValue::Copyability(Copyability::Trivial) => StaticValue::ReprNone,
+			StaticValue::Copyability(Copyability::Nontrivial) => StaticValue::ReprAtom(ReprAtom::Class),
 			_ => panic!(),
 		}
 	}
@@ -169,6 +207,22 @@ impl Evaluate for StaticTerm {
 				let a = a.evaluate(environment);
 				let b = b.evaluate(environment);
 				StaticValue::max_copyability(a, b)
+			}
+			ReprType => StaticValue::ReprType,
+			ReprAtom(r) => r.map(StaticValue::ReprAtom).unwrap_or(StaticValue::ReprNone),
+			ReprPair(r0, r1) => {
+				let r0 = r0.evaluate(environment);
+				let r1 = r1.evaluate(environment);
+				StaticValue::pair_representation(r0, r1)
+			}
+			ReprMax(r0, r1) => {
+				let r0 = r0.evaluate(environment);
+				let r1 = r1.evaluate(environment);
+				StaticValue::max_representation(r0, r1)
+			}
+			ReprUniv(c) => {
+				let c = c.evaluate(environment);
+				StaticValue::univ_representation(c)
 			}
 			Pi(base, family) =>
 				StaticValue::IndexedProduct(rc!(base.evaluate(environment)), rc!(family.evaluate(environment))),
@@ -272,8 +326,10 @@ impl Evaluate for DynamicTerm {
 			Sigma(base, family) =>
 				DynamicValue::IndexedSum(rc!(base.evaluate(environment)), rc!(family.evaluate(environment))),
 			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate(environment)]),
-			Universe { copyability } =>
-				DynamicValue::Universe { copyability: rc!(copyability.evaluate(environment)) },
+			Universe { copyability, representation } => DynamicValue::Universe {
+				copyability: rc!(copyability.evaluate(environment)),
+				representation: rc!(representation.evaluate(environment)),
+			},
 			Splice(splicee) => match splicee.evaluate(environment) {
 				StaticValue::Quote(quotee) => quotee,
 				StaticValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Splice(neutral)),
@@ -320,6 +376,20 @@ impl Evaluate for DynamicTerm {
 					case_false: rc!(case_false.evaluate(environment)),
 					case_true: rc!(case_true.evaluate(environment)),
 				}),
+				_ => panic!(),
+			},
+			WrapType(ty) => DynamicValue::WrapType(rc!(ty.evaluate(environment))),
+			WrapNew(tm) => DynamicValue::WrapNew(rc!(tm.evaluate(environment))),
+			Unwrap(tm) => match tm.evaluate(environment) {
+				DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::Unwrap(rc!(n))),
+				DynamicValue::WrapNew(v) => v.as_ref().clone(),
+				_ => panic!(),
+			},
+			RcType(ty) => DynamicValue::RcType(rc!(ty.evaluate(environment))),
+			RcNew(tm) => DynamicValue::RcNew(rc!(tm.evaluate(environment))),
+			UnRc(tm) => match tm.evaluate(environment) {
+				DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::UnRc(rc!(n))),
+				DynamicValue::RcNew(v) => v.as_ref().clone(),
 				_ => panic!(),
 			},
 		}
@@ -423,6 +493,7 @@ impl Reify for StaticNeutral {
 		match self {
 			Variable(name, Level(level)) => StaticTerm::Variable(*name, Index(context_length - 1 - level)),
 			MaxCopyability(a, b) => StaticTerm::MaxCopyability(bx!(a.reify(level)), bx!(b.reify(level))),
+			ReprUniv(c) => StaticTerm::ReprUniv(bx!(c.reify(level))),
 			Apply(callee, argument) =>
 				StaticTerm::Apply { scrutinee: bx!(callee.reify(level)), argument: bx!(argument.reify(level)) },
 			Project(scrutinee, projection) => StaticTerm::Project(bx!(scrutinee.reify(level)), *projection),
@@ -465,6 +536,11 @@ impl Reify for StaticValue {
 			BoolValue(b) => StaticTerm::BoolValue(*b),
 			CopyabilityType => StaticTerm::CopyabilityType,
 			Copyability(c) => StaticTerm::Copyability(*c),
+			ReprType => StaticTerm::ReprType,
+			ReprNone => StaticTerm::ReprAtom(None),
+			ReprAtom(r) => StaticTerm::ReprAtom(Some(*r)),
+			ReprPair(r0, r1) => StaticTerm::ReprPair(bx!(r0.reify(level)), bx!(r1.reify(level))),
+			ReprMax(r0, r1) => StaticTerm::ReprMax(bx!(r0.reify(level)), bx!(r1.reify(level))),
 		}
 	}
 }
@@ -492,6 +568,8 @@ impl Reify for DynamicNeutral {
 				case_false: bx!(case_false.reify(level)),
 				case_true: bx!(case_true.reify(level)),
 			},
+			Unwrap(v) => DynamicTerm::Unwrap(bx!(v.reify(level))),
+			UnRc(v) => DynamicTerm::UnRc(bx!(v.reify(level))),
 		}
 	}
 }
@@ -502,7 +580,10 @@ impl Reify for DynamicValue {
 		use DynamicValue::*;
 		match self {
 			Neutral(neutral) => neutral.reify(level),
-			Universe { copyability } => DynamicTerm::Universe { copyability: bx!(copyability.reify(level)) },
+			Universe { copyability, representation } => DynamicTerm::Universe {
+				copyability: bx!(copyability.reify(level)),
+				representation: bx!(representation.reify(level)),
+			},
 			IndexedProduct(base, family) => DynamicTerm::Pi(bx!(base.reify(level)), family.reify(level)),
 			Function(function) => DynamicTerm::Lambda(function.reify(level)),
 			IndexedSum(base, family) => DynamicTerm::Sigma(bx!(base.reify(level)), family.reify(level)),
@@ -514,6 +595,10 @@ impl Reify for DynamicValue {
 			Num(n) => DynamicTerm::Num(*n),
 			Bool => DynamicTerm::Bool,
 			BoolValue(b) => DynamicTerm::BoolValue(*b),
+			WrapType(x) => DynamicTerm::WrapType(bx!(x.reify(level))),
+			WrapNew(x) => DynamicTerm::WrapNew(bx!(x.reify(level))),
+			RcType(x) => DynamicTerm::RcType(bx!(x.reify(level))),
+			RcNew(x) => DynamicTerm::RcNew(bx!(x.reify(level))),
 		}
 	}
 }

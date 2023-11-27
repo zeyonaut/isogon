@@ -13,7 +13,17 @@ impl Conversion<StaticValue> for Level {
 	fn can_convert(self, left: &StaticValue, right: &StaticValue) -> bool {
 		use StaticValue::*;
 		match (left, right) {
-			(Universe, Universe) | (Nat, Nat) | (Bool, Bool) | (CopyabilityType, CopyabilityType) => true,
+			(Universe, Universe)
+			| (Nat, Nat)
+			| (Bool, Bool)
+			| (CopyabilityType, CopyabilityType)
+			| (ReprType, ReprType)
+			| (ReprNone, ReprNone) => true,
+			(ReprAtom(left), ReprAtom(right)) => left == right,
+			(ReprPair(left0, left1), ReprPair(right0, right1)) =>
+				self.can_convert(&**left0, right0) && self.can_convert(&**left1, right1),
+			(ReprMax(left0, left1), ReprMax(right0, right1)) =>
+				self.can_convert(&**left0, right0) && self.can_convert(&**left1, right1),
 			(Lift(left), Lift(right)) | (Quote(left), Quote(right)) => self.can_convert(left, right),
 			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
 			(Function(left), Function(right)) =>
@@ -47,6 +57,7 @@ impl Conversion<StaticNeutral> for Level {
 			(Variable(_, left), Variable(_, right)) => left == right,
 			(MaxCopyability(a_left, b_left), MaxCopyability(a_right, b_right)) =>
 				self.can_convert(&**a_left, a_right) && self.can_convert(&**b_left, b_right),
+			(ReprUniv(left), ReprUniv(right)) => self.can_convert(&**left, right),
 			(Apply(left, left_argument), Apply(right, right_argument)) =>
 				self.can_convert(&**left, &right) && self.can_convert(&**left_argument, &right_argument),
 			(Project(left, left_projection), Project(right, right_projection)) =>
@@ -78,8 +89,16 @@ impl Conversion<DynamicValue> for Level {
 		use DynamicValue::*;
 		use Projection::*;
 		match (left, right) {
-			(Universe { copyability: left_copyability }, Universe { copyability: right_copyability }) =>
-				self.can_convert(&**left_copyability, right_copyability),
+			(
+				Universe { copyability: left_copyability, representation: left_representation },
+				Universe { copyability: right_copyability, representation: right_representation },
+			) =>
+				self.can_convert(&**left_copyability, right_copyability)
+					&& self.can_convert(&**left_representation, right_representation),
+			(WrapType(left), WrapType(right)) => self.can_convert(&**left, right),
+			(WrapNew(left), WrapNew(right)) => self.can_convert(&**left, right),
+			(RcType(left), RcType(right)) => self.can_convert(&**left, right),
+			(RcNew(left), RcNew(right)) => self.can_convert(&**left, right),
 			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
 			(Function(left), Function(right)) =>
 				(self + 1).can_convert(&left.autolyze(self), &right.autolyze(self)),
@@ -120,8 +139,9 @@ impl Conversion<DynamicNeutral> for Level {
 				self.can_convert(&**left, right) && self.can_convert(&**left_argument, right_argument),
 			(Project(left, left_projection), Project(right, right_projection)) =>
 				left_projection == right_projection && self.can_convert(&**left, right),
+			(Unwrap(left), Unwrap(right)) | (UnRc(left), UnRc(right)) | (Suc(left), Suc(right)) =>
+				self.can_convert(&**left, right),
 			(Splice(left), Splice(right)) => self.can_convert(left, right),
-			(Suc(left), Suc(right)) => self.can_convert(&**left, right),
 			(
 				CaseNat { scrutinee: l_scrutinee, motive: l_motive, case_nil: l_case_nil, case_suc: l_case_suc },
 				CaseNat { scrutinee: r_scrutinee, motive: r_motive, case_nil: r_case_nil, case_suc: r_case_suc },

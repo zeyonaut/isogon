@@ -1,5 +1,5 @@
 use super::{
-	common::{bind, Binder, Copyability, Index, Level, Name, Projection},
+	common::{bind, Binder, Copyability, Index, Level, Name, Projection, ReprAtom},
 	conversion::Conversion,
 	evaluator::{
 		DynamicNeutral, DynamicValue, Environment, Evaluate, Reify, StaticNeutral, StaticValue, Value,
@@ -43,9 +43,6 @@ pub enum StaticTerm {
 		case_nil: Box<Self>,
 		case_suc: Binder<Box<Self>, 2>,
 	},
-	CopyabilityType,
-	Copyability(Copyability),
-	MaxCopyability(Box<Self>, Box<Self>),
 	Bool,
 	BoolValue(bool),
 	CaseBool {
@@ -54,6 +51,14 @@ pub enum StaticTerm {
 		case_false: Box<Self>,
 		case_true: Box<Self>,
 	},
+	CopyabilityType,
+	Copyability(Copyability),
+	MaxCopyability(Box<Self>, Box<Self>),
+	ReprType,
+	ReprAtom(Option<ReprAtom>),
+	ReprPair(Box<Self>, Box<Self>),
+	ReprMax(Box<Self>, Box<Self>),
+	ReprUniv(Box<Self>),
 }
 
 #[derive(Clone, Debug)]
@@ -67,7 +72,14 @@ pub enum DynamicTerm {
 	Splice(Box<StaticTerm>),
 	Universe {
 		copyability: Box<StaticTerm>,
+		representation: Box<StaticTerm>,
 	},
+	WrapType(Box<Self>),
+	WrapNew(Box<Self>),
+	Unwrap(Box<Self>),
+	RcType(Box<Self>),
+	RcNew(Box<Self>),
+	UnRc(Box<Self>),
 	Pi(Box<Self>, Binder<Box<Self>>),
 	Lambda(Binder<Box<Self>>),
 	Apply {
@@ -165,6 +177,22 @@ pub fn synthesize_static(context: &Context, term: StaticPreterm) -> (StaticTerm,
 			let b = verify_static(context, *b, StaticValue::CopyabilityType);
 			(StaticTerm::MaxCopyability(bx!(a), bx!(b)), StaticValue::CopyabilityType)
 		}
+		ReprType => (StaticTerm::ReprType, StaticValue::Universe),
+		ReprAtom(r) => (StaticTerm::ReprAtom(r), StaticValue::ReprType),
+		ReprPair(r0, r1) => {
+			let r0 = verify_static(context, *r0, StaticValue::ReprType);
+			let r1 = verify_static(context, *r1, StaticValue::ReprType);
+			(StaticTerm::ReprPair(bx!(r0), bx!(r1)), StaticValue::ReprType)
+		}
+		ReprMax(r0, r1) => {
+			let r0 = verify_static(context, *r0, StaticValue::ReprType);
+			let r1 = verify_static(context, *r1, StaticValue::ReprType);
+			(StaticTerm::ReprMax(bx!(r0), bx!(r1)), StaticValue::ReprType)
+		}
+		ReprUniv(c) => {
+			let c = verify_static(context, *c, StaticValue::CopyabilityType);
+			(StaticTerm::ReprUniv(bx!(c)), StaticValue::ReprType)
+		}
 		Lambda { .. } | Pair { .. } => panic!(),
 		Apply { scrutinee, argument } => {
 			let (scrutinee, scrutinee_ty) = synthesize_static(context, *scrutinee);
@@ -224,7 +252,7 @@ pub fn synthesize_static(context: &Context, term: StaticPreterm) -> (StaticTerm,
 			)
 		}
 		Lift(liftee) => {
-			let (liftee, _) = elaborate_dynamic_type(context, *liftee);
+			let (liftee, _, _) = elaborate_dynamic_type(context, *liftee);
 			(StaticTerm::Lift(bx!(liftee)), StaticValue::Universe)
 		}
 		Quote(quotee) => {
@@ -339,7 +367,12 @@ pub fn verify_static(context: &Context, term: StaticPreterm, ty: StaticValue) ->
 			if context.len().can_convert(&synthesized_ty, &ty) {
 				term
 			} else {
-				panic!()
+				println!("{:#?}", term);
+				panic!(
+					"synthesized type {:#?} did not match expected type {:#?}",
+					synthesized_ty.reify(context.len()),
+					ty.reify(context.len()),
+				);
 			}
 		}
 	}
@@ -370,7 +403,7 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 			})
 			.unwrap(),
 		Let { assignee, ty, argument, tail } => {
-			let (ty, _) = elaborate_dynamic_type(context, *ty);
+			let (ty, _, _) = elaborate_dynamic_type(context, *ty);
 			let ty_value = ty.clone().evaluate(&context.environment);
 			let argument = verify_dynamic(context, *argument, ty_value.clone());
 			// NOTE: Isn't this a problem, performance-wise? Does laziness help here? Testing necessary. (Having the value available in the environment is wanted for evaluation.)
@@ -411,39 +444,93 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 				}
 			}
 		}
-		Universe { copyability } => {
+		Universe { copyability, representation } => {
 			let copyability = verify_static(context, *copyability, StaticValue::CopyabilityType);
 			let copyability_value = copyability.clone().evaluate(&context.environment);
 
+			let representation = verify_static(context, *representation, StaticValue::ReprType);
+
+			let universe_representation = StaticValue::univ_representation(copyability_value.clone());
+
 			(
-				DynamicTerm::Universe { copyability: bx!(copyability.clone()) },
-				DynamicValue::Universe { copyability: rc!(copyability_value) },
+				DynamicTerm::Universe {
+					copyability: bx!(copyability.clone()),
+					representation: bx!(representation),
+				},
+				DynamicValue::Universe {
+					copyability: rc!(copyability_value),
+					representation: rc!(universe_representation),
+				},
 			)
 		}
+		WrapType(ty) => {
+			let (ty, _, rep) = elaborate_dynamic_type(context, *ty);
+			(
+				DynamicTerm::WrapType(bx!(ty)),
+				DynamicValue::Universe {
+					copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)),
+					representation: rc!(rep),
+				},
+			)
+		}
+		WrapNew(tm) => {
+			let (tm, ty) = synthesize_dynamic(context, *tm);
+			(DynamicTerm::WrapNew(bx!(tm)), DynamicValue::WrapType(rc!(ty)))
+		}
+		Unwrap(tm) => {
+			let (tm, DynamicValue::WrapType(ty)) = synthesize_dynamic(context, *tm) else { panic!() };
+			(DynamicTerm::Unwrap(bx!(tm)), ty.as_ref().clone())
+		}
+		RcType(ty) => {
+			let (ty, _, _) = elaborate_dynamic_type(context, *ty);
+			(
+				DynamicTerm::RcType(bx!(ty)),
+				DynamicValue::Universe {
+					copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)),
+					representation: rc!(StaticValue::ReprAtom(ReprAtom::Pointer)),
+				},
+			)
+		}
+		RcNew(tm) => {
+			let (tm, ty) = synthesize_dynamic(context, *tm);
+			(DynamicTerm::RcNew(bx!(tm)), DynamicValue::RcType(rc!(ty)))
+		}
+		UnRc(tm) => {
+			let (tm, DynamicValue::RcType(ty)) = synthesize_dynamic(context, *tm) else { panic!() };
+			(DynamicTerm::UnRc(bx!(tm)), ty.as_ref().clone())
+		}
 		Pi { parameter, base, family } => {
-			let (base, _) = elaborate_dynamic_type(context, *base);
+			let (base, _, _) = elaborate_dynamic_type(context, *base);
 			let base_value = base.clone().evaluate(&context.environment);
-			let (family, _) =
+			let (family, _, _) =
 				elaborate_dynamic_type(&context.clone().bind_dynamic(parameter, base_value), *family);
 			(
 				DynamicTerm::Pi(bx!(base), bind([parameter], bx!(family))),
-				DynamicValue::Universe { copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)) },
+				DynamicValue::Universe {
+					copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)),
+					representation: rc!(StaticValue::ReprAtom(ReprAtom::Fun)),
+				},
 			)
 		}
 		Sigma { parameter, base, family } => {
-			let (base, base_copyability) = elaborate_dynamic_type(context, *base);
+			let (base, base_copyability, base_representation) = elaborate_dynamic_type(context, *base);
 			let base_value = base.clone().evaluate(&context.environment);
-			let (family, family_copyability) =
+			let (family, family_copyability, family_representation) =
 				elaborate_dynamic_type(&context.clone().bind_dynamic(parameter, base_value), *family);
 			let copyability = StaticValue::max_copyability(base_copyability, family_copyability);
+
+			let representation = StaticValue::pair_representation(base_representation, family_representation);
 			(
 				DynamicTerm::Sigma(bx!(base), bind([parameter], bx!(family))),
-				DynamicValue::Universe { copyability: rc!(copyability) },
+				DynamicValue::Universe { copyability: rc!(copyability), representation: rc!(representation) },
 			)
 		}
 		Nat => (
 			DynamicTerm::Nat,
-			DynamicValue::Universe { copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)) },
+			DynamicValue::Universe {
+				copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)),
+				representation: rc!(StaticValue::ReprAtom(ReprAtom::Nat)),
+			},
 		),
 		Num(n) => (DynamicTerm::Num(n), DynamicValue::Nat),
 		Suc(prev) => {
@@ -457,7 +544,7 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 		CaseNat { scrutinee, motive_parameter, motive, case_nil, case_suc_parameters, case_suc } => {
 			let scrutinee = verify_dynamic(context, *scrutinee, DynamicValue::Nat);
 			let scrutinee_value = scrutinee.clone().evaluate(&context.environment);
-			let (motive, _) = elaborate_dynamic_type(
+			let (motive, _, _) = elaborate_dynamic_type(
 				&context.clone().bind_dynamic(motive_parameter, DynamicValue::Nat),
 				*motive,
 			);
@@ -487,13 +574,16 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 		}
 		Bool => (
 			DynamicTerm::Bool,
-			DynamicValue::Universe { copyability: rc!(StaticValue::Copyability(Copyability::Trivial)) },
+			DynamicValue::Universe {
+				copyability: rc!(StaticValue::Copyability(Copyability::Trivial)),
+				representation: rc!(StaticValue::ReprAtom(ReprAtom::Byte)),
+			},
 		),
 		BoolValue(b) => (DynamicTerm::BoolValue(b), DynamicValue::Bool),
 		CaseBool { scrutinee, motive, case_false, case_true } => {
 			let scrutinee = verify_dynamic(context, *scrutinee, DynamicValue::Bool);
 			let scrutinee_value = scrutinee.clone().evaluate(&context.environment);
-			let (motive_term, _) = elaborate_dynamic_type(
+			let (motive_term, _, _) = elaborate_dynamic_type(
 				&context.clone().bind_dynamic(motive.parameter(), DynamicValue::Bool),
 				*motive.body,
 			);
@@ -536,7 +626,7 @@ pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue)
 			DynamicTerm::Pair { basepoint: bx!(basepoint), fiberpoint: bx!(fiberpoint) }
 		}
 		(Let { assignee, ty, argument, tail }, _) => {
-			let (ty, _) = elaborate_dynamic_type(context, *ty);
+			let (ty, _, _) = elaborate_dynamic_type(context, *ty);
 			let ty_value = ty.clone().evaluate(&context.environment);
 			let argument = verify_dynamic(context, *argument, ty_value.clone());
 			let argument_value = argument.clone().evaluate(&context.environment);
@@ -550,6 +640,14 @@ pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue)
 				ty_value,
 			);
 			DynamicTerm::Let { ty: bx!(ty), argument: bx!(argument), tail: bind([assignee], bx!(tail)) }
+		}
+		(WrapNew(tm), DynamicValue::WrapType(ty)) => {
+			let tm = verify_dynamic(context, *tm, ty.as_ref().clone());
+			DynamicTerm::WrapNew(bx!(tm))
+		}
+		(RcNew(tm), DynamicValue::RcType(ty)) => {
+			let tm = verify_dynamic(context, *tm, ty.as_ref().clone());
+			DynamicTerm::RcNew(bx!(tm))
 		}
 		(term, ty) => {
 			let (term, synthesized_ty) = synthesize_dynamic(context, term);
@@ -567,9 +665,13 @@ pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue)
 	}
 }
 
-pub fn elaborate_dynamic_type(context: &Context, term: DynamicPreterm) -> (DynamicTerm, StaticValue) {
-	let (term, DynamicValue::Universe { copyability }) = synthesize_dynamic(context, term) else {
+pub fn elaborate_dynamic_type(
+	context: &Context,
+	term: DynamicPreterm,
+) -> (DynamicTerm, /* copyability */ StaticValue, /* representation */ StaticValue) {
+	let (term, DynamicValue::Universe { copyability, representation }) = synthesize_dynamic(context, term)
+	else {
 		panic!("tried to elaborate a non-type dynamic term as a type");
 	};
-	(term, copyability.as_ref().clone())
+	(term, copyability.as_ref().clone(), representation.as_ref().clone())
 }

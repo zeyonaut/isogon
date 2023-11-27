@@ -1,10 +1,17 @@
 use std::{fmt::Debug, rc::Rc};
 
 use super::{
-	common::{Binder, Closure, Copyability, Index, Level, Name, Projection},
+	common::{Binder, Closure, Copyability, Index, Level, Name, Projection, ReprAtom},
 	elaborator::{DynamicTerm, StaticTerm},
 };
 use crate::utility::{bx, rc};
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
+pub enum Repr {
+	Atom(ReprAtom),
+	Pair(Rc<Repr>, Rc<Repr>),
+	Max(Rc<Repr>, Rc<Repr>),
+}
 
 #[derive(Clone)]
 pub enum StaticValue {
@@ -15,6 +22,7 @@ pub enum StaticValue {
 	Num(usize),
 	BoolValue(bool),
 	Copyability(Copyability),
+	Repr(Option<Repr>),
 }
 
 impl Debug for StaticValue {
@@ -36,7 +44,7 @@ pub enum DynamicValue {
 		argument: Rc<Self>,
 		tail: Binder<Rc<Self>>,
 	},
-	Universe(Copyability),
+	Universe(Copyability, Option<Repr>),
 	Pi(Rc<Self>, Binder<Rc<Self>>),
 	Function(Binder<Rc<Self>>),
 	Apply {
@@ -66,6 +74,12 @@ pub enum DynamicValue {
 		case_false: Rc<Self>,
 		case_true: Rc<Self>,
 	},
+	WrapType(Rc<Self>),
+	WrapNew(Rc<Self>),
+	Unwrap(Rc<Self>),
+	RcType(Rc<Self>),
+	RcNew(Rc<Self>),
+	UnRc(Rc<Self>),
 }
 
 #[derive(Clone, Debug)]
@@ -177,6 +191,33 @@ impl Stage for StaticTerm {
 				let StaticValue::BoolValue(b) = scrutinee.stage(environment) else { panic!() };
 				if b { case_true } else { case_false }.stage(environment)
 			}
+			ReprType => StaticValue::Type,
+			ReprAtom(r) => StaticValue::Repr(r.map(Repr::Atom)),
+			ReprPair(r0, r1) => {
+				let StaticValue::Repr(r0) = r0.stage(environment) else { panic!() };
+				let StaticValue::Repr(r1) = r1.stage(environment) else { panic!() };
+				match (r0, r1) {
+					(None, r1) => StaticValue::Repr(r1),
+					(r0, None) => StaticValue::Repr(r0),
+					(Some(r0), Some(r1)) => StaticValue::Repr(Some(Repr::Pair(rc!(r0), rc!(r1)))),
+				}
+			}
+			ReprMax(r0, r1) => {
+				let StaticValue::Repr(r0) = r0.stage(environment) else { panic!() };
+				let StaticValue::Repr(r1) = r1.stage(environment) else { panic!() };
+				match (r0, r1) {
+					(None, r1) => StaticValue::Repr(r1),
+					(r0, None) => StaticValue::Repr(r0),
+					(Some(r0), Some(r1)) => StaticValue::Repr(Some(Repr::Max(rc!(r0), rc!(r1)))),
+				}
+			}
+			ReprUniv(c) => {
+				let StaticValue::Copyability(c) = c.stage(environment) else { panic!() };
+				match c {
+					self::Copyability::Trivial => StaticValue::Repr(None),
+					self::Copyability::Nontrivial => StaticValue::Repr(Some(Repr::Atom(self::ReprAtom::Class))),
+				}
+			}
 		}
 	}
 }
@@ -212,9 +253,10 @@ impl Stage for DynamicTerm {
 				argument: rc!(argument.stage(environment)),
 				tail: tail.stage(environment),
 			},
-			Universe { copyability } => {
+			Universe { copyability, representation } => {
 				let StaticValue::Copyability(c) = copyability.stage(environment) else { panic!() };
-				DynamicValue::Universe(c)
+				let StaticValue::Repr(r) = representation.stage(environment) else { panic!() };
+				DynamicValue::Universe(c, r)
 			}
 			Splice(term) => {
 				let StaticValue::Quote(value) = term.stage(environment) else { panic!() };
@@ -237,6 +279,12 @@ impl Stage for DynamicTerm {
 				case_false: rc!(case_false.stage(environment)),
 				case_true: rc!(case_true.stage(environment)),
 			},
+			WrapType(x) => DynamicValue::WrapType(rc!(x.stage(environment))),
+			WrapNew(x) => DynamicValue::WrapNew(rc!(x.stage(environment))),
+			Unwrap(x) => DynamicValue::Unwrap(rc!(x.stage(environment))),
+			RcType(x) => DynamicValue::RcType(rc!(x.stage(environment))),
+			RcNew(x) => DynamicValue::RcNew(rc!(x.stage(environment))),
+			UnRc(x) => DynamicValue::UnRc(rc!(x.stage(environment))),
 		}
 	}
 }
@@ -274,6 +322,17 @@ impl<const N: usize> Unstage for Binder<Rc<DynamicValue>, N> {
 	}
 }
 
+impl Unstage for Repr {
+	type CoreTerm = StaticTerm;
+	fn unstage(&self, level: Level) -> Self::CoreTerm {
+		match self {
+			Repr::Atom(r) => StaticTerm::ReprAtom(Some(*r)),
+			Repr::Pair(r0, r1) => StaticTerm::ReprPair(bx!(r0.unstage(level)), bx!(r1.unstage(level))),
+			Repr::Max(r0, r1) => StaticTerm::ReprMax(bx!(r0.unstage(level)), bx!(r1.unstage(level))),
+		}
+	}
+}
+
 impl Unstage for DynamicValue {
 	type CoreTerm = DynamicTerm;
 	fn unstage(&self, level @ Level(context_len): Level) -> Self::CoreTerm {
@@ -297,8 +356,13 @@ impl Unstage for DynamicValue {
 				argument: bx!(argument.unstage(level)),
 				tail: tail.unstage(level),
 			},
-			Universe(copyability) =>
-				DynamicTerm::Universe { copyability: bx!(StaticTerm::Copyability(*copyability)) },
+			Universe(copyability, representation) => DynamicTerm::Universe {
+				copyability: bx!(StaticTerm::Copyability(*copyability)),
+				representation: bx!(representation
+					.clone()
+					.map(|representation| representation.unstage(level))
+					.unwrap_or(StaticTerm::ReprAtom(None))),
+			},
 			Nat => DynamicTerm::Nat,
 			Num(n) => DynamicTerm::Num(*n),
 			Suc(prev) => DynamicTerm::Suc(bx!(prev.unstage(level))),
@@ -316,6 +380,12 @@ impl Unstage for DynamicValue {
 				case_false: bx!(case_false.unstage(level)),
 				case_true: bx!(case_true.unstage(level)),
 			},
+			WrapType(x) => DynamicTerm::WrapType(bx!(x.unstage(level))),
+			WrapNew(x) => DynamicTerm::WrapNew(bx!(x.unstage(level))),
+			Unwrap(x) => DynamicTerm::Unwrap(bx!(x.unstage(level))),
+			RcType(x) => DynamicTerm::RcType(bx!(x.unstage(level))),
+			RcNew(x) => DynamicTerm::RcNew(bx!(x.unstage(level))),
+			UnRc(x) => DynamicTerm::UnRc(bx!(x.unstage(level))),
 		}
 	}
 }

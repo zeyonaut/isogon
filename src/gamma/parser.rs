@@ -1,7 +1,7 @@
 use lasso::Rodeo;
 
 use super::{
-	common::{bind, Binder, Copyability, Name, Projection},
+	common::{bind, Binder, Copyability, Name, Projection, ReprAtom},
 	lexer::{Keyword, LexedSource, Lexeme, Token},
 };
 use crate::utility::bx;
@@ -63,6 +63,11 @@ pub enum StaticPreterm {
 	CopyabilityType,
 	Copyability(Copyability),
 	MaxCopyability(Box<Self>, Box<Self>),
+	ReprType,
+	ReprAtom(Option<ReprAtom>),
+	ReprPair(Box<Self>, Box<Self>),
+	ReprMax(Box<Self>, Box<Self>),
+	ReprUniv(Box<Self>),
 }
 
 #[derive(Debug, Clone)]
@@ -75,8 +80,15 @@ pub enum DynamicPreterm {
 		tail: Box<Self>,
 	},
 	Splice(Box<StaticPreterm>),
+	WrapType(Box<Self>),
+	WrapNew(Box<Self>),
+	Unwrap(Box<Self>),
+	RcType(Box<Self>),
+	RcNew(Box<Self>),
+	UnRc(Box<Self>),
 	Universe {
 		copyability: Box<StaticPreterm>,
+		representation: Box<StaticPreterm>,
 	},
 	Pi {
 		parameter: Name,
@@ -369,6 +381,18 @@ impl<'s> Parser<'s> {
 				self.next_lexeme();
 				MaxCopyability(bx!(self.parse_static_atom()?), bx!(self.parse_static_atom()?))
 			}
+			Keyword(self::Keyword::RPair) => {
+				self.next_lexeme();
+				ReprPair(bx!(self.parse_static_atom()?), bx!(self.parse_static_atom()?))
+			}
+			Keyword(self::Keyword::RMax) => {
+				self.next_lexeme();
+				ReprMax(bx!(self.parse_static_atom()?), bx!(self.parse_static_atom()?))
+			}
+			Keyword(self::Keyword::RUniv) => {
+				self.next_lexeme();
+				ReprUniv(bx!(self.parse_static_atom()?))
+			}
 			_ => self.parse_static_atom()?,
 		};
 
@@ -447,11 +471,28 @@ impl<'s> Parser<'s> {
 		use Token::*;
 		let Lexeme { token, .. } = self.peek_lexeme()?;
 
-		let mut term = if token == Keyword(self::Keyword::Suc) {
-			self.next_lexeme();
-			Suc(bx!(self.parse_dynamic_atom()?))
-		} else {
-			self.parse_dynamic_atom()?
+		let mut term = match token {
+			Keyword(self::Keyword::Suc) => {
+				self.next_lexeme();
+				Suc(bx!(self.parse_dynamic_atom()?))
+			}
+			Keyword(self::Keyword::WrapType) => {
+				self.next_lexeme();
+				WrapType(bx!(self.parse_dynamic_atom()?))
+			}
+			Keyword(self::Keyword::WrapNew) => {
+				self.next_lexeme();
+				WrapNew(bx!(self.parse_dynamic_atom()?))
+			}
+			Keyword(self::Keyword::RcType) => {
+				self.next_lexeme();
+				RcType(bx!(self.parse_dynamic_atom()?))
+			}
+			Keyword(self::Keyword::RcNew) => {
+				self.next_lexeme();
+				RcNew(bx!(self.parse_dynamic_atom()?))
+			}
+			_ => self.parse_dynamic_atom()?,
 		};
 
 		while let Some(Lexeme { token, .. }) = self.peek_lexeme() {
@@ -462,6 +503,14 @@ impl<'s> Parser<'s> {
 				Token::Project(projection) => {
 					self.next_lexeme();
 					term = DynamicPreterm::Project(bx!(term), projection);
+				}
+				Keyword(self::Keyword::Unwrap) => {
+					self.next_lexeme();
+					term = DynamicPreterm::Unwrap(bx!(term));
+				}
+				Keyword(self::Keyword::UnRc) => {
+					self.next_lexeme();
+					term = DynamicPreterm::UnRc(bx!(term));
 				}
 				TwoColon => {
 					self.next_lexeme();
@@ -538,6 +587,10 @@ impl<'s> Parser<'s> {
 						| Keyword::Bool | Keyword::False
 						| Keyword::True | Keyword::C0
 						| Keyword::C1 | Keyword::Copy
+						| Keyword::RClass | Keyword::RPointer
+						| Keyword::RByte | Keyword::RNat
+						| Keyword::RFun | Keyword::RNone
+						| Keyword::Repr
 				) | Identifier
 		)
 	}
@@ -572,6 +625,13 @@ impl<'s> Parser<'s> {
 			Keyword(Keyword::C0) => Copyability(self::Copyability::Trivial),
 			Keyword(Keyword::C1) => Copyability(self::Copyability::Nontrivial),
 			Keyword(Keyword::Copy) => CopyabilityType,
+			Keyword(Keyword::RClass) => ReprAtom(Some(self::ReprAtom::Class)),
+			Keyword(Keyword::RPointer) => ReprAtom(Some(self::ReprAtom::Pointer)),
+			Keyword(Keyword::RByte) => ReprAtom(Some(self::ReprAtom::Byte)),
+			Keyword(Keyword::RNat) => ReprAtom(Some(self::ReprAtom::Nat)),
+			Keyword(Keyword::RFun) => ReprAtom(Some(self::ReprAtom::Fun)),
+			Keyword(Keyword::RNone) => ReprAtom(None),
+			Keyword(Keyword::Repr) => ReprType,
 			Identifier => Variable(self.identifier(range)),
 			_ => return None,
 		};
@@ -610,7 +670,8 @@ impl<'s> Parser<'s> {
 			}
 			Ast => {
 				let copyability = self.parse_static_atom()?;
-				DynamicPreterm::Universe { copyability: bx!(copyability) }
+				let representation = self.parse_static_atom()?;
+				DynamicPreterm::Universe { copyability: bx!(copyability), representation: bx!(representation) }
 			}
 			Number => Num(self.source[range.0..range.1].parse().unwrap()),
 			Keyword(Keyword::Nat) => Nat,

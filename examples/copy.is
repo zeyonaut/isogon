@@ -1,7 +1,7 @@
-def sigma : |x : copy| -> |B : '* x| -> |y : copy| -> '([B] -> * y) -> '* (cmax x y)
-	= |x| |B| |y| |F| [|b : [B]| & [F] b];
+def sigma : |x : copy| -> |xr : repr| -> |B : '* x xr| -> |y : copy| -> |yr : repr| -> '([B] -> * y yr) -> '* (cmax x y) (rpair xr yr)
+	= |x| |xr| |B| |y| |yr| |F| [|b : [B]| & [F] b];
 
-[sigma c1 [nat] c0 [|n| n :: |n| * c0 {
-	| 0       -> bool
-	| suc n a -> bool & bool
+[sigma c1 rnat [nat] c1 rpointer [|n| n :: |n| * c1 rpointer {
+	| 0       -> RC bool
+	| suc n a -> RC (bool & bool)
 }]]
