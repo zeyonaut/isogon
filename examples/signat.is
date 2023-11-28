@@ -1,16 +1,16 @@
-let unit : * c1
-	= |A : * c0| -> A -> A;
+let unit : * c1 rfun
+	= |A : * c0 rnone| -> A -> A;
 
-let list : nat -> * c1
-	= |n| n :: |n| * c1 {
-		| 0       -> unit
-		| suc n T -> T & nat
+let list : nat -> * c1 rpointer
+	= |n| n :: |n| * c1 rpointer {
+		| 0       -> RC unit
+		| suc n T -> RC (T & nat)
 	};
 
 let make_list : |n : nat| -> list n
 	= |n| n :: |n| list n {
-		| 0       -> |A| |a| a
-		| suc n k -> k, n
+		| 0       -> rc (|A| |a| a)
+		| suc n k -> rc (k, n)
 	};
 
 make_list 10

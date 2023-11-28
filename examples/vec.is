@@ -1,13 +1,13 @@
-def unit : copy -> '* c1
-	= |c| [|A : * c| -> A -> A];
+def unit : copy -> '* c1 rfun
+	= |c| [|A : * c rnone| -> A -> A];
 
 let tt : [unit c0]
 	= |A| |a| a;
 
-def bitvec : nat -> '* c1
-	= |n| n :: |n| '* c1 {
-		| 0       -> unit c0
-		| suc n T -> [bool & [T]]
+def bitvec : nat -> '* c1 rpointer
+	= |n| n :: |n| '* c1 rpointer {
+		| 0       -> [RC [unit c0]]
+		| suc n T -> [RC (bool & [T])]
 	};
 
 def not : bool -> bool
@@ -36,8 +36,8 @@ def pred : nat -> nat
 
 def make_bitvec : |n : nat| -> '[bitvec n]
 	= |n| n :: |n| nat & '[bitvec n] {
-		| 0       -> pred n, [tt]
-		| suc n v -> pred (v/.), [[lower (is_even (v/.))], [v/!]]
+		| 0       -> pred n, [rc tt]
+		| suc n v -> pred (v/.), [rc ([lower (is_even (v/.))], [v/!])]
 	}/!;
 
 [make_bitvec 8]
