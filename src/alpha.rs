@@ -24,8 +24,6 @@ pub fn run(line: &str) {
 	println!("evaluated: {:?}", value.as_ref());
 }
 
-pub enum Token {}
-
 pub type Name = String;
 
 #[derive(Debug)]

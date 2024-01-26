@@ -189,7 +189,7 @@ impl Metacontext {
 		let renamed_target = self.rename(definee, &partial_renaming, 0, target.clone());
 
 		todo!();
-		false
+		//false
 	}
 
 	// Apply a partial renaming to a value while quoting it and ensure that a given metavariable is not named within.

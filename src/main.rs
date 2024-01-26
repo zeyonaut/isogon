@@ -1,7 +1,7 @@
 // Non-staged; no unification.
 mod alpha;
 // Non-staged; with unification.
-mod beta;
+//mod beta;
 // Staged.
 mod gamma;
 mod utility;
@@ -13,7 +13,7 @@ use bpaf::{construct, short, Parser};
 
 enum LanguageOption {
 	Alpha,
-	Beta,
+	//	Beta,
 	Gamma,
 }
 
@@ -24,7 +24,7 @@ impl FromStr for LanguageOption {
 		use LanguageOption::*;
 		match s {
 			"a" => Ok(Alpha),
-			"b" => Ok(Beta),
+			//	"b" => Ok(Beta),
 			"c" => Ok(Gamma),
 			_ => Err("no such language".to_owned()),
 		}
@@ -42,7 +42,7 @@ struct Options {
 }
 
 fn main() {
-	let language = short('l').help("Choose language").argument::<LanguageOption>("{a, b, c}");
+	let language = short('l').help("Choose language").argument::<LanguageOption>("{a, c}");
 	let options: Options = construct!(Options {
 		language,
 		input(construct!([
@@ -60,7 +60,7 @@ fn main() {
 
 	match options.language {
 		LanguageOption::Alpha => alpha::run(&input),
-		LanguageOption::Beta => beta::run(&input),
+		//	LanguageOption::Beta => beta::run(&input),
 		LanguageOption::Gamma => gamma::run(&input),
 	}
 }

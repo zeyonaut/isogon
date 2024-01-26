@@ -1,4 +1,4 @@
-use std::{iter::Peekable, rc::Rc};
+use std::rc::Rc;
 
 use super::{
 	common::{Index, Metavariable, Name},
