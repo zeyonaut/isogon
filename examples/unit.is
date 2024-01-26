@@ -1,0 +1,2 @@
+let x : |A : * c0 rnone| -> A -> A = |A| |a| a;
+x

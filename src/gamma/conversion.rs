@@ -100,13 +100,13 @@ impl Conversion<DynamicValue> for Level {
 			(RcType(left), RcType(right)) => self.can_convert(&**left, right),
 			(RcNew(left), RcNew(right)) => self.can_convert(&**left, right),
 			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
-			(Function(left), Function(right)) =>
+			(Function { body: left, .. }, Function { body: right, .. }) =>
 				(self + 1).can_convert(&left.autolyze(self), &right.autolyze(self)),
-			(Neutral(left), Function(right)) => (self + 1).can_convert(
+			(Neutral(left), Function { body: right, .. }) => (self + 1).can_convert(
 				&Neutral(Apply(rc!(left.clone()), rc!((right.parameter(), self).into()))),
 				&right.autolyze(self),
 			),
-			(Function(left), Neutral(right)) => (self + 1).can_convert(
+			(Function { body: left, .. }, Neutral(right)) => (self + 1).can_convert(
 				&left.autolyze(self),
 				&Neutral(Apply(rc!(right.clone()), rc!((left.parameter(), self).into()))),
 			),

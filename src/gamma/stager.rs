@@ -46,7 +46,15 @@ pub enum DynamicValue {
 	},
 	Universe(Copyability, Option<Repr>),
 	Pi(Rc<Self>, Binder<Rc<Self>>),
-	Function(Binder<Rc<Self>>),
+	Function {
+		// TODO: This is kind of redundant, since binders store parameter names and arity,
+		// and family and body should have the same of both; the single parameter is also
+		// associated with the base. Is it possible to have a more generic binder type that
+		// can accommodate this extra data, but without significantly affecting existing binder code?
+		base: Rc<Self>,
+		family: Binder<Rc<Self>>,
+		body: Binder<Rc<Self>>,
+	},
 	Apply {
 		scrutinee: Rc<Self>,
 		argument: Rc<Self>,
@@ -235,7 +243,11 @@ impl Stage for DynamicTerm {
 		use DynamicTerm::*;
 		match self {
 			Variable(_, index) => environment.lookup_dynamic(index),
-			Lambda(function) => DynamicValue::Function(function.stage(environment)),
+			Lambda { base, family, body } => DynamicValue::Function {
+				base: base.stage(environment).into(),
+				body: body.stage(environment).into(),
+				family: family.stage(environment).into(),
+			},
 			Pair { basepoint, fiberpoint } => DynamicValue::Pair {
 				basepoint: rc!(basepoint.stage(environment)),
 				fiberpoint: rc!(fiberpoint.stage(environment)),
@@ -339,7 +351,11 @@ impl Unstage for DynamicValue {
 		use DynamicValue::*;
 		match self {
 			Variable(name, Level(variable)) => DynamicTerm::Variable(*name, Index(context_len - 1 - variable)),
-			Function(function) => DynamicTerm::Lambda(function.unstage(level)),
+			Function { base, family, body } => DynamicTerm::Lambda {
+				base: base.unstage(level).into(),
+				family: family.unstage(level),
+				body: body.unstage(level),
+			},
 			Pair { basepoint, fiberpoint } => DynamicTerm::Pair {
 				basepoint: bx!(basepoint.unstage(level)),
 				fiberpoint: bx!(fiberpoint.unstage(level)),

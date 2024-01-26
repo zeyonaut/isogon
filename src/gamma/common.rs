@@ -1,11 +1,9 @@
-use std::rc::Rc;
-
 use lasso::Spur;
 
 // de Bruijn index: zero is the newest bound parameter.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Index(pub(super) usize);
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Level(pub(super) usize);
 
 impl std::ops::Add<usize> for Level {
@@ -54,8 +52,8 @@ impl<T> Binder<T, 1> {
 }
 
 impl<A, const N: usize> Binder<A, N> {
-	pub fn map_ref<B>(&self, f: impl FnOnce(&A) -> B) -> Binder<B, N> {
-		Binder { parameters: self.parameters, body: f(&self.body) }
+	pub fn map_ref<B, C: From<B>>(&self, f: impl FnOnce(&A) -> B) -> Binder<C, N> {
+		Binder { parameters: self.parameters, body: f(&self.body).into() }
 	}
 
 	pub fn mapv<B, C: From<B>>(self, f: impl FnOnce([Name; N], A) -> B) -> Binder<C, N> {

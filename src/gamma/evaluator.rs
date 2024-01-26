@@ -78,9 +78,16 @@ pub enum DynamicNeutral {
 #[derive(Clone)]
 pub enum DynamicValue {
 	Neutral(DynamicNeutral),
-	Universe { copyability: Rc<StaticValue>, representation: Rc<StaticValue> },
+	Universe {
+		copyability: Rc<StaticValue>,
+		representation: Rc<StaticValue>,
+	},
 	IndexedProduct(Rc<Self>, Rc<Closure<Environment, DynamicTerm>>),
-	Function(Rc<Closure<Environment, DynamicTerm>>),
+	Function {
+		base: Rc<Self>,
+		family: Rc<Closure<Environment, DynamicTerm>>,
+		body: Rc<Closure<Environment, DynamicTerm>>,
+	},
 	IndexedSum(Rc<Self>, Rc<Closure<Environment, DynamicTerm>>),
 	Pair(/* basepoint */ Rc<Self>, /* fiberpoint */ Rc<Self>),
 	Nat,
@@ -303,11 +310,15 @@ impl Evaluate for DynamicTerm {
 		use DynamicTerm::*;
 		match self {
 			Variable(_, index) => environment.lookup_dynamic(index),
-			Lambda(function) => DynamicValue::Function(rc!(function.evaluate(environment))),
+			Lambda { base, family, body } => DynamicValue::Function {
+				base: base.evaluate(environment).into(),
+				family: family.evaluate(environment).into(),
+				body: body.evaluate(environment).into(),
+			},
 			Pair { basepoint, fiberpoint } =>
 				DynamicValue::Pair(rc!(basepoint.evaluate(environment)), rc!(fiberpoint.evaluate(environment))),
 			Apply { scrutinee, argument } => match scrutinee.evaluate(environment) {
-				DynamicValue::Function(function) => function.evaluate_with([argument.evaluate(environment)]),
+				DynamicValue::Function { body, .. } => body.evaluate_with([argument.evaluate(environment)]),
 				DynamicValue::Neutral(neutral) =>
 					DynamicValue::Neutral(DynamicNeutral::Apply(rc!(neutral), rc!(argument.evaluate(environment)))),
 				_ => panic!(),
@@ -585,7 +596,11 @@ impl Reify for DynamicValue {
 				representation: bx!(representation.reify(level)),
 			},
 			IndexedProduct(base, family) => DynamicTerm::Pi(bx!(base.reify(level)), family.reify(level)),
-			Function(function) => DynamicTerm::Lambda(function.reify(level)),
+			Function { base, family, body } => DynamicTerm::Lambda {
+				base: base.reify(level).into(),
+				family: family.reify(level).into(),
+				body: body.reify(level).into(),
+			},
 			IndexedSum(base, family) => DynamicTerm::Sigma(bx!(base.reify(level)), family.reify(level)),
 			Pair(basepoint, fiberpoint) => DynamicTerm::Pair {
 				basepoint: bx!(basepoint.reify(level)),

@@ -65,6 +65,7 @@ pub enum StaticTerm {
 pub enum DynamicTerm {
 	Variable(Name, Index),
 	Let {
+		// Type of the assignee.
 		ty: Box<Self>,
 		argument: Box<Self>,
 		tail: Binder<Box<Self>>,
@@ -81,7 +82,11 @@ pub enum DynamicTerm {
 	RcNew(Box<Self>),
 	UnRc(Box<Self>),
 	Pi(Box<Self>, Binder<Box<Self>>),
-	Lambda(Binder<Box<Self>>),
+	Lambda {
+		base: Box<Self>,
+		family: Binder<Box<Self>>,
+		body: Binder<Box<Self>>,
+	},
 	Apply {
 		scrutinee: Box<Self>,
 		argument: Box<Self>,
@@ -617,7 +622,11 @@ pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue)
 				*body,
 				family.evaluate_with([(parameter, context.len()).into()]),
 			);
-			DynamicTerm::Lambda(bind([parameter], bx!(body)))
+			DynamicTerm::Lambda {
+				base: base.reify(context.len()).into(),
+				family: family.reify(context.len()),
+				body: bind([parameter], body.into()),
+			}
 		}
 		(Pair { basepoint, fiberpoint }, DynamicValue::IndexedSum(base, family)) => {
 			let basepoint = verify_dynamic(context, *basepoint, base.as_ref().clone());

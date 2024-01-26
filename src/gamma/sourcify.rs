@@ -274,9 +274,9 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			}
 			write_dynamic(&family.body, f, interner)
 		}
-		Lambda(function) => {
-			write!(f, "|{}| ", interner.resolve(&function.parameter()))?;
-			write_dynamic(&function.body, f, interner)
+		Lambda { body, .. } => {
+			write!(f, "|{}| ", interner.resolve(&body.parameter()))?;
+			write_dynamic(&body.body, f, interner)
 		}
 		Apply { scrutinee, argument } => {
 			write_dynamic_spine(scrutinee, f, interner)?;

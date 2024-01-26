@@ -2,6 +2,7 @@ use lasso::Rodeo;
 
 use self::{elaborator::DynamicTerm, lexer::LexError};
 use crate::gamma::{
+	closer::close,
 	common::Level,
 	elaborator::elaborate_dynamic_closed,
 	evaluator::Evaluate,
@@ -11,6 +12,7 @@ use crate::gamma::{
 	stager::{Stage, Unstage},
 };
 
+mod closer;
 mod common;
 mod conversion;
 mod elaborator;
@@ -36,8 +38,11 @@ pub fn run(source: &str) {
 	println!("elaborated term: {}", pretty_print(&term, &parser.interner));
 	println!("normalized type: {}", pretty_print(&ty.reify_closed(), &parser.interner));
 	let value = term.stage(&stager::Environment::new());
-	let term = value.unstage(Level(0));
+	let term = value.clone().unstage(Level(0));
 	println!("staged term: {}", pretty_print(&term, &parser.interner));
+
+	let closure_converted = close(value.clone());
+
 	let value = term.evaluate(&evaluator::Environment(Vec::new()));
 	println!("evaluated: {}", pretty_print(&value.reify_closed(), &parser.interner));
 }
