@@ -13,6 +13,12 @@ pub enum Variable {
 }
 
 #[derive(Clone, Debug)]
+pub struct Function {
+	pub procedure_id: usize,
+	pub captures: Vec<Variable>,
+}
+
+#[derive(Clone, Debug)]
 pub enum ClosedValue {
 	Variable(Variable),
 	Let {
@@ -21,16 +27,13 @@ pub enum ClosedValue {
 		tail: Binder<Box<Self>>,
 	},
 	Universe(Copyability, Option<Repr>),
-	Pi(Box<Self>, Binder<Box<Self>>),
-	Function {
-		procedure_id: usize,
-		captures: Vec<Variable>,
-	},
+	Pi(Box<Self>, Function),
+	Function(Function),
 	Apply {
-		scrutinee: Box<Self>,
+		callee: Box<Self>,
 		argument: Box<Self>,
 	},
-	Sigma(Box<Self>, Binder<Box<Self>>),
+	Sigma(Box<Self>, Function),
 	Pair {
 		basepoint: Box<Self>,
 		fiberpoint: Box<Self>,
@@ -195,6 +198,68 @@ impl Closer {
 		result
 	}
 
+	fn close_function(&mut self, base: DynamicValue, body: Binder<Rc<DynamicValue>>, is_occurrent: &mut Vec<bool>) -> Function {
+		let context_len = Level(self.context.len());
+
+		// Find free occurrents in base and body.
+		let mut body_occurrents = vec![false; context_len.0];
+		let mut body = self.close_with(body, [base.clone()], &mut body_occurrents);
+		let mut base = self.close(base, &mut body_occurrents);
+
+		// Update the external free occurrence set.
+		for (outer, inner) in is_occurrent.iter_mut().zip(&mut body_occurrents) {
+			*outer |= *inner;
+		}
+
+		// Find dependents in base and body.
+		let dependees = self.occurrents_to_dependees(body_occurrents);
+
+		// Construct a partial substitution from the dependees.
+		let (captures, sub) = {
+			let mut captures = Vec::new();
+			let mut sub = HashMap::new();
+			let mut count = 0;
+			for (i, is_dependee) in dependees.into_iter().enumerate() {
+				if is_dependee {
+					captures.push(Level(i));
+					sub.insert(Level(i), Level(count));
+					count += 1;
+				}
+			}
+			(captures, sub)
+		};
+
+		base.substitute(&sub, Level(self.context.len()));
+		body.substitute(&sub, context_len);
+		let Binder { parameters: [parameter], body } = body;
+
+		let captured_parameters = {
+			let mut captured_parameters = Vec::new();
+
+			for i in &captures {
+				// TODO: Shouldn't these types be constrained 'values' of some sort? Otherwise, stages later down the
+				// pipeline will have to deal with evaluation again to get rid of function calls,
+				// projections... (Even if they aren't present at this stage, which I'm unsure of.)
+				let mut closed_ty = self.close(self.context[i.0].ty.clone(), is_occurrent);
+
+				// NOTE/(TODO: verify?): This should not panic, as its dependencies should be included.
+				closed_ty.substitute(&sub, *i);
+
+				captured_parameters.push((self.context[i.0].name, closed_ty))
+			}
+			captured_parameters
+		};
+
+		let parameter = (parameter, base);
+
+		let procedure = Procedure { captured_parameters, parameter, body: *body };
+
+		let procedure_id = self.procedures.len();
+		self.procedures.push(procedure);
+
+		Function { procedure_id, captures: captures.into_iter().map(Variable::Local).collect() }
+	}
+
 	fn close(&mut self, value: DynamicValue, is_occurrent: &mut Vec<bool>) -> ClosedValue {
 		use DynamicValue as Dv;
 		match value {
@@ -210,65 +275,7 @@ impl Closer {
 			// Procedures.
 			// TODO: Refactor!
 			Dv::Function { base, family: _, body } => {
-				let context_len = Level(self.context.len());
-
-				// Find free occurrents in base and body.
-				let mut body_occurrents = vec![false; context_len.0];
-				let mut body = self.close_with(body, [(*base).clone()], &mut body_occurrents);
-				let mut base = self.close((*base).clone(), &mut body_occurrents);
-
-				// Update the external free occurrence set.
-				for (outer, inner) in is_occurrent.iter_mut().zip(&mut body_occurrents) {
-					*outer |= *inner;
-				}
-
-				// Find dependents in base and body.
-				let dependees = self.occurrents_to_dependees(body_occurrents);
-
-				// Construct a partial substitution from the dependees.
-				let (captures, sub) = {
-					let mut captures = Vec::new();
-					let mut sub = HashMap::new();
-					let mut count = 0;
-					for (i, is_dependee) in dependees.into_iter().enumerate() {
-						if is_dependee {
-							captures.push(Level(i));
-							sub.insert(Level(i), Level(count));
-							count += 1;
-						}
-					}
-					(captures, sub)
-				};
-
-				base.substitute(&sub, Level(self.context.len()));
-				body.substitute(&sub, context_len);
-				let Binder { parameters: [parameter], body } = body;
-
-				let captured_parameters = {
-					let mut captured_parameters = Vec::new();
-
-					for i in &captures {
-						// TODO: Shouldn't these types be constrained 'values' of some sort? Otherwise, stages later down the
-						// pipeline will have to deal with evaluation again to get rid of function calls,
-						// projections... (Even if they aren't present at this stage, which I'm unsure of.)
-						let mut closed_ty = self.close(self.context[i.0].ty.clone(), is_occurrent);
-
-						// NOTE/(TODO: verify?): This should not panic, as its dependencies should be included.
-						closed_ty.substitute(&sub, *i);
-
-						captured_parameters.push((self.context[i.0].name, closed_ty))
-					}
-					captured_parameters
-				};
-
-				let parameter = (parameter, base);
-
-				let procedure = Procedure { captured_parameters, parameter, body: *body };
-
-				let procedure_id = self.procedures.len();
-				self.procedures.push(procedure);
-
-				ClosedValue::Function { procedure_id, captures: captures.into_iter().map(Variable::Local).collect() }
+				ClosedValue::Function(self.close_function((*base).clone(), body, is_occurrent))
 			}
 
 			// Binding cases.
@@ -280,13 +287,13 @@ impl Closer {
 			}
 			Dv::Pi(base, family) => {
 				let closed_base = self.close((*base).clone(), is_occurrent);
-				let family = self.close_with(family, [(*base).clone()], is_occurrent);
-				ClosedValue::Pi(closed_base.into(), family.into())
+				// FIXME: This is completely wrong, we need to infer the universe of base (or otherwise store that information in the variant beforehand.)
+				ClosedValue::Pi(closed_base.into(), self.close_function(DynamicValue::Universe(Copyability::Trivial, None), family, is_occurrent))
 			}
 			Dv::Sigma(base, family) => {
 				let closed_base = self.close((*base).clone(), is_occurrent);
-				let family = self.close_with(family, [(*base).clone()], is_occurrent);
-				ClosedValue::Sigma(closed_base.into(), family.into())
+				// FIXME: This is completely wrong, we need to infer the universe of base (or otherwise store that information in the variant beforehand.)
+				ClosedValue::Sigma(closed_base.into(), self.close_function(DynamicValue::Universe(Copyability::Trivial, None), family, is_occurrent))
 			}
 			Dv::CaseNat { scrutinee, motive, case_nil, case_suc } => {
 				// TODO/FIXME: This is bad, we're manually instantiating binders with their types.
@@ -340,7 +347,7 @@ impl Closer {
 
 			// 2-recursive cases
 			Dv::Apply { scrutinee, argument } => ClosedValue::Apply {
-				scrutinee: self.close((*scrutinee).clone(), is_occurrent).into(),
+				callee: self.close((*scrutinee).clone(), is_occurrent).into(),
 				argument: self.close((*argument).clone(), is_occurrent).into(),
 			},
 			Dv::Pair { basepoint, fiberpoint } => ClosedValue::Pair {
@@ -367,15 +374,20 @@ fn substitute_variable(variable: &mut Variable, substitution: &HashMap<Level, Le
 	}
 }
 
+impl Substitute for Function {
+	fn substitute(&mut self, substitution: &HashMap<Level, Level>, minimum_level: Level) {
+		for capture in &mut self.captures {
+			substitute_variable(capture, substitution, minimum_level)
+		}
+	}
+}
+
 impl Substitute for ClosedValue {
 	fn substitute(&mut self, substitution: &HashMap<Level, Level>, minimum_level: Level) {
 		match self {
 			// Variables.
 			ClosedValue::Variable(variable) => substitute_variable(variable, substitution, minimum_level),
-			ClosedValue::Function { procedure_id: _, captures } =>
-				for capture in captures {
-					substitute_variable(capture, substitution, minimum_level)
-				},
+			ClosedValue::Function(function) => function.substitute(substitution, minimum_level),
 
 			// Binding cases.
 			ClosedValue::Let { ty, argument, tail } => {
@@ -420,7 +432,7 @@ impl Substitute for ClosedValue {
 			}
 
 			// 2-recursive cases.
-			ClosedValue::Apply { scrutinee: a, argument: b }
+			ClosedValue::Apply { callee: a, argument: b }
 			| ClosedValue::Pair { basepoint: a, fiberpoint: b } => {
 				a.substitute(substitution, minimum_level);
 				b.substitute(substitution, minimum_level);

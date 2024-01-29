@@ -19,6 +19,7 @@ mod elaborator;
 mod evaluator;
 mod lexer;
 mod parser;
+mod sequentializer;
 mod sourcify;
 mod stager;
 
