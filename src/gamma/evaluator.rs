@@ -1,12 +1,12 @@
 use std::rc::Rc;
 
 use super::{
-	common::{bind, Binder, Closure, Copyability, Index, Level, Name, Projection, ReprAtom},
+	common::{bind, Binder, Closure, Copyability, Index, Level, Name, Projection, Repr, ReprAtom},
 	elaborator::{DynamicTerm, StaticTerm},
 };
 use crate::utility::{bx, rc};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum StaticNeutral {
 	Variable(Name, Level),
 	Apply(Rc<Self>, Rc<StaticValue>),
@@ -28,7 +28,7 @@ pub enum StaticNeutral {
 	ReprUniv(Rc<Self>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum StaticValue {
 	Neutral(StaticNeutral),
 	Universe,
@@ -52,7 +52,26 @@ pub enum StaticValue {
 	BoolValue(bool),
 }
 
-#[derive(Clone)]
+impl From<&Repr> for StaticValue {
+	fn from(value: &Repr) -> Self {
+		match value {
+			Repr::Atom(atom) => Self::ReprAtom(*atom),
+			Repr::Pair(l, r) => Self::ReprPair(Self::from(&**l).into(), Self::from(&**r).into()),
+			Repr::Max(l, r) => Self::ReprPair(Self::from(&**l).into(), Self::from(&**r).into()),
+		}
+	}
+}
+
+impl From<Option<&Repr>> for StaticValue {
+	fn from(value: Option<&Repr>) -> Self {
+		match value {
+			Some(repr) => repr.into(),
+			None => Self::ReprNone,
+		}
+	}
+}
+
+#[derive(Clone, Debug)]
 pub enum DynamicNeutral {
 	Variable(Name, Level),
 	Splice(StaticNeutral),
@@ -75,20 +94,34 @@ pub enum DynamicNeutral {
 	UnRc(Rc<Self>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum DynamicValue {
 	Neutral(DynamicNeutral),
 	Universe {
 		copyability: Rc<StaticValue>,
 		representation: Rc<StaticValue>,
 	},
-	IndexedProduct(Rc<Self>, Rc<Closure<Environment, DynamicTerm>>),
+	IndexedProduct {
+		base_copyability: Rc<StaticValue>,
+		base_representation: Rc<StaticValue>,
+		base: Rc<Self>,
+		family_copyability: Rc<StaticValue>,
+		family_representation: Rc<StaticValue>,
+		family: Rc<Closure<Environment, DynamicTerm>>,
+	},
 	Function {
 		base: Rc<Self>,
 		family: Rc<Closure<Environment, DynamicTerm>>,
 		body: Rc<Closure<Environment, DynamicTerm>>,
 	},
-	IndexedSum(Rc<Self>, Rc<Closure<Environment, DynamicTerm>>),
+	IndexedSum {
+		base_copyability: Rc<StaticValue>,
+		base_representation: Rc<StaticValue>,
+		base: Rc<Self>,
+		family_copyability: Rc<StaticValue>,
+		family_representation: Rc<StaticValue>,
+		family: Rc<Closure<Environment, DynamicTerm>>,
+	},
 	Pair(/* basepoint */ Rc<Self>, /* fiberpoint */ Rc<Self>),
 	Nat,
 	Num(usize),
@@ -157,13 +190,13 @@ impl DynamicValue {
 	}
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Value {
 	Static(StaticValue),
 	Dynamic(DynamicValue),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Environment(pub Vec<Value>);
 
 impl Environment {
@@ -332,10 +365,36 @@ impl Evaluate for DynamicTerm {
 					DynamicValue::Neutral(DynamicNeutral::Project(rc!(neutral), projection)),
 				_ => panic!(),
 			},
-			Pi(base, family) =>
-				DynamicValue::IndexedProduct(rc!(base.evaluate(environment)), rc!(family.evaluate(environment))),
-			Sigma(base, family) =>
-				DynamicValue::IndexedSum(rc!(base.evaluate(environment)), rc!(family.evaluate(environment))),
+			Pi {
+				base_copyability,
+				base_representation,
+				base,
+				family_copyability,
+				family_representation,
+				family,
+			} => DynamicValue::IndexedProduct {
+				base_copyability: base_copyability.into(),
+				base_representation: base_representation.into(),
+				base: base.evaluate(environment).into(),
+				family_copyability: family_copyability.into(),
+				family_representation: family_representation.into(),
+				family: family.evaluate(environment).into(),
+			},
+			Sigma {
+				base_copyability,
+				base_representation,
+				base,
+				family_copyability,
+				family_representation,
+				family,
+			} => DynamicValue::IndexedSum {
+				base_copyability: base_copyability.into(),
+				base_representation: base_representation.into(),
+				base: base.evaluate(environment).into(),
+				family_copyability: family_copyability.into(),
+				family_representation: family_representation.into(),
+				family: family.evaluate(environment).into(),
+			},
 			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate(environment)]),
 			Universe { copyability, representation } => DynamicValue::Universe {
 				copyability: rc!(copyability.evaluate(environment)),
@@ -595,13 +654,41 @@ impl Reify for DynamicValue {
 				copyability: bx!(copyability.reify(level)),
 				representation: bx!(representation.reify(level)),
 			},
-			IndexedProduct(base, family) => DynamicTerm::Pi(bx!(base.reify(level)), family.reify(level)),
+			IndexedProduct {
+				base_copyability,
+				base_representation,
+				base,
+				family_copyability,
+				family_representation,
+				family,
+			} => DynamicTerm::Pi {
+				base_copyability: (**base_copyability).clone(),
+				base_representation: (**base_representation).clone(),
+				base: base.reify(level).into(),
+				family_copyability: (**base_copyability).clone(),
+				family_representation: (**base_representation).clone(),
+				family: family.reify(level),
+			},
 			Function { base, family, body } => DynamicTerm::Lambda {
 				base: base.reify(level).into(),
 				family: family.reify(level).into(),
 				body: body.reify(level).into(),
 			},
-			IndexedSum(base, family) => DynamicTerm::Sigma(bx!(base.reify(level)), family.reify(level)),
+			IndexedSum {
+				base_copyability,
+				base_representation,
+				base,
+				family_copyability,
+				family_representation,
+				family,
+			} => DynamicTerm::Sigma {
+				base_copyability: (**base_copyability).clone(),
+				base_representation: (**base_representation).clone(),
+				base: base.reify(level).into(),
+				family_copyability: (**base_copyability).clone(),
+				family_representation: (**base_representation).clone(),
+				family: family.reify(level),
+			},
 			Pair(basepoint, fiberpoint) => DynamicTerm::Pair {
 				basepoint: bx!(basepoint.reify(level)),
 				fiberpoint: bx!(fiberpoint.reify(level)),

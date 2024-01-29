@@ -118,8 +118,15 @@ impl Conversion<DynamicValue> for Level {
 			(Pair(left_bp, left_fp), Neutral(right)) =>
 				self.can_convert(&**left_bp, &Neutral(Project(rc!(right.clone()), Base)))
 					&& self.can_convert(&**left_fp, &Neutral(Project(rc!(right.clone()), Fiber))),
-			(IndexedProduct(left_base, left_family), IndexedProduct(right_base, right_family))
-			| (IndexedSum(left_base, left_family), IndexedSum(right_base, right_family)) =>
+			// NOTE: Annotation conversion not implemented, as it's unclear if it gives any useful advantages.
+			(
+				IndexedProduct { base: left_base, family: left_family, .. },
+				IndexedProduct { base: right_base, family: right_family, .. },
+			)
+			| (
+				IndexedSum { base: left_base, family: left_family, .. },
+				IndexedSum { base: right_base, family: right_family, .. },
+			) =>
 				self.can_convert(&**left_base, &right_base)
 					&& (self + 1).can_convert(&left_family.autolyze(self), &right_family.autolyze(self)),
 			(Nat, Nat) | (Bool, Bool) => true,

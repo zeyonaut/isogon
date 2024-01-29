@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use lasso::Spur;
 
 // de Bruijn index: zero is the newest bound parameter.
@@ -95,3 +97,13 @@ pub enum ReprAtom {
 	Nat,
 	Fun,
 }
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
+pub enum Repr {
+	Atom(ReprAtom),
+	Pair(Rc<Repr>, Rc<Repr>),
+	Max(Rc<Repr>, Rc<Repr>),
+}
+
+#[derive(Clone, Debug)]
+pub struct UniverseKind(pub Copyability, pub Option<Repr>);

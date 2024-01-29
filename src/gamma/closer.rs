@@ -1,9 +1,10 @@
 use std::{cmp::Ordering, collections::HashMap, rc::Rc};
 
 use super::{
-	common::{Binder, Copyability, Level, Name, Projection},
-	stager::{DynamicValue, Repr},
+	common::{Binder, Copyability, Level, Name, Projection, Repr},
+	stager::Obterm,
 };
+use crate::gamma::common::UniverseKind;
 
 #[derive(Clone, Debug)]
 pub enum Variable {
@@ -26,7 +27,7 @@ pub enum ClosedValue {
 		argument: Box<Self>,
 		tail: Binder<Box<Self>>,
 	},
-	Universe(Copyability, Option<Repr>),
+	Universe(UniverseKind),
 	Pi(Box<Self>, Function),
 	Function(Function),
 	Apply {
@@ -75,7 +76,7 @@ pub struct Program {
 	pub procedures: Vec<Procedure>,
 }
 
-pub fn close(value: DynamicValue) -> Program {
+pub fn close(value: Obterm) -> Program {
 	let mut closer = Closer { context: vec![], procedures: vec![] };
 
 	let entry = closer.close(value, &mut vec![]);
@@ -83,38 +84,39 @@ pub fn close(value: DynamicValue) -> Program {
 	Program { entry, procedures: closer.procedures }
 }
 
-impl DynamicValue {
+impl Obterm {
 	// Yields the characteristic of the subset of all levels < level that occur as a variable in a value.
 	fn occurences(&self, Level(level): Level) -> Vec<bool> {
-		fn mark_occurrents(value: &DynamicValue, is_occurrent: &mut Vec<bool>) {
+		fn mark_occurrents(value: &Obterm, is_occurrent: &mut Vec<bool>) {
 			match value {
-				DynamicValue::Variable(_, Level(l)) =>
+				Obterm::Variable(_, Level(l)) =>
 					if let Some(l_is_occurrent) = is_occurrent.get_mut(*l) {
 						*l_is_occurrent = true;
 					},
 
 				// Cases with binders.
-				DynamicValue::Function { base, family, body } => {
+				Obterm::Function { base, family, body } => {
 					mark_occurrents(base, is_occurrent);
 					mark_occurrents(&family.body, is_occurrent);
 					mark_occurrents(&body.body, is_occurrent);
 				}
-				DynamicValue::Let { ty, argument, tail } => {
+				Obterm::Let { ty, argument, tail } => {
 					mark_occurrents(ty, is_occurrent);
 					mark_occurrents(argument, is_occurrent);
 					mark_occurrents(&tail.body, is_occurrent);
 				}
-				DynamicValue::Pi(base, family) | DynamicValue::Sigma(base, family) => {
+				Obterm::Pi { base, family, base_universe: _, family_universe: _ }
+				| Obterm::Sigma { base, family, base_universe: _, family_universe: _ } => {
 					mark_occurrents(base, is_occurrent);
 					mark_occurrents(&family.body, is_occurrent);
 				}
-				DynamicValue::CaseNat { scrutinee, motive, case_nil, case_suc } => {
+				Obterm::CaseNat { scrutinee, motive, case_nil, case_suc } => {
 					mark_occurrents(scrutinee, is_occurrent);
 					mark_occurrents(&motive.body, is_occurrent);
 					mark_occurrents(case_nil, is_occurrent);
 					mark_occurrents(&case_suc.body, is_occurrent);
 				}
-				DynamicValue::CaseBool { scrutinee, motive, case_false, case_true } => {
+				Obterm::CaseBool { scrutinee, motive, case_false, case_true } => {
 					mark_occurrents(scrutinee, is_occurrent);
 					mark_occurrents(&motive.body, is_occurrent);
 					mark_occurrents(case_false, is_occurrent);
@@ -122,25 +124,20 @@ impl DynamicValue {
 				}
 
 				// 0-recursive cases.
-				DynamicValue::Universe(_, _)
-				| DynamicValue::Bool
-				| DynamicValue::BoolValue(_)
-				| DynamicValue::Nat
-				| DynamicValue::Num(_) => (),
+				Obterm::Universe(_) | Obterm::Bool | Obterm::BoolValue(_) | Obterm::Nat | Obterm::Num(_) => (),
 
 				// 1-recursive cases.
-				DynamicValue::Project(a, _)
-				| DynamicValue::Suc(a)
-				| DynamicValue::WrapType(a)
-				| DynamicValue::WrapNew(a)
-				| DynamicValue::Unwrap(a)
-				| DynamicValue::RcType(a)
-				| DynamicValue::RcNew(a)
-				| DynamicValue::UnRc(a) => mark_occurrents(a, is_occurrent),
+				Obterm::Project(a, _)
+				| Obterm::Suc(a)
+				| Obterm::WrapType(a)
+				| Obterm::WrapNew(a)
+				| Obterm::Unwrap(a)
+				| Obterm::RcType(a)
+				| Obterm::RcNew(a)
+				| Obterm::UnRc(a) => mark_occurrents(a, is_occurrent),
 
 				// 2-recursive cases.
-				DynamicValue::Apply { scrutinee: a, argument: b }
-				| DynamicValue::Pair { basepoint: a, fiberpoint: b } => {
+				Obterm::Apply { scrutinee: a, argument: b } | Obterm::Pair { basepoint: a, fiberpoint: b } => {
 					mark_occurrents(a, is_occurrent);
 					mark_occurrents(b, is_occurrent);
 				}
@@ -156,7 +153,7 @@ impl DynamicValue {
 #[derive(Debug)]
 struct DynamicContextEntry {
 	name: Name,
-	ty: DynamicValue,
+	ty: Obterm,
 	dependees: Vec<bool>,
 }
 
@@ -179,8 +176,8 @@ impl Closer {
 
 	fn close_with<const N: usize>(
 		&mut self,
-		binder: Binder<Rc<DynamicValue>, N>,
-		tys: [DynamicValue; N],
+		binder: Binder<Rc<Obterm>, N>,
+		tys: [Obterm; N],
 		is_occurrent: &mut Vec<bool>,
 	) -> Binder<Box<ClosedValue>, N> {
 		let level = self.context.len();
@@ -198,7 +195,12 @@ impl Closer {
 		result
 	}
 
-	fn close_function(&mut self, base: DynamicValue, body: Binder<Rc<DynamicValue>>, is_occurrent: &mut Vec<bool>) -> Function {
+	fn close_function(
+		&mut self,
+		base: Obterm,
+		body: Binder<Rc<Obterm>>,
+		is_occurrent: &mut Vec<bool>,
+	) -> Function {
 		let context_len = Level(self.context.len());
 
 		// Find free occurrents in base and body.
@@ -260,8 +262,8 @@ impl Closer {
 		Function { procedure_id, captures: captures.into_iter().map(Variable::Local).collect() }
 	}
 
-	fn close(&mut self, value: DynamicValue, is_occurrent: &mut Vec<bool>) -> ClosedValue {
-		use DynamicValue as Dv;
+	fn close(&mut self, value: Obterm, is_occurrent: &mut Vec<bool>) -> ClosedValue {
+		use Obterm as Dv;
 		match value {
 			// Variables.
 			Dv::Variable(_, l) => {
@@ -273,10 +275,8 @@ impl Closer {
 			}
 
 			// Procedures.
-			// TODO: Refactor!
-			Dv::Function { base, family: _, body } => {
-				ClosedValue::Function(self.close_function((*base).clone(), body, is_occurrent))
-			}
+			Dv::Function { base, family: _, body } =>
+				ClosedValue::Function(self.close_function((*base).clone(), body, is_occurrent)),
 
 			// Binding cases.
 			Dv::Let { ty, argument, tail } => {
@@ -285,15 +285,14 @@ impl Closer {
 				let tail = self.close_with(tail, [(*ty).clone()], is_occurrent);
 				ClosedValue::Let { ty: closed_ty.into(), argument: argument.into(), tail }
 			}
-			Dv::Pi(base, family) => {
+			Dv::Pi { base_universe, base, family_universe, family } => {
 				let closed_base = self.close((*base).clone(), is_occurrent);
-				// FIXME: This is completely wrong, we need to infer the universe of base (or otherwise store that information in the variant beforehand.)
-				ClosedValue::Pi(closed_base.into(), self.close_function(DynamicValue::Universe(Copyability::Trivial, None), family, is_occurrent))
+				ClosedValue::Pi(closed_base.into(), self.close_function((*base).clone(), family, is_occurrent))
 			}
-			Dv::Sigma(base, family) => {
+			Dv::Sigma { base_universe, base, family_universe, family } => {
 				let closed_base = self.close((*base).clone(), is_occurrent);
 				// FIXME: This is completely wrong, we need to infer the universe of base (or otherwise store that information in the variant beforehand.)
-				ClosedValue::Sigma(closed_base.into(), self.close_function(DynamicValue::Universe(Copyability::Trivial, None), family, is_occurrent))
+				ClosedValue::Sigma(closed_base.into(), self.close_function((*base).clone(), family, is_occurrent))
 			}
 			Dv::CaseNat { scrutinee, motive, case_nil, case_suc } => {
 				// TODO/FIXME: This is bad, we're manually instantiating binders with their types.
@@ -303,11 +302,10 @@ impl Closer {
 				// be a trait and not a struct, as it is right now.
 				let scrutinee = self.close((*scrutinee).clone(), is_occurrent);
 				// TODO: remove unnecessary clone here.
-				let closed_motive = self.close_with(motive.clone(), [DynamicValue::Nat], is_occurrent);
+				let closed_motive = self.close_with(motive.clone(), [Obterm::Nat], is_occurrent);
 				let case_nil = self.close((*case_nil).clone(), is_occurrent);
 				// NOTE: This is an abuse of the binder system, but it seems like it should work.
-				let case_suc =
-					self.close_with(case_suc, [DynamicValue::Nat, (*motive.body).clone()], is_occurrent);
+				let case_suc = self.close_with(case_suc, [Obterm::Nat, (*motive.body).clone()], is_occurrent);
 				ClosedValue::CaseNat {
 					scrutinee: scrutinee.into(),
 					motive: closed_motive,
@@ -317,7 +315,7 @@ impl Closer {
 			}
 			Dv::CaseBool { scrutinee, motive, case_false, case_true } => {
 				let scrutinee = self.close((*scrutinee).clone(), is_occurrent);
-				let motive = self.close_with(motive.clone(), [DynamicValue::Nat], is_occurrent);
+				let motive = self.close_with(motive.clone(), [Obterm::Nat], is_occurrent);
 				let case_false = self.close((*case_false).clone(), is_occurrent);
 				let case_true = self.close((*case_true).clone(), is_occurrent);
 				ClosedValue::CaseBool {
@@ -331,7 +329,7 @@ impl Closer {
 			// 0-recursive cases.
 			Dv::Nat => ClosedValue::Nat,
 			Dv::Bool => ClosedValue::Bool,
-			Dv::Universe(c, r) => ClosedValue::Universe(c, r),
+			Dv::Universe(k) => ClosedValue::Universe(k),
 			Dv::Num(n) => ClosedValue::Num(n),
 			Dv::BoolValue(b) => ClosedValue::BoolValue(b),
 
@@ -414,7 +412,7 @@ impl Substitute for ClosedValue {
 
 			// 0-recursive cases.
 			ClosedValue::Num(_)
-			| ClosedValue::Universe(_, _)
+			| ClosedValue::Universe(_)
 			| ClosedValue::Nat
 			| ClosedValue::Bool
 			| ClosedValue::BoolValue(_) => (),

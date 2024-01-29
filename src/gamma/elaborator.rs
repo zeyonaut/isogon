@@ -1,5 +1,5 @@
 use super::{
-	common::{bind, Binder, Copyability, Index, Level, Name, Projection, ReprAtom},
+	common::{bind, Binder, Copyability, Index, Level, Name, Projection, ReprAtom, UniverseKind},
 	conversion::Conversion,
 	evaluator::{
 		DynamicNeutral, DynamicValue, Environment, Evaluate, Reify, StaticNeutral, StaticValue, Value,
@@ -81,7 +81,14 @@ pub enum DynamicTerm {
 	RcType(Box<Self>),
 	RcNew(Box<Self>),
 	UnRc(Box<Self>),
-	Pi(Box<Self>, Binder<Box<Self>>),
+	Pi {
+		base_copyability: StaticValue,
+		base_representation: StaticValue,
+		base: Box<Self>,
+		family_copyability: StaticValue,
+		family_representation: StaticValue,
+		family: Binder<Box<Self>>,
+	},
 	Lambda {
 		base: Box<Self>,
 		family: Binder<Box<Self>>,
@@ -91,7 +98,14 @@ pub enum DynamicTerm {
 		scrutinee: Box<Self>,
 		argument: Box<Self>,
 	},
-	Sigma(Box<Self>, Binder<Box<Self>>),
+	Sigma {
+		base_copyability: StaticValue,
+		base_representation: StaticValue,
+		base: Box<Self>,
+		family_copyability: StaticValue,
+		family_representation: StaticValue,
+		family: Binder<Box<Self>>,
+	},
 	Pair {
 		basepoint: Box<Self>,
 		fiberpoint: Box<Self>,
@@ -262,7 +276,7 @@ pub fn synthesize_static(context: &Context, term: StaticPreterm) -> (StaticTerm,
 		}
 		Quote(quotee) => {
 			let (quotee, quotee_ty) = synthesize_dynamic(context, *quotee);
-			(StaticTerm::Quote(bx!(quotee)), StaticValue::Lift(quotee_ty))
+			(StaticTerm::Quote(bx!(quotee)), StaticValue::Lift(quotee_ty.into()))
 		}
 
 		Nat => (StaticTerm::Nat, StaticValue::Universe),
@@ -429,7 +443,7 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 		Lambda { .. } | Pair { .. } => panic!(),
 		Apply { scrutinee, argument } => {
 			let (scrutinee, scrutinee_ty) = synthesize_dynamic(context, *scrutinee);
-			let DynamicValue::IndexedProduct(base, family) = scrutinee_ty else { panic!() };
+			let DynamicValue::IndexedProduct { base, family, .. } = scrutinee_ty else { panic!() };
 			let argument = verify_dynamic(context, *argument, (*base).clone());
 			let argument_value = argument.clone().evaluate(&context.environment);
 			(
@@ -439,7 +453,7 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 		}
 		Project(scrutinee, projection) => {
 			let (scrutinee, scrutinee_ty) = synthesize_dynamic(context, *scrutinee);
-			let DynamicValue::IndexedSum(base, family) = scrutinee_ty else { panic!() };
+			let DynamicValue::IndexedSum { base, family, .. } = scrutinee_ty else { panic!() };
 			match projection {
 				Projection::Base => (DynamicTerm::Project(bx!(scrutinee), projection), base.as_ref().clone()),
 				Projection::Fiber => {
@@ -505,12 +519,19 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 			(DynamicTerm::UnRc(bx!(tm)), ty.as_ref().clone())
 		}
 		Pi { parameter, base, family } => {
-			let (base, _, _) = elaborate_dynamic_type(context, *base);
+			let (base, base_copyability, base_representation) = elaborate_dynamic_type(context, *base);
 			let base_value = base.clone().evaluate(&context.environment);
-			let (family, _, _) =
+			let (family, family_copyability, family_representation) =
 				elaborate_dynamic_type(&context.clone().bind_dynamic(parameter, base_value), *family);
 			(
-				DynamicTerm::Pi(bx!(base), bind([parameter], bx!(family))),
+				DynamicTerm::Pi {
+					base_copyability,
+					base_representation,
+					base: bx!(base),
+					family_copyability,
+					family_representation,
+					family: bind([parameter], bx!(family)),
+				},
 				DynamicValue::Universe {
 					copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)),
 					representation: rc!(StaticValue::ReprAtom(ReprAtom::Fun)),
@@ -522,11 +543,18 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 			let base_value = base.clone().evaluate(&context.environment);
 			let (family, family_copyability, family_representation) =
 				elaborate_dynamic_type(&context.clone().bind_dynamic(parameter, base_value), *family);
-			let copyability = StaticValue::max_copyability(base_copyability, family_copyability);
-
-			let representation = StaticValue::pair_representation(base_representation, family_representation);
+			let copyability = StaticValue::max_copyability(base_copyability.clone(), family_copyability.clone());
+			let representation =
+				StaticValue::pair_representation(base_representation.clone(), family_representation.clone());
 			(
-				DynamicTerm::Sigma(bx!(base), bind([parameter], bx!(family))),
+				DynamicTerm::Sigma {
+					base_copyability,
+					base_representation,
+					base: bx!(base),
+					family_copyability,
+					family_representation,
+					family: bind([parameter], bx!(family)),
+				},
 				DynamicValue::Universe { copyability: rc!(copyability), representation: rc!(representation) },
 			)
 		}
@@ -616,7 +644,7 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue) -> DynamicTerm {
 	use DynamicPreterm::*;
 	match (term, ty) {
-		(Lambda { parameter, body }, DynamicValue::IndexedProduct(base, family)) => {
+		(Lambda { parameter, body }, DynamicValue::IndexedProduct { base, family, .. }) => {
 			let body = verify_dynamic(
 				&context.clone().bind_dynamic(parameter, base.as_ref().clone()),
 				*body,
@@ -628,7 +656,7 @@ pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue)
 				body: bind([parameter], body.into()),
 			}
 		}
-		(Pair { basepoint, fiberpoint }, DynamicValue::IndexedSum(base, family)) => {
+		(Pair { basepoint, fiberpoint }, DynamicValue::IndexedSum { base, family, .. }) => {
 			let basepoint = verify_dynamic(context, *basepoint, base.as_ref().clone());
 			let basepoint_value = basepoint.clone().evaluate(&context.environment);
 			let fiberpoint = verify_dynamic(context, *fiberpoint, family.evaluate_with([basepoint_value]));

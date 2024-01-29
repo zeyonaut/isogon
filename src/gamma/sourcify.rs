@@ -262,7 +262,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write!(f, " ")?;
 			write_static_atom(&representation, f, interner)
 		}
-		Pi(base, family) => {
+		Pi { base, family, .. } => {
 			let parameter = interner.resolve(&family.parameter());
 			if parameter != "_" {
 				write!(f, "|{parameter} : ")?;
@@ -283,7 +283,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write!(f, " ")?;
 			write_dynamic_atom(argument, f, interner)
 		}
-		Sigma(base, family) => {
+		Sigma { base, family, .. } => {
 			let parameter = interner.resolve(&family.parameter());
 			if parameter != "_" {
 				write!(f, "|{parameter} : ")?;

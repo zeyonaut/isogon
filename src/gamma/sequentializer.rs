@@ -1,9 +1,8 @@
 use std::{collections::HashMap, hash::Hash};
 
 use super::{
-	closer::{ClosedValue, Variable, Function},
-	common::{Binder, Copyability, Level, Name, Projection},
-	stager::Repr,
+	closer::{ClosedValue, Function, Variable},
+	common::{Binder, Copyability, Level, Name, Projection, Repr, UniverseKind},
 };
 
 struct ProcedureBuilder {
@@ -69,7 +68,7 @@ enum Operation {
 enum Literal {
 	Nat,
 	Bool,
-	Universe(Copyability, Option<Repr>),
+	Universe(UniverseKind),
 	Num(usize),
 	BoolValue(bool),
 	Function { block: Symbol },
@@ -282,7 +281,7 @@ impl ProcedureBuilder {
 			ClosedValue::Variable(variable) => self.generate_variable(variable),
 
 			// Literals
-			ClosedValue::Universe(copy, repr) => Operand::Literal(Literal::Universe(copy, repr)),
+			ClosedValue::Universe(k) => Operand::Literal(Literal::Universe(k)),
 			ClosedValue::Bool => Operand::Literal(Literal::Bool),
 			ClosedValue::Nat => Operand::Literal(Literal::Nat),
 			ClosedValue::Num(n) => Operand::Literal(Literal::Num(n)),
