@@ -48,7 +48,9 @@ pub fn run(source: &str) {
 	println!("evaluated: {}", pretty_print(&value.reify_closed(), &parser.interner));
 
 	let _closure_converted = close(staged_value);
-	let _sequentialized = sequentialize(_closure_converted);
+	let seq_prog = sequentialize(_closure_converted);
+
+	seq_prog.pretty(&parser.interner);
 }
 
 fn pretty_print(term: &DynamicTerm, interner: &Rodeo) -> String {

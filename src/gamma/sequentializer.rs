@@ -1,5 +1,7 @@
 use std::{collections::HashMap, hash::Hash};
 
+use lasso::{Interner, Rodeo};
+
 use super::{
 	closer::{ClosedValue, Function, Variable},
 	common::{Binder, Level, Name, Projection, UniverseKind},
@@ -52,11 +54,15 @@ enum Terminator {
 		block: Option<Symbol>,
 		operand: Operand,
 	},
+	Apply {
+		callee: Operand,
+		argument: Operand,
+		return_block: Symbol,
+	},
 }
 
 enum Statement {
 	Assign(Symbol, Operation),
-	Define(Symbol, Block),
 }
 
 enum Operation {
@@ -65,7 +71,6 @@ enum Operation {
 	Sigma { base: Operand, family: Operand },
 	Id(Operand),
 	Pair { basepoint: Operand, fiberpoint: Operand },
-	Apply { callee: Operand, argument: Operand },
 	Suc(Operand),
 	WrapType(Operand),
 	WrapNew(Operand),
@@ -82,7 +87,6 @@ enum Literal {
 	Universe(UniverseKind),
 	Num(usize),
 	BoolValue(bool),
-	Function { block: Symbol },
 }
 
 #[derive(Clone)]
@@ -129,6 +133,127 @@ pub enum Register {
 	Outer(Level),
 	Parameter,
 	Local(Symbol),
+}
+
+impl Program {
+	pub fn pretty(&self, interner: &Rodeo) {
+		println!("entry:");
+		self.entry.pretty(interner);
+		println!();
+		for (i, (prototype, procedure)) in self.procedures.iter().enumerate() {
+			prototype.pretty(i, interner);
+			procedure.pretty(interner);
+			println!();
+		}
+	}
+}
+
+impl Prototype {
+	pub fn pretty(&self, i: usize, interner: &Rodeo) {
+		print!("proc_{i}[");
+		for (out, _) in &self.outer {
+			print!("{}, ", interner.resolve(out))
+		}
+		println!("]({}):", interner.resolve(&self.parameter.0));
+	}
+}
+
+impl Procedure {
+	pub fn pretty(&self, interner: &Rodeo) {
+		println!("    entry => block_{}", self.entry_label.0);
+		for (id, block) in self.blocks.iter() {
+			print!("block_{}(", id.0);
+			for p in &block.parameters {
+				print!("{}, ", p.0);
+			}
+			println!("):");
+
+			for statement in &block.statements {
+				statement.pretty(interner);
+			}
+
+			block.terminator.pretty(interner);
+		}
+	}
+}
+
+impl Statement {
+	pub fn pretty(&self, interner: &Rodeo) {
+		print!("    ");
+		match self {
+			Statement::Assign(a, b) => {
+				print!("{} := ", a.0);
+				b.pretty(interner);
+				println!();
+			}
+		}
+	}
+}
+
+impl Operation {
+	pub fn pretty(&self, interner: &Rodeo) {
+		match self {
+			// Operation::Function { captures, procedure_index } => todo!(),
+			// Operation::Pi { base, family } => todo!(),
+			// Operation::Sigma { base, family } => todo!(),
+			Operation::Id(a) => a.pretty(interner),
+			// Operation::Pair { basepoint, fiberpoint } => todo!(),
+			// Operation::Apply { callee, argument } => todo!(),
+			// Operation::Suc(_) => todo!(),
+			// Operation::WrapType(_) => todo!(),
+			// Operation::WrapNew(_) => todo!(),
+			// Operation::RcType(_) => todo!(),
+			// Operation::RcNew(_) => todo!(),
+			// Operation::IsPositive(_) => todo!(),
+			// Operation::Pred(_) => todo!(),
+			_ => print!("<operation>"),
+		}
+	}
+}
+
+impl Terminator {
+	pub fn pretty(&self, interner: &Rodeo) {
+		print!("    ");
+		match self {
+			Terminator::Branch { operand, false_block, false_operands, true_block, true_operands } => {
+				print!("branch (");
+				operand.pretty(interner);
+				print!(") block_{}(", false_block.0);
+				print!(") block_{}(", true_block.0);
+				println!(")");
+			}
+			Terminator::Jump { block, operand } => {
+				print!("jump ");
+				if let Some(b) = block {
+					print!("block_{} ", b.0);
+				} else {
+					print!("ret ");
+				}
+				operand.pretty(interner);
+				println!();
+			}
+			Terminator::Apply { callee, argument, return_block } => {
+				print!("call ");
+				argument.pretty(interner);
+				println!(" => block_{}", return_block.0);
+			}
+		}
+	}
+}
+
+impl Operand {
+	pub fn pretty(&self, interner: &Rodeo) {
+		match self {
+			Operand::Literal(v) => match v {
+				Literal::Nat => print!("nat"),
+				Literal::Bool => print!("bool"),
+				Literal::Universe(UniverseKind(c, r)) => print!("* <kind>"),
+				Literal::Num(n) => print!("{n}"),
+				Literal::BoolValue(b) => print!("{b}"),
+			},
+			Operand::Load(m) => print!("<load>"),
+		}
+	}
 }
 
 pub fn sequentialize(program: super::closer::Program) -> Program {
@@ -398,11 +523,27 @@ impl ProcedureBuilder {
 				self.generate_operation(preblock, [*basepoint, *fiberpoint], |[basepoint, fiberpoint]| {
 					Operation::Pair { basepoint, fiberpoint }
 				}),
-			ClosedValue::Apply { callee, argument } =>
-				self.generate_operation(preblock, [*callee, *argument], |[callee, argument]| Operation::Apply {
-					callee,
-					argument,
-				}),
+			ClosedValue::Apply { callee, argument } => {
+				let result_symbol = self.symbol_generator.generate();
+				let callee = self.generate(preblock, *callee);
+				let argument = self.generate(preblock, *argument);
+
+				let prev_preblock = std::mem::replace(
+					preblock,
+					Preblock {
+						label: self.symbol_generator.generate(),
+						parameters: vec![result_symbol],
+						statements: vec![],
+					},
+				);
+
+				self.terminate(
+					prev_preblock,
+					Terminator::Apply { callee, argument, return_block: preblock.label },
+				);
+
+				Operand::Load(Load::reg(Register::Local(result_symbol)))
+			}
 			ClosedValue::Suc(value) => self.generate_unary_operation(preblock, *value, Operation::Suc),
 			ClosedValue::WrapType(value) => self.generate_unary_operation(preblock, *value, Operation::WrapType),
 			ClosedValue::WrapNew(value) => self.generate_unary_operation(preblock, *value, Operation::WrapNew),
