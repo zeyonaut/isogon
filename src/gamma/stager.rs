@@ -100,7 +100,7 @@ pub enum Value {
 	Dynamic(Name, Level),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Environment {
 	values: Vec<Value>,
 	dynamic_context_length: Level,
@@ -242,12 +242,12 @@ impl<const N: usize> Stage for Binder<Box<DynamicTerm>, N> {
 }
 
 fn stage_as_dynamic_universe(
-	copyability: StaticValue,
-	representation: StaticValue,
+	copyability: StaticTerm,
+	representation: StaticTerm,
 	environment: &Environment,
 ) -> UniverseKind {
-	let Metavalue::Copyability(c) = copyability.reify(Level(environment.values.len())).stage(environment) else { panic!() };
-	let Metavalue::Repr(r) = representation.reify(Level(environment.values.len())).stage(environment) else { panic!() };
+	let Metavalue::Repr(r) = representation.stage(environment) else { panic!() };
+	let Metavalue::Copyability(c) = copyability.stage(environment) else { panic!("") };
 	UniverseKind(c, r)
 }
 
@@ -279,11 +279,11 @@ impl Stage for DynamicTerm {
 				family_representation,
 				family,
 			} => Obterm::Pi {
-				base_universe: stage_as_dynamic_universe(base_copyability, base_representation, environment),
+				base_universe: stage_as_dynamic_universe(*base_copyability, *base_representation, environment),
 				base: rc!(base.stage(environment)),
 				family_universe: stage_as_dynamic_universe(
-					family_copyability,
-					family_representation,
+					*family_copyability,
+					*family_representation,
 					environment,
 				),
 				family: family.stage(environment),
@@ -296,11 +296,11 @@ impl Stage for DynamicTerm {
 				family_representation,
 				family,
 			} => Obterm::Sigma {
-				base_universe: stage_as_dynamic_universe(base_copyability, base_representation, environment),
+				base_universe: stage_as_dynamic_universe(*base_copyability, *base_representation, environment),
 				base: rc!(base.stage(environment)),
 				family_universe: stage_as_dynamic_universe(
-					family_copyability,
-					family_representation,
+					*family_copyability,
+					*family_representation,
 					environment,
 				),
 				family: family.stage(environment),
@@ -411,20 +411,20 @@ impl Unstage for Obterm {
 			},
 			Project(scrutinee, projection) => DynamicTerm::Project(bx!(scrutinee.unstage(level)), *projection),
 			Pi { base_universe, base, family_universe, family } => DynamicTerm::Pi {
-				base_copyability: StaticValue::Copyability(base_universe.0),
-				base_representation: base_universe.1.as_ref().into(),
+				base_copyability: StaticTerm::Copyability(base_universe.0).into(),
+				base_representation: StaticTerm::from(base_universe.1.as_ref()).into(),
 				base: bx!(base.unstage(level)),
 				family: family.unstage(level),
-				family_copyability: StaticValue::Copyability(family_universe.0),
-				family_representation: family_universe.1.as_ref().into(),
+				family_copyability: StaticTerm::Copyability(base_universe.0).into(),
+				family_representation: StaticTerm::from(family_universe.1.as_ref()).into(),
 			},
 			Sigma { base_universe, base, family_universe, family } => DynamicTerm::Sigma {
-				base_copyability: StaticValue::Copyability(base_universe.0),
-				base_representation: base_universe.1.as_ref().into(),
+				base_copyability: StaticTerm::Copyability(base_universe.0).into(),
+				base_representation: StaticTerm::from(base_universe.1.as_ref()).into(),
 				base: bx!(base.unstage(level)),
 				family: family.unstage(level),
-				family_copyability: StaticValue::Copyability(family_universe.0),
-				family_representation: family_universe.1.as_ref().into(),
+				family_copyability: StaticTerm::Copyability(base_universe.0).into(),
+				family_representation: StaticTerm::from(family_universe.1.as_ref()).into(),
 			},
 			Let { ty, argument, tail } => DynamicTerm::Let {
 				ty: bx!(ty.unstage(level)),

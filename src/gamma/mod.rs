@@ -39,15 +39,16 @@ pub fn run(source: &str) {
 
 	println!("elaborated term: {}", pretty_print(&term, &parser.interner));
 	println!("normalized type: {}", pretty_print(&ty.reify_closed(), &parser.interner));
-	let value = term.stage(&stager::Environment::new());
-	let term = value.clone().unstage(Level(0));
-	println!("staged term: {}", pretty_print(&term, &parser.interner));
 
-	let _closure_converted = close(value.clone());
-	let _sequentialized = sequentialize(_closure_converted);
+	let staged_value = term.stage(&stager::Environment::new());
+	let term = staged_value.clone().unstage(Level(0));
+	println!("staged term: {}", pretty_print(&term, &parser.interner));
 
 	let value = term.evaluate(&evaluator::Environment(Vec::new()));
 	println!("evaluated: {}", pretty_print(&value.reify_closed(), &parser.interner));
+
+	let _closure_converted = close(staged_value);
+	let _sequentialized = sequentialize(_closure_converted);
 }
 
 fn pretty_print(term: &DynamicTerm, interner: &Rodeo) -> String {

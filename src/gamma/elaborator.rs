@@ -1,5 +1,5 @@
 use super::{
-	common::{bind, Binder, Copyability, Index, Level, Name, Projection, ReprAtom},
+	common::{bind, Binder, Copyability, Index, Level, Name, Projection, Repr, ReprAtom},
 	conversion::Conversion,
 	evaluator::{
 		DynamicNeutral, DynamicValue, Environment, Evaluate, Reify, StaticNeutral, StaticValue, Value,
@@ -61,6 +61,25 @@ pub enum StaticTerm {
 	ReprUniv(Box<Self>),
 }
 
+impl From<&Repr> for StaticTerm {
+	fn from(value: &Repr) -> Self {
+		match value {
+			Repr::Atom(atom) => Self::ReprAtom(Some(*atom)),
+			Repr::Pair(l, r) => Self::ReprPair(Self::from(&**l).into(), Self::from(&**r).into()),
+			Repr::Max(l, r) => Self::ReprPair(Self::from(&**l).into(), Self::from(&**r).into()),
+		}
+	}
+}
+
+impl From<Option<&Repr>> for StaticTerm {
+	fn from(value: Option<&Repr>) -> Self {
+		match value {
+			Some(repr) => repr.into(),
+			None => Self::ReprAtom(None),
+		}
+	}
+}
+
 #[derive(Clone, Debug)]
 pub enum DynamicTerm {
 	Variable(Name, Index),
@@ -81,12 +100,13 @@ pub enum DynamicTerm {
 	RcType(Box<Self>),
 	RcNew(Box<Self>),
 	UnRc(Box<Self>),
+	// NOTE: C and R are terms, but it's unclear to me if they are better represented as values but with de Bruijn indices.
 	Pi {
-		base_copyability: StaticValue,
-		base_representation: StaticValue,
+		base_copyability: Box<StaticTerm>,
+		base_representation: Box<StaticTerm>,
 		base: Box<Self>,
-		family_copyability: StaticValue,
-		family_representation: StaticValue,
+		family_copyability: Box<StaticTerm>,
+		family_representation: Box<StaticTerm>,
 		family: Binder<Box<Self>>,
 	},
 	Lambda {
@@ -99,11 +119,11 @@ pub enum DynamicTerm {
 		argument: Box<Self>,
 	},
 	Sigma {
-		base_copyability: StaticValue,
-		base_representation: StaticValue,
+		base_copyability: Box<StaticTerm>,
+		base_representation: Box<StaticTerm>,
 		base: Box<Self>,
-		family_copyability: StaticValue,
-		family_representation: StaticValue,
+		family_copyability: Box<StaticTerm>,
+		family_representation: Box<StaticTerm>,
 		family: Binder<Box<Self>>,
 	},
 	Pair {
@@ -525,11 +545,11 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 				elaborate_dynamic_type(&context.clone().bind_dynamic(parameter, base_value), *family);
 			(
 				DynamicTerm::Pi {
-					base_copyability,
-					base_representation,
+					base_copyability: base_copyability.reify(context.len()).into(),
+					base_representation: base_representation.reify(context.len()).into(),
 					base: bx!(base),
-					family_copyability,
-					family_representation,
+					family_copyability: family_copyability.reify(context.len()).into(),
+					family_representation: family_representation.reify(context.len()).into(),
 					family: bind([parameter], bx!(family)),
 				},
 				DynamicValue::Universe {
@@ -548,11 +568,11 @@ pub fn synthesize_dynamic(context: &Context, term: DynamicPreterm) -> (DynamicTe
 				StaticValue::pair_representation(base_representation.clone(), family_representation.clone());
 			(
 				DynamicTerm::Sigma {
-					base_copyability,
-					base_representation,
+					base_copyability: base_copyability.reify(context.len()).into(),
+					base_representation: base_representation.reify(context.len()).into(),
 					base: bx!(base),
-					family_copyability,
-					family_representation,
+					family_copyability: family_copyability.reify(context.len()).into(),
+					family_representation: family_representation.reify(context.len()).into(),
 					family: bind([parameter], bx!(family)),
 				},
 				DynamicValue::Universe { copyability: rc!(copyability), representation: rc!(representation) },
