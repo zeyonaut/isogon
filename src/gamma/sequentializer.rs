@@ -4,7 +4,7 @@ use lasso::{Interner, Rodeo};
 
 use super::{
 	closer::{ClosedValue, Function, Variable},
-	common::{Binder, Level, Name, Projection, UniverseKind},
+	common::{Binder, Copyability, Level, Name, Projection, Repr, ReprAtom, UniverseKind},
 };
 
 struct ProcedureBuilder {
@@ -162,7 +162,7 @@ impl Procedure {
 	pub fn pretty(&self, interner: &Rodeo) {
 		println!("    entry => block_{}", self.entry_label.0);
 		for (id, block) in self.blocks.iter() {
-			print!("block_{}(", id.0);
+			print!("    block_{}(", id.0);
 			for p in &block.parameters {
 				print!("{}, ", p.0);
 			}
@@ -179,7 +179,7 @@ impl Procedure {
 
 impl Statement {
 	pub fn pretty(&self, interner: &Rodeo) {
-		print!("    ");
+		print!("        ");
 		match self {
 			Statement::Assign(a, b) => {
 				print!("{} := ", a.0);
@@ -193,33 +193,71 @@ impl Statement {
 impl Operation {
 	pub fn pretty(&self, interner: &Rodeo) {
 		match self {
-			// Operation::Function { captures, procedure_index } => todo!(),
-			// Operation::Pi { base, family } => todo!(),
-			// Operation::Sigma { base, family } => todo!(),
+			Operation::Function { captures, procedure_index } => {
+				print!("proc_{} {{", procedure_index);
+
+				for o in captures {
+					o.pretty(interner);
+					print!(", ");
+				}
+				print!("}}")
+			}
+			Operation::Pi { base, family } => {
+				print!("pi {{");
+				base.pretty(interner);
+				print!(", ");
+				family.pretty(interner);
+				print!("}}");
+			}
+			Operation::Sigma { base, family } => {
+				print!("sigma {{");
+				base.pretty(interner);
+				print!(", ");
+				family.pretty(interner);
+				print!("}}");
+			}
 			Operation::Id(a) => a.pretty(interner),
-			// Operation::Pair { basepoint, fiberpoint } => todo!(),
-			// Operation::Apply { callee, argument } => todo!(),
-			// Operation::Suc(_) => todo!(),
-			// Operation::WrapType(_) => todo!(),
-			// Operation::WrapNew(_) => todo!(),
-			// Operation::RcType(_) => todo!(),
-			// Operation::RcNew(_) => todo!(),
-			// Operation::IsPositive(_) => todo!(),
-			// Operation::Pred(_) => todo!(),
-			_ => print!("<operation>"),
+			Operation::Pair { basepoint, fiberpoint } => {
+				print!("(");
+				basepoint.pretty(interner);
+				print!(", ");
+				fiberpoint.pretty(interner);
+				print!(")");
+			}
+			Operation::Suc(o) => pretty_unary_operation("suc", o, interner),
+			Operation::WrapType(o) => pretty_unary_operation("Wrap", o, interner),
+			Operation::WrapNew(o) => pretty_unary_operation("wrap", o, interner),
+			Operation::RcType(o) => pretty_unary_operation("RC", o, interner),
+			Operation::RcNew(o) => pretty_unary_operation("rc", o, interner),
+			Operation::IsPositive(o) => pretty_unary_operation("is_positive", o, interner),
+			Operation::Pred(o) => pretty_unary_operation("pred", o, interner),
 		}
 	}
 }
 
+fn pretty_unary_operation(op: &'static str, operand: &Operand, interner: &Rodeo) {
+	print!("{} {{", op);
+	operand.pretty(interner);
+	print!("}}");
+}
+
 impl Terminator {
 	pub fn pretty(&self, interner: &Rodeo) {
-		print!("    ");
+		print!("        ");
 		match self {
 			Terminator::Branch { operand, false_block, false_operands, true_block, true_operands } => {
 				print!("branch (");
 				operand.pretty(interner);
 				print!(") block_{}(", false_block.0);
+				for o in false_operands {
+					o.pretty(interner);
+					print!(", ");
+				}
 				print!(") block_{}(", true_block.0);
+				for o in true_operands {
+					o.pretty(interner);
+					print!(", ");
+				}
 				println!(")");
 			}
 			Terminator::Jump { block, operand } => {
@@ -234,6 +272,8 @@ impl Terminator {
 			}
 			Terminator::Apply { callee, argument, return_block } => {
 				print!("call ");
+				callee.pretty(interner);
+				print!(" with ");
 				argument.pretty(interner);
 				println!(" => block_{}", return_block.0);
 			}
@@ -247,11 +287,67 @@ impl Operand {
 			Operand::Literal(v) => match v {
 				Literal::Nat => print!("nat"),
 				Literal::Bool => print!("bool"),
-				Literal::Universe(UniverseKind(c, r)) => print!("* <kind>"),
+				Literal::Universe(UniverseKind(c, r)) => {
+					print!("@type(");
+					match c {
+						Copyability::Trivial => print!("c0"),
+						Copyability::Nontrivial => print!("c1"),
+					}
+					print!(", ");
+					if let Some(repr) = r.as_ref() {
+						repr.pretty();
+					} else {
+						print!("rnone");
+					}
+					print!(")")
+				}
 				Literal::Num(n) => print!("{n}"),
 				Literal::BoolValue(b) => print!("{b}"),
 			},
-			Operand::Load(m) => print!("<load>"),
+			Operand::Load(m) => {
+				match m.register {
+					Register::Outer(n) => print!("@outer({})", n.0),
+					Register::Parameter => print!("@parameter"),
+					Register::Local(n) => print!("@local({})", n.0),
+				}
+
+				for x in &m.modifiers {
+					match x {
+						Modifier::Projection(Projection::Base) => print!("/."),
+						Modifier::Projection(Projection::Fiber) => print!("/!"),
+						Modifier::UnRc => print!("/unrc"),
+						Modifier::Unwrap => print!("/unwrap"),
+					}
+				}
+			}
+		}
+	}
+}
+
+impl Repr {
+	fn pretty(&self) {
+		match self {
+			Repr::Atom(atom) => match atom {
+				ReprAtom::Class => print!("rclass"),
+				ReprAtom::Pointer =>  print!("rpointer"),
+				ReprAtom::Byte =>  print!("rbyte"),
+				ReprAtom::Nat =>  print!("rnat"),
+				ReprAtom::Fun =>  print!("rfun"),
+			},
+			Repr::Pair(a, b) => {
+				print!("@rpair(");
+				a.pretty();
+				print!(", ");
+				b.pretty();
+				print!(")");
+			},
+			Repr::Max(a, b) => {
+				print!("@rmax(");
+				a.pretty();
+				print!(", ");
+				b.pretty();
+				print!(")");
+			},
 		}
 	}
 }
@@ -420,7 +516,7 @@ impl ProcedureBuilder {
 				));
 				let is_new_count_positive_symbool = self.symbol_generator.generate();
 				loop_preblock.statements.push(Statement::Assign(
-					new_count_symbol,
+					is_new_count_positive_symbool,
 					Operation::IsPositive(Operand::Load(Load::reg(Register::Local(new_count_symbol)))),
 				));
 				let loop_preblock_label = loop_preblock.label;
