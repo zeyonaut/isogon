@@ -2,7 +2,7 @@ use std::{collections::HashMap, hash::Hash};
 
 use super::{
 	closer::{ClosedValue, Function, Variable},
-	common::{Binder, Copyability, Level, Name, Projection, Repr, UniverseKind},
+	common::{Binder, Level, Name, Projection, UniverseKind},
 };
 
 struct ProcedureBuilder {
@@ -11,7 +11,7 @@ struct ProcedureBuilder {
 	blocks: HashMap<Symbol, Block>,
 }
 
-struct Program {
+pub struct Program {
 	entry: Procedure,
 	procedures: Vec<(Prototype, Procedure)>,
 }
@@ -41,8 +41,17 @@ struct Block {
 }
 
 enum Terminator {
-	Branch { operand: Operand, false_block: Symbol, true_block: Symbol },
-	Jump { block: Option<Symbol>, operand: Operand },
+	Branch {
+		operand: Operand,
+		false_block: Symbol,
+		false_operands: Vec<Operand>,
+		true_block: Symbol,
+		true_operands: Vec<Operand>,
+	},
+	Jump {
+		block: Option<Symbol>,
+		operand: Operand,
+	},
 }
 
 enum Statement {
@@ -62,6 +71,8 @@ enum Operation {
 	WrapNew(Operand),
 	RcType(Operand),
 	RcNew(Operand),
+	IsPositive(Operand),
+	Pred(Operand),
 }
 
 #[derive(Clone)]
@@ -81,10 +92,10 @@ enum Operand {
 }
 
 impl Operand {
-	pub fn modify(mut self, modifier: Modifier) -> Self {
+	pub fn modify(self, modifier: Modifier) -> Self {
 		match self {
 			// TODO: Should we allow arbitrarily complex literals at this stage?
-			Operand::Literal(literal) => unimplemented!(),
+			Operand::Literal(_literal) => unimplemented!(),
 			Operand::Load(load) => Operand::Load(load.modify(modifier)),
 		}
 	}
@@ -123,7 +134,7 @@ pub enum Register {
 pub fn sequentialize(program: super::closer::Program) -> Program {
 	let entry = build_procedure(program.entry);
 
-	let mut procedures = program
+	let procedures = program
 		.procedures
 		.into_iter()
 		.map(|procedure| {
@@ -227,16 +238,85 @@ impl ProcedureBuilder {
 	pub fn generate(&mut self, preblock: &mut Preblock, value: ClosedValue) -> Operand {
 		match value {
 			// Control-Flow Constructs
-			ClosedValue::Let { ty, argument, tail } => {
+			ClosedValue::Let { ty: _, argument, tail } => {
 				// TODO: We might need to pass `ty` to each call of this function.
 				let assignee_operand = self.generate(preblock, (*argument).clone());
 				self.generate_with(preblock, tail, [assignee_operand])
 			}
-			ClosedValue::CaseNat { scrutinee, motive, case_nil, case_suc } => {
-				unimplemented!()
+			// TODO: This looks like it needs heavy refactoring.
+			ClosedValue::CaseNat { scrutinee, motive: _, case_nil, case_suc } => {
+				let scrutinee_operand = self.generate(preblock, *scrutinee);
+				let initial_operand = self.generate(preblock, *case_nil);
+				let is_positive_symbol = self.symbol_generator.generate();
+				preblock
+					.statements
+					.push(Statement::Assign(is_positive_symbol, Operation::Id(scrutinee_operand.clone())));
+
+				let result_symbol = self.symbol_generator.generate();
+				let prev_preblock = std::mem::replace(
+					preblock,
+					Preblock {
+						label: self.symbol_generator.generate(),
+						parameters: vec![result_symbol],
+						statements: vec![],
+					},
+				);
+
+				let count_symbol = self.symbol_generator.generate();
+				let accumulator_symbol = self.symbol_generator.generate();
+				let mut loop_preblock = Preblock {
+					label: self.symbol_generator.generate(),
+					parameters: vec![count_symbol, accumulator_symbol],
+					statements: vec![],
+				};
+				self.terminate(
+					prev_preblock,
+					Terminator::Branch {
+						operand: Operand::Load(Load::reg(Register::Local(is_positive_symbol))),
+						false_block: preblock.label,
+						false_operands: vec![initial_operand.clone()],
+						true_block: loop_preblock.label,
+						true_operands: vec![scrutinee_operand, initial_operand],
+					},
+				);
+
+				let new_accumulator = self.generate_with(
+					&mut loop_preblock,
+					case_suc,
+					[
+						Operand::Load(Load::reg(Register::Local(count_symbol))),
+						Operand::Load(Load::reg(Register::Local(accumulator_symbol))),
+					],
+				);
+				let new_count_symbol = self.symbol_generator.generate();
+				loop_preblock.statements.push(Statement::Assign(
+					new_count_symbol,
+					Operation::Pred(Operand::Load(Load::reg(Register::Local(count_symbol)))),
+				));
+				let is_new_count_positive_symbool = self.symbol_generator.generate();
+				loop_preblock.statements.push(Statement::Assign(
+					new_count_symbol,
+					Operation::IsPositive(Operand::Load(Load::reg(Register::Local(new_count_symbol)))),
+				));
+				let loop_preblock_label = loop_preblock.label;
+				self.terminate(
+					loop_preblock,
+					Terminator::Branch {
+						operand: Operand::Load(Load::reg(Register::Local(is_new_count_positive_symbool))),
+						false_block: preblock.label,
+						false_operands: vec![new_accumulator.clone()],
+						true_block: loop_preblock_label,
+						true_operands: vec![
+							Operand::Load(Load::reg(Register::Local(new_count_symbol))),
+							new_accumulator,
+						],
+					},
+				);
+
+				Operand::Load(Load::reg(Register::Local(result_symbol)))
 			}
-			ClosedValue::CaseBool { scrutinee, motive, case_false, case_true } => {
-				let scrutinee_operand = self.generate(preblock, (*scrutinee).clone());
+			ClosedValue::CaseBool { scrutinee, motive: _, case_false, case_true } => {
+				let scrutinee_operand = self.generate(preblock, *scrutinee);
 
 				let mut false_preblock =
 					Preblock { label: self.symbol_generator.generate(), parameters: vec![], statements: vec![] };
@@ -258,12 +338,14 @@ impl ProcedureBuilder {
 					Terminator::Branch {
 						operand: scrutinee_operand,
 						false_block: false_preblock.label,
+						false_operands: vec![],
 						true_block: true_preblock.label,
+						true_operands: vec![],
 					},
 				);
 
-				let false_operand = self.generate(&mut false_preblock, (*case_false).clone());
-				let true_operand = self.generate(&mut true_preblock, (*case_true).clone());
+				let false_operand = self.generate(&mut false_preblock, *case_false);
+				let true_operand = self.generate(&mut true_preblock, *case_true);
 
 				self.terminate(
 					false_preblock,

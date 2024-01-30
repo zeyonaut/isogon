@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::HashMap, rc::Rc};
 
 use super::{
-	common::{Binder, Copyability, Level, Name, Projection, Repr},
+	common::{Binder, Level, Name, Projection},
 	stager::Obterm,
 };
 use crate::gamma::common::UniverseKind;
@@ -285,11 +285,11 @@ impl Closer {
 				let tail = self.close_with(tail, [(*ty).clone()], is_occurrent);
 				ClosedValue::Let { ty: closed_ty.into(), argument: argument.into(), tail }
 			}
-			Dv::Pi { base_universe, base, family_universe, family } => {
+			Dv::Pi { base_universe: _, base, family_universe: _, family } => {
 				let closed_base = self.close((*base).clone(), is_occurrent);
 				ClosedValue::Pi(closed_base.into(), self.close_function((*base).clone(), family, is_occurrent))
 			}
-			Dv::Sigma { base_universe, base, family_universe, family } => {
+			Dv::Sigma { base_universe: _, base, family_universe: _, family } => {
 				let closed_base = self.close((*base).clone(), is_occurrent);
 				// FIXME: This is completely wrong, we need to infer the universe of base (or otherwise store that information in the variant beforehand.)
 				ClosedValue::Sigma(closed_base.into(), self.close_function((*base).clone(), family, is_occurrent))

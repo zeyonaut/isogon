@@ -1,5 +1,5 @@
 use super::{
-	common::{bind, Binder, Copyability, Index, Level, Name, Projection, ReprAtom, UniverseKind},
+	common::{bind, Binder, Copyability, Index, Level, Name, Projection, ReprAtom},
 	conversion::Conversion,
 	evaluator::{
 		DynamicNeutral, DynamicValue, Environment, Evaluate, Reify, StaticNeutral, StaticValue, Value,

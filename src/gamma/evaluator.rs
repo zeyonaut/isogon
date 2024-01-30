@@ -658,8 +658,8 @@ impl Reify for DynamicValue {
 				base_copyability,
 				base_representation,
 				base,
-				family_copyability,
-				family_representation,
+				family_copyability: _,
+				family_representation: _,
 				family,
 			} => DynamicTerm::Pi {
 				base_copyability: (**base_copyability).clone(),
@@ -678,8 +678,8 @@ impl Reify for DynamicValue {
 				base_copyability,
 				base_representation,
 				base,
-				family_copyability,
-				family_representation,
+				family_copyability: _,
+				family_representation: _,
 				family,
 			} => DynamicTerm::Sigma {
 				base_copyability: (**base_copyability).clone(),

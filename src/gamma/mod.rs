@@ -8,6 +8,7 @@ use crate::gamma::{
 	evaluator::Evaluate,
 	lexer::LexedSource,
 	parser::Parser,
+	sequentializer::sequentialize,
 	sourcify::write_dynamic,
 	stager::{Stage, Unstage},
 };
@@ -42,7 +43,8 @@ pub fn run(source: &str) {
 	let term = value.clone().unstage(Level(0));
 	println!("staged term: {}", pretty_print(&term, &parser.interner));
 
-	let closure_converted = close(value.clone());
+	let _closure_converted = close(value.clone());
+	let _sequentialized = sequentialize(_closure_converted);
 
 	let value = term.evaluate(&evaluator::Environment(Vec::new()));
 	println!("evaluated: {}", pretty_print(&value.reify_closed(), &parser.interner));

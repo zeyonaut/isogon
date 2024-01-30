@@ -246,8 +246,8 @@ fn stage_as_dynamic_universe(
 	representation: StaticValue,
 	environment: &Environment,
 ) -> UniverseKind {
-	let Metavalue::Copyability(c) = copyability.reify(Level(0)).stage(environment) else { panic!() };
-	let Metavalue::Repr(r) = representation.reify(Level(0)).stage(environment) else { panic!() };
+	let Metavalue::Copyability(c) = copyability.reify(Level(environment.values.len())).stage(environment) else { panic!() };
+	let Metavalue::Repr(r) = representation.reify(Level(environment.values.len())).stage(environment) else { panic!() };
 	UniverseKind(c, r)
 }
 
