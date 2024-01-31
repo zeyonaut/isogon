@@ -1,28 +1,22 @@
 use lasso::Rodeo;
 
-use self::{elaborator::DynamicTerm, lexer::LexError};
-use crate::gamma::{
-	closer::close,
-	common::Level,
-	elaborator::elaborate_dynamic_closed,
-	evaluator::Evaluate,
-	lexer::LexedSource,
-	parser::Parser,
-	sequentializer::sequentialize,
+use self::{
+	ir::{source::LexError, syntax::DynamicTerm},
 	sourcify::write_dynamic,
-	stager::{Stage, Unstage},
+};
+use crate::gamma::{
+	common::Level,
+	ir::source::{LexErrorKind, LexedSource},
+	transform::{
+		close::close, elaborate::elaborate_dynamic_closed, evaluate::Evaluate, linearize::sequentialize,
+		parse::Parser, stage::Stage, unstage::Unstage,
+	},
 };
 
-mod closer;
 mod common;
-mod conversion;
-mod elaborator;
-mod evaluator;
-mod lexer;
-mod parser;
-mod sequentializer;
+mod ir;
 mod sourcify;
-mod stager;
+mod transform;
 
 pub fn run(source: &str) {
 	let lexed_source = match LexedSource::new(source) {
@@ -40,11 +34,11 @@ pub fn run(source: &str) {
 	println!("elaborated term: {}", pretty_print(&term, &parser.interner));
 	println!("normalized type: {}", pretty_print(&ty.reify_closed(), &parser.interner));
 
-	let staged_value = term.stage(&stager::Environment::new());
+	let staged_value = term.stage(&ir::object::Environment::new());
 	let term = staged_value.clone().unstage(Level(0));
 	println!("staged term: {}", pretty_print(&term, &parser.interner));
 
-	let value = term.evaluate(&evaluator::Environment(Vec::new()));
+	let value = term.evaluate(&ir::domain::Environment(Vec::new()));
 	println!("evaluated: {}", pretty_print(&value.reify_closed(), &parser.interner));
 
 	let _closure_converted = close(staged_value);
@@ -101,7 +95,7 @@ pub fn print_lex_error(source: &str, LexError(location, kind): LexError) {
 		unicode_width::UnicodeWidthStr::width(line[0..bytes_left].replace('\t', &TAB_REPLACEMENT).as_str());
 
 	{
-		use lexer::LexErrorKind::*;
+		use LexErrorKind::*;
 		print!("[{}:{}] ", line_number, bytes_left);
 		print!("error: ");
 		match kind {

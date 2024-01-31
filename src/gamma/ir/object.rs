@@ -1,11 +1,9 @@
 use std::{fmt::Debug, rc::Rc};
 
-use super::{
-	common::{Binder, Closure, Copyability, Index, Level, Name, Projection, Repr, ReprAtom, UniverseKind},
-	elaborator::{DynamicTerm, StaticTerm},
-	evaluator::{Reify, StaticValue},
+use super::syntax::StaticTerm;
+use crate::gamma::common::{
+	Binder, Closure, Copyability, Index, Level, Name, Projection, Repr, UniverseKind,
 };
-use crate::utility::{bx, rc};
 
 #[derive(Clone)]
 pub enum Metavalue {
@@ -27,6 +25,50 @@ impl Debug for Metavalue {
 			Self::Function(_) => f.debug_tuple("Function").field(&format_args!("_")).finish(),
 			_ => write!(f, "<...>"),
 		}
+	}
+}
+
+#[derive(Clone, Debug)]
+pub enum Value {
+	Static(Metavalue),
+	Dynamic(Name, Level),
+}
+
+#[derive(Clone, Debug)]
+pub struct Environment {
+	values: Vec<Value>,
+	dynamic_context_length: Level,
+}
+
+impl Environment {
+	pub fn new() -> Self {
+		Self { values: Vec::new(), dynamic_context_length: Level(0) }
+	}
+
+	pub fn lookup_static(&self, Index(i): Index) -> Metavalue {
+		let Some(Value::Static(value)) = self.values.get(self.values.len() - 1 - i) else { panic!() };
+		value.clone()
+	}
+	pub fn lookup_dynamic(&self, Index(i): Index) -> Obterm {
+		let Some(Value::Dynamic(name, level)) = self.values.get(self.values.len() - 1 - i) else { panic!() };
+		Obterm::Variable(*name, *level)
+	}
+
+	#[must_use]
+	pub fn bind<const N: usize>(&self, names: [Name; N]) -> Self {
+		let mut environment = self.clone();
+		for name in names {
+			environment.values.push(Value::Dynamic(name, environment.dynamic_context_length));
+			environment.dynamic_context_length += 1;
+		}
+		environment
+	}
+
+	#[must_use]
+	pub fn extend<const N: usize>(&self, values: [Value; N]) -> Self {
+		let mut environment = self.clone();
+		environment.values.extend(values);
+		environment
 	}
 }
 
@@ -94,373 +136,68 @@ pub enum Obterm {
 	UnRc(Rc<Self>),
 }
 
-#[derive(Clone, Debug)]
-pub enum Value {
-	Static(Metavalue),
-	Dynamic(Name, Level),
-}
+impl Obterm {
+	// Yields the characteristic of the subset of all levels < level that occur as a variable in a value.
+	pub fn occurences(&self, Level(level): Level) -> Vec<bool> {
+		fn mark_occurrents(value: &Obterm, is_occurrent: &mut Vec<bool>) {
+			match value {
+				Obterm::Variable(_, Level(l)) =>
+					if let Some(l_is_occurrent) = is_occurrent.get_mut(*l) {
+						*l_is_occurrent = true;
+					},
 
-#[derive(Clone, Debug)]
-pub struct Environment {
-	values: Vec<Value>,
-	dynamic_context_length: Level,
-}
-
-impl Environment {
-	pub fn new() -> Self {
-		Self { values: Vec::new(), dynamic_context_length: Level(0) }
-	}
-
-	pub fn lookup_static(&self, Index(i): Index) -> Metavalue {
-		let Some(Value::Static(value)) = self.values.get(self.values.len() - 1 - i) else { panic!() };
-		value.clone()
-	}
-	pub fn lookup_dynamic(&self, Index(i): Index) -> Obterm {
-		let Some(Value::Dynamic(name, level)) = self.values.get(self.values.len() - 1 - i) else { panic!() };
-		Obterm::Variable(*name, *level)
-	}
-
-	#[must_use]
-	pub fn bind<const N: usize>(&self, names: [Name; N]) -> Self {
-		let mut environment = self.clone();
-		for name in names {
-			environment.values.push(Value::Dynamic(name, environment.dynamic_context_length));
-			environment.dynamic_context_length += 1;
-		}
-		environment
-	}
-
-	#[must_use]
-	pub fn extend<const N: usize>(&self, values: [Value; N]) -> Self {
-		let mut environment = self.clone();
-		environment.values.extend(values);
-		environment
-	}
-}
-
-pub trait Stage {
-	type ObjectTerm;
-	/// Transforms a core term into an object term.
-	fn stage(self, environment: &Environment) -> Self::ObjectTerm;
-}
-
-impl<const N: usize> Stage for Binder<Box<StaticTerm>, N> {
-	type ObjectTerm = Closure<Environment, StaticTerm, N>;
-	fn stage(self, environment: &Environment) -> Self::ObjectTerm {
-		Closure::new(environment.clone(), self.parameters, *self.body)
-	}
-}
-
-impl Stage for StaticTerm {
-	type ObjectTerm = Metavalue;
-	fn stage(self, environment: &Environment) -> Self::ObjectTerm {
-		use StaticTerm::*;
-		match self {
-			Variable(_, index) => environment.lookup_static(index),
-			CopyabilityType => Metavalue::Type,
-			Copyability(c) => Metavalue::Copyability(c),
-			MaxCopyability(a, b) => {
-				let Metavalue::Copyability(a) = a.stage(environment) else { panic!() };
-				let Metavalue::Copyability(b) = b.stage(environment) else { panic!() };
-				Metavalue::Copyability(std::cmp::max(a, b))
-			}
-			Lambda(function) => Metavalue::Function(function.stage(environment)),
-			Apply { scrutinee, argument } => {
-				let Metavalue::Function(function) = scrutinee.stage(environment) else { panic!() };
-				// TODO: The environment argument is useless in this position: make a separate trait for this (as in EvaluateWith/EvaluateAt).
-				function.stage_with(environment, [argument.stage(environment)])
-			}
-			Pi(..) => Metavalue::Type,
-			Sigma(..) => Metavalue::Type,
-			Pair { basepoint, fiberpoint } =>
-				Metavalue::Pair(rc!(basepoint.stage(environment)), rc!(fiberpoint.stage(environment))),
-			Project(scrutinee, projection) => {
-				let Metavalue::Pair(basepoint, fiberpoint) = scrutinee.stage(environment) else { panic!() };
-				match projection {
-					Projection::Base => basepoint.as_ref().clone(),
-					Projection::Fiber => fiberpoint.as_ref().clone(),
+				// Cases with binders.
+				Obterm::Function { base, family, body } => {
+					mark_occurrents(base, is_occurrent);
+					mark_occurrents(&family.body, is_occurrent);
+					mark_occurrents(&body.body, is_occurrent);
 				}
-			}
-			Let { argument, tail, .. } => tail.stage_with(environment, [argument.stage(environment)]),
-			Universe => Metavalue::Type,
-			Lift(_) => Metavalue::Type,
-			Quote(term) => Metavalue::Quote(rc!(term.stage(environment))),
-			Nat => Metavalue::Type,
-			Num(n) => Metavalue::Num(n),
-			Suc(p) => {
-				let Metavalue::Num(p) = p.stage(environment) else { panic!() };
-				Metavalue::Num(p + 1)
-			}
-			CaseNat { scrutinee, motive: _, case_nil, case_suc } => {
-				let Metavalue::Num(n) = scrutinee.stage(environment) else { panic!() };
-				(0..n).fold(case_nil.stage(environment), |previous, i| {
-					case_suc.clone().stage_with(environment, [Metavalue::Num(i), previous])
-				})
-			}
-			Bool => Metavalue::Type,
-			BoolValue(b) => Metavalue::BoolValue(b),
-			CaseBool { scrutinee, motive: _, case_false, case_true } => {
-				let Metavalue::BoolValue(b) = scrutinee.stage(environment) else { panic!() };
-				if b { case_true } else { case_false }.stage(environment)
-			}
-			ReprType => Metavalue::Type,
-			ReprAtom(r) => Metavalue::Repr(r.map(Repr::Atom)),
-			ReprPair(r0, r1) => {
-				let Metavalue::Repr(r0) = r0.stage(environment) else { panic!() };
-				let Metavalue::Repr(r1) = r1.stage(environment) else { panic!() };
-				match (r0, r1) {
-					(None, r1) => Metavalue::Repr(r1),
-					(r0, None) => Metavalue::Repr(r0),
-					(Some(r0), Some(r1)) => Metavalue::Repr(Some(Repr::Pair(rc!(r0), rc!(r1)))),
+				Obterm::Let { ty, argument, tail } => {
+					mark_occurrents(ty, is_occurrent);
+					mark_occurrents(argument, is_occurrent);
+					mark_occurrents(&tail.body, is_occurrent);
 				}
-			}
-			ReprMax(r0, r1) => {
-				let Metavalue::Repr(r0) = r0.stage(environment) else { panic!() };
-				let Metavalue::Repr(r1) = r1.stage(environment) else { panic!() };
-				match (r0, r1) {
-					(None, r1) => Metavalue::Repr(r1),
-					(r0, None) => Metavalue::Repr(r0),
-					(Some(r0), Some(r1)) => Metavalue::Repr(Some(Repr::Max(rc!(r0), rc!(r1)))),
+				Obterm::Pi { base, family, base_universe: _, family_universe: _ }
+				| Obterm::Sigma { base, family, base_universe: _, family_universe: _ } => {
+					mark_occurrents(base, is_occurrent);
+					mark_occurrents(&family.body, is_occurrent);
 				}
-			}
-			ReprUniv(c) => {
-				let Metavalue::Copyability(c) = c.stage(environment) else { panic!() };
-				match c {
-					self::Copyability::Trivial => Metavalue::Repr(None),
-					self::Copyability::Nontrivial => Metavalue::Repr(Some(Repr::Atom(self::ReprAtom::Class))),
+				Obterm::CaseNat { scrutinee, motive, case_nil, case_suc } => {
+					mark_occurrents(scrutinee, is_occurrent);
+					mark_occurrents(&motive.body, is_occurrent);
+					mark_occurrents(case_nil, is_occurrent);
+					mark_occurrents(&case_suc.body, is_occurrent);
+				}
+				Obterm::CaseBool { scrutinee, motive, case_false, case_true } => {
+					mark_occurrents(scrutinee, is_occurrent);
+					mark_occurrents(&motive.body, is_occurrent);
+					mark_occurrents(case_false, is_occurrent);
+					mark_occurrents(case_true, is_occurrent);
+				}
+
+				// 0-recursive cases.
+				Obterm::Universe(_) | Obterm::Bool | Obterm::BoolValue(_) | Obterm::Nat | Obterm::Num(_) => (),
+
+				// 1-recursive cases.
+				Obterm::Project(a, _)
+				| Obterm::Suc(a)
+				| Obterm::WrapType(a)
+				| Obterm::WrapNew(a)
+				| Obterm::Unwrap(a)
+				| Obterm::RcType(a)
+				| Obterm::RcNew(a)
+				| Obterm::UnRc(a) => mark_occurrents(a, is_occurrent),
+
+				// 2-recursive cases.
+				Obterm::Apply { scrutinee: a, argument: b } | Obterm::Pair { basepoint: a, fiberpoint: b } => {
+					mark_occurrents(a, is_occurrent);
+					mark_occurrents(b, is_occurrent);
 				}
 			}
 		}
-	}
-}
 
-impl<const N: usize> Stage for Binder<Box<DynamicTerm>, N> {
-	type ObjectTerm = Binder<Rc<Obterm>, N>;
-	fn stage(self, environment: &Environment) -> Self::ObjectTerm {
-		self.mapv(|parameters, body| body.stage(&environment.bind(parameters)))
-	}
-}
-
-fn stage_as_dynamic_universe(
-	copyability: StaticTerm,
-	representation: StaticTerm,
-	environment: &Environment,
-) -> UniverseKind {
-	let Metavalue::Repr(r) = representation.stage(environment) else { panic!() };
-	let Metavalue::Copyability(c) = copyability.stage(environment) else { panic!("") };
-	UniverseKind(c, r)
-}
-
-impl Stage for DynamicTerm {
-	type ObjectTerm = Obterm;
-	fn stage(self, environment: &Environment) -> Self::ObjectTerm {
-		use DynamicTerm::*;
-		match self {
-			Variable(_, index) => environment.lookup_dynamic(index),
-			Lambda { base, family, body } => Obterm::Function {
-				base: base.stage(environment).into(),
-				body: body.stage(environment).into(),
-				family: family.stage(environment).into(),
-			},
-			Pair { basepoint, fiberpoint } => Obterm::Pair {
-				basepoint: rc!(basepoint.stage(environment)),
-				fiberpoint: rc!(fiberpoint.stage(environment)),
-			},
-			Apply { scrutinee, argument } => Obterm::Apply {
-				scrutinee: rc!(scrutinee.stage(environment)),
-				argument: rc!(argument.stage(environment)),
-			},
-			Project(scrutinee, projection) => Obterm::Project(rc!(scrutinee.stage(environment)), projection),
-			Pi {
-				base_copyability,
-				base_representation,
-				base,
-				family_copyability,
-				family_representation,
-				family,
-			} => Obterm::Pi {
-				base_universe: stage_as_dynamic_universe(*base_copyability, *base_representation, environment),
-				base: rc!(base.stage(environment)),
-				family_universe: stage_as_dynamic_universe(
-					*family_copyability,
-					*family_representation,
-					environment,
-				),
-				family: family.stage(environment),
-			},
-			Sigma {
-				base_copyability,
-				base_representation,
-				base,
-				family_copyability,
-				family_representation,
-				family,
-			} => Obterm::Sigma {
-				base_universe: stage_as_dynamic_universe(*base_copyability, *base_representation, environment),
-				base: rc!(base.stage(environment)),
-				family_universe: stage_as_dynamic_universe(
-					*family_copyability,
-					*family_representation,
-					environment,
-				),
-				family: family.stage(environment),
-			},
-			Let { ty, argument, tail } => Obterm::Let {
-				ty: rc!(ty.stage(environment)),
-				argument: rc!(argument.stage(environment)),
-				tail: tail.stage(environment),
-			},
-			Universe { copyability, representation } => {
-				let Metavalue::Copyability(c) = copyability.stage(environment) else { panic!() };
-				let Metavalue::Repr(r) = representation.stage(environment) else { panic!() };
-				Obterm::Universe(UniverseKind(c, r))
-			}
-			Splice(term) => {
-				let Metavalue::Quote(value) = term.stage(environment) else { panic!() };
-				value.as_ref().clone()
-			}
-			Nat => Obterm::Nat,
-			Num(n) => Obterm::Num(n),
-			Suc(prev) => Obterm::Suc(rc!(prev.stage(environment))),
-			CaseNat { scrutinee, motive, case_nil, case_suc } => Obterm::CaseNat {
-				scrutinee: rc!(scrutinee.stage(environment)),
-				motive: motive.stage(environment),
-				case_nil: rc!(case_nil.stage(environment)),
-				case_suc: case_suc.stage(environment),
-			},
-			Bool => Obterm::Bool,
-			BoolValue(b) => Obterm::BoolValue(b),
-			CaseBool { scrutinee, motive, case_false, case_true } => Obterm::CaseBool {
-				scrutinee: rc!(scrutinee.stage(environment)),
-				motive: motive.stage(environment),
-				case_false: rc!(case_false.stage(environment)),
-				case_true: rc!(case_true.stage(environment)),
-			},
-			WrapType(x) => Obterm::WrapType(rc!(x.stage(environment))),
-			WrapNew(x) => Obterm::WrapNew(rc!(x.stage(environment))),
-			Unwrap(x) => Obterm::Unwrap(rc!(x.stage(environment))),
-			RcType(x) => Obterm::RcType(rc!(x.stage(environment))),
-			RcNew(x) => Obterm::RcNew(rc!(x.stage(environment))),
-			UnRc(x) => Obterm::UnRc(rc!(x.stage(environment))),
-		}
-	}
-}
-
-pub trait StageWith<const N: usize> {
-	type ObjectTerm;
-	/// Transforms a core term under a binder into an object term, taking arguments.
-	fn stage_with(self, environment: &Environment, arguments: [Self::ObjectTerm; N]) -> Self::ObjectTerm;
-}
-
-impl<const N: usize> StageWith<N> for Binder<Box<StaticTerm>, N> {
-	type ObjectTerm = Metavalue;
-	fn stage_with(self, environment: &Environment, terms: [Self::ObjectTerm; N]) -> Self::ObjectTerm {
-		self.body.stage(&environment.extend(terms.map(Value::Static)))
-	}
-}
-
-impl<const N: usize> StageWith<N> for Closure<Environment, StaticTerm, N> {
-	type ObjectTerm = Metavalue;
-	fn stage_with(self, _: &Environment, terms: [Self::ObjectTerm; N]) -> Self::ObjectTerm {
-		self.body.stage(&self.environment.extend(terms.map(Value::Static)))
-	}
-}
-
-pub trait Unstage {
-	type CoreTerm;
-	/// Transforms an object term into a core term.
-	fn unstage(&self, context_len: Level) -> Self::CoreTerm;
-}
-
-impl<const N: usize> Unstage for Binder<Rc<Obterm>, N> {
-	type CoreTerm = Binder<Box<DynamicTerm>, N>;
-	fn unstage(&self, context_len: Level) -> Self::CoreTerm {
-		self.map_ref(|body| bx!(body.unstage(context_len + N)))
-	}
-}
-
-impl Unstage for Repr {
-	type CoreTerm = StaticTerm;
-	fn unstage(&self, level: Level) -> Self::CoreTerm {
-		match self {
-			Repr::Atom(r) => StaticTerm::ReprAtom(Some(*r)),
-			Repr::Pair(r0, r1) => StaticTerm::ReprPair(bx!(r0.unstage(level)), bx!(r1.unstage(level))),
-			Repr::Max(r0, r1) => StaticTerm::ReprMax(bx!(r0.unstage(level)), bx!(r1.unstage(level))),
-		}
-	}
-}
-
-impl Unstage for Obterm {
-	type CoreTerm = DynamicTerm;
-	fn unstage(&self, level @ Level(context_len): Level) -> Self::CoreTerm {
-		use Obterm::*;
-		match self {
-			Variable(name, Level(variable)) => DynamicTerm::Variable(*name, Index(context_len - 1 - variable)),
-			Function { base, family, body } => DynamicTerm::Lambda {
-				base: base.unstage(level).into(),
-				family: family.unstage(level),
-				body: body.unstage(level),
-			},
-			Pair { basepoint, fiberpoint } => DynamicTerm::Pair {
-				basepoint: bx!(basepoint.unstage(level)),
-				fiberpoint: bx!(fiberpoint.unstage(level)),
-			},
-			Apply { scrutinee, argument } => DynamicTerm::Apply {
-				scrutinee: bx!(scrutinee.unstage(level)),
-				argument: bx!(argument.unstage(level)),
-			},
-			Project(scrutinee, projection) => DynamicTerm::Project(bx!(scrutinee.unstage(level)), *projection),
-			Pi { base_universe, base, family_universe, family } => DynamicTerm::Pi {
-				base_copyability: StaticTerm::Copyability(base_universe.0).into(),
-				base_representation: StaticTerm::from(base_universe.1.as_ref()).into(),
-				base: bx!(base.unstage(level)),
-				family: family.unstage(level),
-				family_copyability: StaticTerm::Copyability(base_universe.0).into(),
-				family_representation: StaticTerm::from(family_universe.1.as_ref()).into(),
-			},
-			Sigma { base_universe, base, family_universe, family } => DynamicTerm::Sigma {
-				base_copyability: StaticTerm::Copyability(base_universe.0).into(),
-				base_representation: StaticTerm::from(base_universe.1.as_ref()).into(),
-				base: bx!(base.unstage(level)),
-				family: family.unstage(level),
-				family_copyability: StaticTerm::Copyability(base_universe.0).into(),
-				family_representation: StaticTerm::from(family_universe.1.as_ref()).into(),
-			},
-			Let { ty, argument, tail } => DynamicTerm::Let {
-				ty: bx!(ty.unstage(level)),
-				argument: bx!(argument.unstage(level)),
-				tail: tail.unstage(level),
-			},
-			Universe(UniverseKind(copyability, representation)) => DynamicTerm::Universe {
-				copyability: bx!(StaticTerm::Copyability(*copyability)),
-				representation: bx!(representation
-					.clone()
-					.map(|representation| representation.unstage(level))
-					.unwrap_or(StaticTerm::ReprAtom(None))),
-			},
-			Nat => DynamicTerm::Nat,
-			Num(n) => DynamicTerm::Num(*n),
-			Suc(prev) => DynamicTerm::Suc(bx!(prev.unstage(level))),
-			CaseNat { scrutinee, motive, case_nil, case_suc } => DynamicTerm::CaseNat {
-				scrutinee: bx!(scrutinee.unstage(level)),
-				motive: motive.unstage(level),
-				case_nil: bx!(case_nil.unstage(level)),
-				case_suc: case_suc.unstage(level),
-			},
-			Bool => DynamicTerm::Bool,
-			BoolValue(b) => DynamicTerm::BoolValue(*b),
-			CaseBool { scrutinee, motive, case_false, case_true } => DynamicTerm::CaseBool {
-				scrutinee: bx!(scrutinee.unstage(level)),
-				motive: motive.unstage(level),
-				case_false: bx!(case_false.unstage(level)),
-				case_true: bx!(case_true.unstage(level)),
-			},
-			WrapType(x) => DynamicTerm::WrapType(bx!(x.unstage(level))),
-			WrapNew(x) => DynamicTerm::WrapNew(bx!(x.unstage(level))),
-			Unwrap(x) => DynamicTerm::Unwrap(bx!(x.unstage(level))),
-			RcType(x) => DynamicTerm::RcType(bx!(x.unstage(level))),
-			RcNew(x) => DynamicTerm::RcNew(bx!(x.unstage(level))),
-			UnRc(x) => DynamicTerm::UnRc(bx!(x.unstage(level))),
-		}
+		let mut is_occurrent = vec![false; level];
+		mark_occurrents(self, &mut is_occurrent);
+		is_occurrent
 	}
 }

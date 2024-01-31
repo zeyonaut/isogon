@@ -4,7 +4,7 @@ use lasso::Rodeo;
 
 use super::{
 	common::{Copyability, Projection, ReprAtom},
-	elaborator::{DynamicTerm, StaticTerm},
+	ir::syntax::{DynamicTerm, StaticTerm},
 };
 
 fn write_static_spine(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {

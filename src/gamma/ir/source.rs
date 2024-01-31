@@ -1,6 +1,6 @@
 use std::str::Chars;
 
-use super::common::Projection;
+use crate::gamma::common::Projection;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Token {

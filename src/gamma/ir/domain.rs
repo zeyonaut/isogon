@@ -1,10 +1,13 @@
 use std::rc::Rc;
 
-use super::{
-	common::{bind, Binder, Closure, Copyability, Index, Level, Name, Projection, Repr, ReprAtom},
-	elaborator::{DynamicTerm, StaticTerm},
+use super::syntax::{DynamicTerm, StaticTerm};
+use crate::{
+	gamma::{
+		common::{Closure, Copyability, Index, Level, Name, Projection, Repr, ReprAtom},
+		transform::evaluate::EvaluateWith,
+	},
+	utility::rc,
 };
-use crate::utility::{bx, rc};
 
 #[derive(Clone, Debug)]
 pub enum StaticNeutral {
@@ -184,12 +187,6 @@ impl From<(Name, Level)> for DynamicValue {
 	}
 }
 
-impl DynamicValue {
-	pub fn reify_closed(&self) -> DynamicTerm {
-		self.reify(Level(0))
-	}
-}
-
 #[derive(Clone, Debug)]
 pub enum Value {
 	Static(StaticValue),
@@ -219,290 +216,6 @@ impl Environment {
 
 	pub fn push(&mut self, value: Value) {
 		self.0.push(value);
-	}
-}
-
-pub trait Evaluate {
-	type Value;
-	/// Transforms a core term into a value.
-	fn evaluate(self, environment: &Environment) -> Self::Value;
-}
-
-impl<T, const N: usize> Evaluate for Binder<Box<T>, N> {
-	type Value = Closure<Environment, T, N>;
-	fn evaluate(self, environment: &Environment) -> Self::Value {
-		Closure::new(environment.clone(), self.parameters, *self.body)
-	}
-}
-
-impl Evaluate for StaticTerm {
-	type Value = StaticValue;
-	fn evaluate(self, environment: &Environment) -> Self::Value {
-		use StaticTerm::*;
-		match self {
-			Variable(_, index) => environment.lookup_static(index),
-			CopyabilityType => StaticValue::CopyabilityType,
-			Copyability(c) => StaticValue::Copyability(c),
-			MaxCopyability(a, b) => {
-				let a = a.evaluate(environment);
-				let b = b.evaluate(environment);
-				StaticValue::max_copyability(a, b)
-			}
-			ReprType => StaticValue::ReprType,
-			ReprAtom(r) => r.map(StaticValue::ReprAtom).unwrap_or(StaticValue::ReprNone),
-			ReprPair(r0, r1) => {
-				let r0 = r0.evaluate(environment);
-				let r1 = r1.evaluate(environment);
-				StaticValue::pair_representation(r0, r1)
-			}
-			ReprMax(r0, r1) => {
-				let r0 = r0.evaluate(environment);
-				let r1 = r1.evaluate(environment);
-				StaticValue::max_representation(r0, r1)
-			}
-			ReprUniv(c) => {
-				let c = c.evaluate(environment);
-				StaticValue::univ_representation(c)
-			}
-			Pi(base, family) =>
-				StaticValue::IndexedProduct(rc!(base.evaluate(environment)), rc!(family.evaluate(environment))),
-			Lambda(function) => StaticValue::Function(rc!(function.evaluate(environment))),
-			Apply { scrutinee, argument } => match scrutinee.evaluate(environment) {
-				StaticValue::Function(function) => function.evaluate_with([argument.evaluate(environment)]),
-				StaticValue::Neutral(neutral) =>
-					StaticValue::Neutral(StaticNeutral::Apply(rc!(neutral), rc!(argument.evaluate(environment)))),
-				_ => panic!(),
-			},
-			Sigma(base, family) =>
-				StaticValue::IndexedSum(rc!(base.evaluate(environment)), rc!(family.evaluate(environment))),
-			Pair { basepoint, fiberpoint } =>
-				StaticValue::Pair(rc!(basepoint.evaluate(environment)), rc!(fiberpoint.evaluate(environment))),
-			Project(scrutinee, projection) => match scrutinee.evaluate(environment) {
-				StaticValue::Pair(basepoint, fiberpoint) => match projection {
-					Projection::Base => basepoint.as_ref().clone(),
-					Projection::Fiber => fiberpoint.as_ref().clone(),
-				},
-				StaticValue::Neutral(neutral) =>
-					StaticValue::Neutral(StaticNeutral::Project(rc!(neutral), projection)),
-				_ => panic!(),
-			},
-			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate(environment)]),
-			Universe => StaticValue::Universe,
-			Lift(liftee) => StaticValue::Lift(liftee.evaluate(environment)),
-			Quote(quotee) => StaticValue::Quote(quotee.evaluate(environment)),
-			Nat => StaticValue::Nat,
-			Num(n) => StaticValue::Num(n),
-			Suc(prev) => match prev.evaluate(environment) {
-				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::Suc(rc!(neutral))),
-				StaticValue::Num(n) => StaticValue::Num(n + 1),
-				_ => panic!(),
-			},
-			CaseNat { scrutinee, motive, case_nil, case_suc } => match scrutinee.evaluate(environment) {
-				StaticValue::Num(n) => (0..n).fold(case_nil.evaluate(environment), |previous, i| {
-					case_suc.evaluate_at(environment, [StaticValue::Num(i), previous])
-				}),
-				StaticValue::Neutral(neutral) => {
-					let mut neutrals = vec![&neutral];
-					while let StaticNeutral::Suc(previous) = neutrals.last().unwrap() {
-						neutrals.push(&previous);
-					}
-					let result = StaticValue::Neutral(StaticNeutral::CaseNat {
-						scrutinee: rc!(neutrals.pop().unwrap().clone()),
-						motive: rc!(motive.evaluate(environment)),
-						case_nil: rc!(case_nil.evaluate(environment)),
-						case_suc: rc!(case_suc.clone().evaluate(environment)),
-					});
-					neutrals
-						.into_iter()
-						.rev()
-						.cloned()
-						.map(StaticValue::Neutral)
-						.fold(result, |previous, number| case_suc.evaluate_at(environment, [number, previous]))
-				}
-				_ => panic!(),
-			},
-			Bool => StaticValue::Bool,
-			BoolValue(b) => StaticValue::BoolValue(b),
-			CaseBool { scrutinee, motive, case_false, case_true } => match scrutinee.evaluate(environment) {
-				StaticValue::BoolValue(b) => if b { case_true } else { case_false }.evaluate(environment),
-				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::CaseBool {
-					scrutinee: rc!(neutral),
-					motive: rc!(motive.evaluate(environment)),
-					case_false: rc!(case_false.evaluate(environment)),
-					case_true: rc!(case_true.evaluate(environment)),
-				}),
-				_ => panic!(),
-			},
-		}
-	}
-}
-
-impl Evaluate for DynamicTerm {
-	type Value = DynamicValue;
-	fn evaluate(self, environment: &Environment) -> Self::Value {
-		use DynamicTerm::*;
-		match self {
-			Variable(_, index) => environment.lookup_dynamic(index),
-			Lambda { base, family, body } => DynamicValue::Function {
-				base: base.evaluate(environment).into(),
-				family: family.evaluate(environment).into(),
-				body: body.evaluate(environment).into(),
-			},
-			Pair { basepoint, fiberpoint } =>
-				DynamicValue::Pair(rc!(basepoint.evaluate(environment)), rc!(fiberpoint.evaluate(environment))),
-			Apply { scrutinee, argument } => match scrutinee.evaluate(environment) {
-				DynamicValue::Function { body, .. } => body.evaluate_with([argument.evaluate(environment)]),
-				DynamicValue::Neutral(neutral) =>
-					DynamicValue::Neutral(DynamicNeutral::Apply(rc!(neutral), rc!(argument.evaluate(environment)))),
-				_ => panic!(),
-			},
-			Project(scrutinee, projection) => match scrutinee.evaluate(environment) {
-				DynamicValue::Pair(basepoint, fiberpoint) => match projection {
-					Projection::Base => basepoint.as_ref().clone(),
-					Projection::Fiber => fiberpoint.as_ref().clone(),
-				},
-				DynamicValue::Neutral(neutral) =>
-					DynamicValue::Neutral(DynamicNeutral::Project(rc!(neutral), projection)),
-				_ => panic!(),
-			},
-			Pi {
-				base_copyability,
-				base_representation,
-				base,
-				family_copyability,
-				family_representation,
-				family,
-			} => DynamicValue::IndexedProduct {
-				base_copyability: base_copyability.evaluate(environment).into(),
-				base_representation: base_representation.evaluate(environment).into(),
-				base: base.evaluate(environment).into(),
-				family_copyability: family_copyability.evaluate(environment).into(),
-				family_representation: family_representation.evaluate(environment).into(),
-				family: family.evaluate(environment).into(),
-			},
-			Sigma {
-				base_copyability,
-				base_representation,
-				base,
-				family_copyability,
-				family_representation,
-				family,
-			} => DynamicValue::IndexedSum {
-				base_copyability: base_copyability.evaluate(environment).into(),
-				base_representation: base_representation.evaluate(environment).into(),
-				base: base.evaluate(environment).into(),
-				family_copyability: family_copyability.evaluate(environment).into(),
-				family_representation: family_representation.evaluate(environment).into(),
-				family: family.evaluate(environment).into(),
-			},
-			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate(environment)]),
-			Universe { copyability, representation } => DynamicValue::Universe {
-				copyability: rc!(copyability.evaluate(environment)),
-				representation: rc!(representation.evaluate(environment)),
-			},
-			Splice(splicee) => match splicee.evaluate(environment) {
-				StaticValue::Quote(quotee) => quotee,
-				StaticValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Splice(neutral)),
-				_ => panic!(),
-			},
-			Nat => DynamicValue::Nat,
-			Num(n) => DynamicValue::Num(n),
-			Suc(prev) => match prev.evaluate(environment) {
-				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Suc(rc!(neutral))),
-				DynamicValue::Num(n) => DynamicValue::Num(n + 1),
-				_ => panic!(),
-			},
-			CaseNat { scrutinee, motive, case_nil, case_suc } => match scrutinee.evaluate(environment) {
-				DynamicValue::Num(n) => (0..n).fold(case_nil.evaluate(environment), |previous, i| {
-					case_suc.evaluate_at(environment, [DynamicValue::Num(i), previous])
-				}),
-				DynamicValue::Neutral(neutral) => {
-					let mut neutrals = vec![&neutral];
-					while let DynamicNeutral::Suc(previous) = neutrals.last().unwrap() {
-						neutrals.push(&previous);
-					}
-					let result = DynamicValue::Neutral(DynamicNeutral::CaseNat {
-						scrutinee: rc!(neutrals.pop().unwrap().clone()),
-						motive: rc!(motive.evaluate(environment)),
-						case_nil: rc!(case_nil.evaluate(environment)),
-						case_suc: rc!(case_suc.clone().evaluate(environment)),
-					});
-					neutrals
-						.into_iter()
-						.rev()
-						.cloned()
-						.map(DynamicValue::Neutral)
-						.fold(result, |previous, number| case_suc.evaluate_at(environment, [number, previous]))
-				}
-				_ => panic!(),
-			},
-			Bool => DynamicValue::Bool,
-			BoolValue(b) => DynamicValue::BoolValue(b),
-			CaseBool { scrutinee, motive, case_false, case_true } => match scrutinee.evaluate(environment) {
-				DynamicValue::BoolValue(b) => if b { case_true } else { case_false }.evaluate(environment),
-				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::CaseBool {
-					scrutinee: rc!(neutral),
-					motive: rc!(motive.evaluate(environment)),
-					case_false: rc!(case_false.evaluate(environment)),
-					case_true: rc!(case_true.evaluate(environment)),
-				}),
-				_ => panic!(),
-			},
-			WrapType(ty) => DynamicValue::WrapType(rc!(ty.evaluate(environment))),
-			WrapNew(tm) => DynamicValue::WrapNew(rc!(tm.evaluate(environment))),
-			Unwrap(tm) => match tm.evaluate(environment) {
-				DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::Unwrap(rc!(n))),
-				DynamicValue::WrapNew(v) => v.as_ref().clone(),
-				_ => panic!(),
-			},
-			RcType(ty) => DynamicValue::RcType(rc!(ty.evaluate(environment))),
-			RcNew(tm) => DynamicValue::RcNew(rc!(tm.evaluate(environment))),
-			UnRc(tm) => match tm.evaluate(environment) {
-				DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::UnRc(rc!(n))),
-				DynamicValue::RcNew(v) => v.as_ref().clone(),
-				_ => panic!(),
-			},
-		}
-	}
-}
-
-pub trait EvaluateWith<const N: usize> {
-	type Value;
-	/// Transforms a core closure under a binder into a value, taking arguments.
-	fn evaluate_with(self, arguments: [Self::Value; N]) -> Self::Value;
-}
-
-impl<const N: usize> EvaluateWith<N> for &Closure<Environment, StaticTerm, N> {
-	type Value = StaticValue;
-	fn evaluate_with(self, arguments: [Self::Value; N]) -> Self::Value {
-		self.body.clone().evaluate(&self.environment.extend(arguments.map(Value::Static)))
-	}
-}
-
-impl<const N: usize> EvaluateWith<N> for &Closure<Environment, DynamicTerm, N> {
-	type Value = DynamicValue;
-	fn evaluate_with(self, arguments: [Self::Value; N]) -> Self::Value {
-		self.body.clone().evaluate(&self.environment.extend(arguments.map(Value::Dynamic)))
-	}
-}
-
-pub trait EvaluateAt<const N: usize> {
-	type Value;
-	/// Transforms a core term under a binder into a value, taking arguments.
-	fn evaluate_at(self, environment: &Environment, arguments: [Self::Value; N]) -> Self::Value;
-}
-
-impl<const N: usize> EvaluateAt<N> for &Binder<Box<StaticTerm>, N> {
-	type Value = StaticValue;
-	fn evaluate_at(self, environment: &Environment, arguments: [Self::Value; N]) -> Self::Value {
-		self.body.clone().evaluate(&environment.extend(arguments.map(Value::Static)))
-	}
-}
-
-impl<const N: usize> EvaluateAt<N> for &Binder<Box<DynamicTerm>, N> {
-	type Value = DynamicValue;
-	fn evaluate_at(self, environment: &Environment, arguments: [Self::Value; N]) -> Self::Value {
-		self.body.clone().evaluate(&environment.extend(arguments.map(Value::Dynamic)))
 	}
 }
 
@@ -536,171 +249,168 @@ impl<const N: usize> Autolyze for Closure<Environment, DynamicTerm, N> {
 	}
 }
 
-pub trait Reify {
-	type Term;
-	/// Transforms a value into a core term.
-	fn reify(&self, level: Level) -> Self::Term;
+pub trait Conversion<T> {
+	/// Decides whether two values are judgementally equal.
+	fn can_convert(self, left: &T, right: &T) -> bool;
 }
 
-impl<const N: usize> Reify for Closure<Environment, StaticTerm, N> {
-	type Term = Binder<Box<StaticTerm>, N>;
-	fn reify(&self, level: Level) -> Self::Term {
-		bind(self.parameters, bx!(self.autolyze(level).reify(level + N)))
-	}
-}
-
-impl<const N: usize> Reify for Closure<Environment, DynamicTerm, N> {
-	type Term = Binder<Box<DynamicTerm>, N>;
-	fn reify(&self, level: Level) -> Self::Term {
-		bind(self.parameters, bx!(self.autolyze(level).reify(level + N)))
-	}
-}
-
-impl Reify for StaticNeutral {
-	type Term = StaticTerm;
-	fn reify(&self, level @ Level(context_length): Level) -> Self::Term {
-		use StaticNeutral::*;
-		match self {
-			Variable(name, Level(level)) => StaticTerm::Variable(*name, Index(context_length - 1 - level)),
-			MaxCopyability(a, b) => StaticTerm::MaxCopyability(bx!(a.reify(level)), bx!(b.reify(level))),
-			ReprUniv(c) => StaticTerm::ReprUniv(bx!(c.reify(level))),
-			Apply(callee, argument) =>
-				StaticTerm::Apply { scrutinee: bx!(callee.reify(level)), argument: bx!(argument.reify(level)) },
-			Project(scrutinee, projection) => StaticTerm::Project(bx!(scrutinee.reify(level)), *projection),
-			Suc(prev) => StaticTerm::Suc(bx!(prev.reify(level))),
-			CaseNat { scrutinee, motive, case_nil, case_suc } => StaticTerm::CaseNat {
-				scrutinee: bx!(scrutinee.reify(level)),
-				motive: motive.reify(level),
-				case_nil: bx!(case_nil.reify(level)),
-				case_suc: case_suc.reify(level),
-			},
-			CaseBool { scrutinee, motive, case_false, case_true } => StaticTerm::CaseBool {
-				scrutinee: bx!(scrutinee.reify(level)),
-				motive: motive.reify(level),
-				case_false: bx!(case_false.reify(level)),
-				case_true: bx!(case_true.reify(level)),
-			},
-		}
-	}
-}
-
-impl Reify for StaticValue {
-	type Term = StaticTerm;
-	fn reify(&self, level: Level) -> Self::Term {
+impl Conversion<StaticValue> for Level {
+	fn can_convert(self, left: &StaticValue, right: &StaticValue) -> bool {
 		use StaticValue::*;
-		match self {
-			Neutral(neutral) => neutral.reify(level),
-			Universe => StaticTerm::Universe,
-			IndexedProduct(base, family) => StaticTerm::Pi(bx!(base.reify(level)), family.reify(level)),
-			Function(function) => StaticTerm::Lambda(function.reify(level)),
-			IndexedSum(base, family) => StaticTerm::Sigma(bx!(base.reify(level)), family.reify(level)),
-			Pair(basepoint, fiberpoint) => StaticTerm::Pair {
-				basepoint: bx!(basepoint.reify(level)),
-				fiberpoint: bx!(fiberpoint.reify(level)),
-			},
-			Lift(liftee) => StaticTerm::Lift(bx!(liftee.reify(level))),
-			Quote(quotee) => StaticTerm::Quote(bx!(quotee.reify(level))),
-			Nat => StaticTerm::Nat,
-			Num(n) => StaticTerm::Num(*n),
-			Bool => StaticTerm::Bool,
-			BoolValue(b) => StaticTerm::BoolValue(*b),
-			CopyabilityType => StaticTerm::CopyabilityType,
-			Copyability(c) => StaticTerm::Copyability(*c),
-			ReprType => StaticTerm::ReprType,
-			ReprNone => StaticTerm::ReprAtom(None),
-			ReprAtom(r) => StaticTerm::ReprAtom(Some(*r)),
-			ReprPair(r0, r1) => StaticTerm::ReprPair(bx!(r0.reify(level)), bx!(r1.reify(level))),
-			ReprMax(r0, r1) => StaticTerm::ReprMax(bx!(r0.reify(level)), bx!(r1.reify(level))),
+		match (left, right) {
+			(Universe, Universe)
+			| (Nat, Nat)
+			| (Bool, Bool)
+			| (CopyabilityType, CopyabilityType)
+			| (ReprType, ReprType)
+			| (ReprNone, ReprNone) => true,
+			(ReprAtom(left), ReprAtom(right)) => left == right,
+			(ReprPair(left0, left1), ReprPair(right0, right1)) =>
+				self.can_convert(&**left0, right0) && self.can_convert(&**left1, right1),
+			(ReprMax(left0, left1), ReprMax(right0, right1)) =>
+				self.can_convert(&**left0, right0) && self.can_convert(&**left1, right1),
+			(Lift(left), Lift(right)) | (Quote(left), Quote(right)) => self.can_convert(left, right),
+			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
+			(Function(left), Function(right)) =>
+				(self + 1).can_convert(&left.autolyze(self), &right.autolyze(self)),
+			(Neutral(left), Function(right)) => (self + 1).can_convert(
+				&Neutral(StaticNeutral::Apply(rc!(left.clone()), rc!((right.parameter(), self).into()))),
+				&right.autolyze(self),
+			),
+			(Function(left), Neutral(right)) => (self + 1).can_convert(
+				&left.autolyze(self),
+				&Neutral(StaticNeutral::Apply(rc!(right.clone()), rc!((left.parameter(), self).into()))),
+			),
+			(Pair(left_bp, left_fp), Pair(right_bp, right_fp)) =>
+				self.can_convert(&**left_bp, &right_bp) && self.can_convert(&**left_fp, &right_fp),
+			(IndexedProduct(left_base, left_family), IndexedProduct(right_base, right_family))
+			| (IndexedSum(left_base, left_family), IndexedSum(right_base, right_family)) =>
+				self.can_convert(&**left_base, right_base)
+					&& (self + 1).can_convert(&left_family.autolyze(self), &right_family.autolyze(self)),
+			(Num(left), Num(right)) => left == right,
+			(BoolValue(left), BoolValue(right)) => left == right,
+			(Copyability(left), Copyability(right)) => left == right,
+			_ => false,
 		}
 	}
 }
 
-impl Reify for DynamicNeutral {
-	type Term = DynamicTerm;
-	fn reify(&self, level @ Level(context_length): Level) -> Self::Term {
+impl Conversion<StaticNeutral> for Level {
+	fn can_convert(self, left: &StaticNeutral, right: &StaticNeutral) -> bool {
+		use StaticNeutral::*;
+		match (left, right) {
+			(Variable(_, left), Variable(_, right)) => left == right,
+			(MaxCopyability(a_left, b_left), MaxCopyability(a_right, b_right)) =>
+				self.can_convert(&**a_left, a_right) && self.can_convert(&**b_left, b_right),
+			(ReprUniv(left), ReprUniv(right)) => self.can_convert(&**left, right),
+			(Apply(left, left_argument), Apply(right, right_argument)) =>
+				self.can_convert(&**left, &right) && self.can_convert(&**left_argument, &right_argument),
+			(Project(left, left_projection), Project(right, right_projection)) =>
+				left_projection == right_projection && self.can_convert(&**left, right),
+			(
+				CaseNat { scrutinee: l_scrutinee, motive: l_motive, case_nil: l_case_nil, case_suc: l_case_suc },
+				CaseNat { scrutinee: r_scrutinee, motive: r_motive, case_nil: r_case_nil, case_suc: r_case_suc },
+			) =>
+				self.can_convert(&**l_scrutinee, r_scrutinee)
+					&& (self + 1).can_convert(&l_motive.autolyze(self), &r_motive.autolyze(self))
+					&& self.can_convert(&**l_case_nil, r_case_nil)
+					&& (self + 2).can_convert(&l_case_suc.autolyze(self), &r_case_suc.autolyze(self)),
+			(
+				CaseBool { scrutinee: l_scrutinee, motive: l_motive, case_false: l_case_f, case_true: l_case_t },
+				CaseBool { scrutinee: r_scrutinee, motive: r_motive, case_false: r_case_f, case_true: r_case_t },
+			) =>
+				self.can_convert(&**l_scrutinee, r_scrutinee)
+					&& (self + 1).can_convert(&l_motive.autolyze(self), &r_motive.autolyze(self))
+					&& self.can_convert(&**l_case_f, r_case_f)
+					&& self.can_convert(&**l_case_t, r_case_t),
+			_ => false,
+		}
+	}
+}
+
+impl Conversion<DynamicValue> for Level {
+	fn can_convert(self, left: &DynamicValue, right: &DynamicValue) -> bool {
 		use DynamicNeutral::*;
-		match self {
-			Variable(name, Level(level)) => DynamicTerm::Variable(*name, Index(context_length - 1 - level)),
-			Splice(splicee) => DynamicTerm::Splice(bx!(splicee.reify(level))),
-			Apply(callee, argument) =>
-				DynamicTerm::Apply { scrutinee: bx!(callee.reify(level)), argument: bx!(argument.reify(level)) },
-			Project(scrutinee, projection) => DynamicTerm::Project(bx!(scrutinee.reify(level)), *projection),
-			Suc(prev) => DynamicTerm::Suc(bx!(prev.reify(level))),
-			CaseNat { scrutinee, motive, case_nil, case_suc } => DynamicTerm::CaseNat {
-				scrutinee: bx!(scrutinee.reify(level)),
-				motive: motive.reify(level),
-				case_nil: bx!(case_nil.reify(level)),
-				case_suc: case_suc.reify(level),
-			},
-			CaseBool { scrutinee, motive, case_false, case_true } => DynamicTerm::CaseBool {
-				scrutinee: bx!(scrutinee.reify(level)),
-				motive: motive.reify(level),
-				case_false: bx!(case_false.reify(level)),
-				case_true: bx!(case_true.reify(level)),
-			},
-			Unwrap(v) => DynamicTerm::Unwrap(bx!(v.reify(level))),
-			UnRc(v) => DynamicTerm::UnRc(bx!(v.reify(level))),
+		use DynamicValue::*;
+		use Projection::*;
+		match (left, right) {
+			(
+				Universe { copyability: left_copyability, representation: left_representation },
+				Universe { copyability: right_copyability, representation: right_representation },
+			) =>
+				self.can_convert(&**left_copyability, right_copyability)
+					&& self.can_convert(&**left_representation, right_representation),
+			(WrapType(left), WrapType(right)) => self.can_convert(&**left, right),
+			(WrapNew(left), WrapNew(right)) => self.can_convert(&**left, right),
+			(RcType(left), RcType(right)) => self.can_convert(&**left, right),
+			(RcNew(left), RcNew(right)) => self.can_convert(&**left, right),
+			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
+			(Function { body: left, .. }, Function { body: right, .. }) =>
+				(self + 1).can_convert(&left.autolyze(self), &right.autolyze(self)),
+			(Neutral(left), Function { body: right, .. }) => (self + 1).can_convert(
+				&Neutral(Apply(rc!(left.clone()), rc!((right.parameter(), self).into()))),
+				&right.autolyze(self),
+			),
+			(Function { body: left, .. }, Neutral(right)) => (self + 1).can_convert(
+				&left.autolyze(self),
+				&Neutral(Apply(rc!(right.clone()), rc!((left.parameter(), self).into()))),
+			),
+			(Pair(left_bp, left_fp), Pair(right_bp, right_fp)) =>
+				self.can_convert(&**left_bp, &right_bp) && self.can_convert(&**left_fp, &right_fp),
+			(Neutral(left), Pair(right_bp, right_fp)) =>
+				self.can_convert(&Neutral(Project(rc!(left.clone()), Base)), &right_bp)
+					&& self.can_convert(&Neutral(Project(rc!(left.clone()), Fiber)), &right_fp),
+			(Pair(left_bp, left_fp), Neutral(right)) =>
+				self.can_convert(&**left_bp, &Neutral(Project(rc!(right.clone()), Base)))
+					&& self.can_convert(&**left_fp, &Neutral(Project(rc!(right.clone()), Fiber))),
+			// NOTE: Annotation conversion not implemented, as it's unclear if it gives any useful advantages.
+			(
+				IndexedProduct { base: left_base, family: left_family, .. },
+				IndexedProduct { base: right_base, family: right_family, .. },
+			)
+			| (
+				IndexedSum { base: left_base, family: left_family, .. },
+				IndexedSum { base: right_base, family: right_family, .. },
+			) =>
+				self.can_convert(&**left_base, &right_base)
+					&& (self + 1).can_convert(&left_family.autolyze(self), &right_family.autolyze(self)),
+			(Nat, Nat) | (Bool, Bool) => true,
+			(Num(left), Num(right)) => left == right,
+			(BoolValue(left), BoolValue(right)) => left == right,
+			_ => false,
 		}
 	}
 }
 
-impl Reify for DynamicValue {
-	type Term = DynamicTerm;
-	fn reify(&self, level: Level) -> Self::Term {
-		use DynamicValue::*;
-		match self {
-			Neutral(neutral) => neutral.reify(level),
-			Universe { copyability, representation } => DynamicTerm::Universe {
-				copyability: bx!(copyability.reify(level)),
-				representation: bx!(representation.reify(level)),
-			},
-			IndexedProduct {
-				base_copyability,
-				base_representation,
-				base,
-				family_copyability: _,
-				family_representation: _,
-				family,
-			} => DynamicTerm::Pi {
-				base_copyability: base_copyability.reify(level).into(),
-				base_representation: base_representation.reify(level).into(),
-				base: base.reify(level).into(),
-				family_copyability: base_copyability.reify(level).into(),
-				family_representation: base_representation.reify(level).into(),
-				family: family.reify(level),
-			},
-			Function { base, family, body } => DynamicTerm::Lambda {
-				base: base.reify(level).into(),
-				family: family.reify(level).into(),
-				body: body.reify(level).into(),
-			},
-			IndexedSum {
-				base_copyability,
-				base_representation,
-				base,
-				family_copyability: _,
-				family_representation: _,
-				family,
-			} => DynamicTerm::Sigma {
-				base_copyability: base_copyability.reify(level).into(),
-				base_representation: base_representation.reify(level).into(),
-				base: base.reify(level).into(),
-				family_copyability: base_copyability.reify(level).into(),
-				family_representation: base_representation.reify(level).into(),
-				family: family.reify(level),
-			},
-			Pair(basepoint, fiberpoint) => DynamicTerm::Pair {
-				basepoint: bx!(basepoint.reify(level)),
-				fiberpoint: bx!(fiberpoint.reify(level)),
-			},
-			Nat => DynamicTerm::Nat,
-			Num(n) => DynamicTerm::Num(*n),
-			Bool => DynamicTerm::Bool,
-			BoolValue(b) => DynamicTerm::BoolValue(*b),
-			WrapType(x) => DynamicTerm::WrapType(bx!(x.reify(level))),
-			WrapNew(x) => DynamicTerm::WrapNew(bx!(x.reify(level))),
-			RcType(x) => DynamicTerm::RcType(bx!(x.reify(level))),
-			RcNew(x) => DynamicTerm::RcNew(bx!(x.reify(level))),
+impl Conversion<DynamicNeutral> for Level {
+	fn can_convert(self, left: &DynamicNeutral, right: &DynamicNeutral) -> bool {
+		use DynamicNeutral::*;
+		match (left, right) {
+			(Variable(_, left), Variable(_, right)) => left == right,
+			(Apply(left, left_argument), Apply(right, right_argument)) =>
+				self.can_convert(&**left, right) && self.can_convert(&**left_argument, right_argument),
+			(Project(left, left_projection), Project(right, right_projection)) =>
+				left_projection == right_projection && self.can_convert(&**left, right),
+			(Unwrap(left), Unwrap(right)) | (UnRc(left), UnRc(right)) | (Suc(left), Suc(right)) =>
+				self.can_convert(&**left, right),
+			(Splice(left), Splice(right)) => self.can_convert(left, right),
+			(
+				CaseNat { scrutinee: l_scrutinee, motive: l_motive, case_nil: l_case_nil, case_suc: l_case_suc },
+				CaseNat { scrutinee: r_scrutinee, motive: r_motive, case_nil: r_case_nil, case_suc: r_case_suc },
+			) =>
+				self.can_convert(&**l_scrutinee, r_scrutinee)
+					&& (self + 1).can_convert(&l_motive.autolyze(self), &r_motive.autolyze(self))
+					&& self.can_convert(&**l_case_nil, r_case_nil)
+					&& (self + 2).can_convert(&l_case_suc.autolyze(self), &r_case_suc.autolyze(self)),
+			(
+				CaseBool { scrutinee: l_scrutinee, motive: l_motive, case_false: l_case_f, case_true: l_case_t },
+				CaseBool { scrutinee: r_scrutinee, motive: r_motive, case_false: r_case_f, case_true: r_case_t },
+			) =>
+				self.can_convert(&**l_scrutinee, r_scrutinee)
+					&& (self + 1).can_convert(&l_motive.autolyze(self), &r_motive.autolyze(self))
+					&& self.can_convert(&**l_case_f, r_case_f)
+					&& self.can_convert(&**l_case_t, r_case_t),
+			_ => false,
 		}
 	}
 }
