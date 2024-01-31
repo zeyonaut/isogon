@@ -3,24 +3,25 @@ use std::{collections::HashMap, rc::Rc};
 use crate::gamma::{
 	common::{Binder, Level, Name},
 	ir::{
-		closed::{ClosedValue, Function, Procedure, Program, Substitute, Variable},
-		object::Obterm,
+		closed::{Function, Procedure, Program, Substitute, Term, Variable},
+		object as ob,
 	},
 };
 
-#[derive(Debug)]
-struct DynamicContextEntry {
-	name: Name,
-	ty: Obterm,
-	dependees: Vec<bool>,
-}
-
-pub fn close(value: Obterm) -> Program {
+/// Performs closure-conversion on an object term, hoisting all functions to top level.
+pub fn close(value: ob::Term) -> Program {
 	let mut closer = Closer { context: vec![], procedures: vec![] };
 
 	let entry = closer.close(value, &mut vec![]);
 
 	Program { entry, procedures: closer.procedures }
+}
+
+#[derive(Debug)]
+struct DynamicContextEntry {
+	name: Name,
+	ty: ob::Term,
+	dependees: Vec<bool>,
 }
 
 struct Closer {
@@ -29,42 +30,81 @@ struct Closer {
 }
 
 impl Closer {
-	fn occurrents_to_dependees(&self, mut occurrents: Vec<bool>) -> Vec<bool> {
-		for occurrent_index in
-			occurrents.clone().into_iter().enumerate().filter_map(|(i, is_occurrent)| is_occurrent.then_some(i))
-		{
-			for (outer, inner) in occurrents.iter_mut().zip(self.context[occurrent_index].dependees.iter()) {
-				*outer |= *inner;
+	fn close(&mut self, value: ob::Term, is_occurrent: &mut Vec<bool>) -> Term {
+		match value {
+			// Variables.
+			ob::Term::Variable(_, l) => {
+				is_occurrent.get_mut(l.0).map(|has_encountered_l| *has_encountered_l = true);
+				Term::Variable(Variable::Local(l))
 			}
-		}
-		occurrents
-	}
 
-	fn close_with<const N: usize>(
-		&mut self,
-		binder: Binder<Rc<Obterm>, N>,
-		tys: [Obterm; N],
-		is_occurrent: &mut Vec<bool>,
-	) -> Binder<Box<ClosedValue>, N> {
-		let level = self.context.len();
-		for (name, ty) in binder.parameters.into_iter().zip(tys) {
-			// Compute ty's dependees (occurrents and occurrents of dependees).
-			let occurrents = ty.occurences(Level(self.context.len()));
-			self.context.push(DynamicContextEntry {
-				name,
-				ty,
-				dependees: self.occurrents_to_dependees(occurrents),
-			});
+			// Procedures.
+			ob::Term::Function { base, family: _, body } =>
+				Term::Function(self.close_function((*base).clone(), body, is_occurrent)),
+
+			// Binding cases.
+			ob::Term::Let { ty, argument, tail } => Term::Let {
+				ty: self.close((*ty).clone(), is_occurrent).into(),
+				argument: self.close((*argument).clone(), is_occurrent).into(),
+				tail: self.close_with(tail, [(*ty).clone()], is_occurrent),
+			},
+			ob::Term::Pi { base_universe: _, base, family_universe: _, family } => Term::Pi(
+				self.close((*base).clone(), is_occurrent).into(),
+				self.close_function((*base).clone(), family, is_occurrent),
+			),
+			ob::Term::Sigma { base_universe: _, base, family_universe: _, family } => Term::Sigma(
+				self.close((*base).clone(), is_occurrent).into(),
+				self.close_function((*base).clone(), family, is_occurrent),
+			),
+			ob::Term::CaseNat { scrutinee, motive, case_nil, case_suc } => {
+				Term::CaseNat {
+					scrutinee: self.close((*scrutinee).clone(), is_occurrent).into(),
+					case_nil: self.close((*case_nil).clone(), is_occurrent).into(),
+					// NOTE: This is an abuse of the binder system, but it seems like it should work.
+					case_suc: self.close_with(case_suc, [ob::Term::Nat, (*motive.body).clone()], is_occurrent),
+					motive: self.close_with(motive, [ob::Term::Nat], is_occurrent),
+				}
+			}
+			ob::Term::CaseBool { scrutinee, motive, case_false, case_true } => Term::CaseBool {
+				scrutinee: self.close((*scrutinee).clone(), is_occurrent).into(),
+				motive: self.close_with(motive.clone(), [ob::Term::Nat], is_occurrent),
+				case_false: self.close((*case_false).clone(), is_occurrent).into(),
+				case_true: self.close((*case_true).clone(), is_occurrent).into(),
+			},
+
+			// 0-recursive cases.
+			ob::Term::Nat => Term::Nat,
+			ob::Term::Bool => Term::Bool,
+			ob::Term::Universe(k) => Term::Universe(k),
+			ob::Term::Num(n) => Term::Num(n),
+			ob::Term::BoolValue(b) => Term::BoolValue(b),
+
+			// 1-recursive cases.
+			ob::Term::Project(t, p) => Term::Project(self.close((*t).clone(), is_occurrent).into(), p),
+			ob::Term::Suc(t) => Term::Suc(self.close((*t).clone(), is_occurrent).into()),
+			ob::Term::WrapType(t) => Term::WrapType(self.close((*t).clone(), is_occurrent).into()),
+			ob::Term::WrapNew(t) => Term::WrapNew(self.close((*t).clone(), is_occurrent).into()),
+			ob::Term::Unwrap(t) => Term::Unwrap(self.close((*t).clone(), is_occurrent).into()),
+			ob::Term::RcType(t) => Term::RcType(self.close((*t).clone(), is_occurrent).into()),
+			ob::Term::RcNew(t) => Term::RcNew(self.close((*t).clone(), is_occurrent).into()),
+			ob::Term::UnRc(t) => Term::UnRc(self.close((*t).clone(), is_occurrent).into()),
+
+			// 2-recursive cases
+			ob::Term::Apply { scrutinee, argument } => Term::Apply {
+				callee: self.close((*scrutinee).clone(), is_occurrent).into(),
+				argument: self.close((*argument).clone(), is_occurrent).into(),
+			},
+			ob::Term::Pair { basepoint, fiberpoint } => Term::Pair {
+				basepoint: self.close((*basepoint).clone(), is_occurrent).into(),
+				fiberpoint: self.close((*fiberpoint).clone(), is_occurrent).into(),
+			},
 		}
-		let result = binder.mapv(|_, body| self.close((*body).clone(), is_occurrent));
-		self.context.truncate(level);
-		result
 	}
 
 	fn close_function(
 		&mut self,
-		base: Obterm,
-		body: Binder<Rc<Obterm>>,
+		base: ob::Term,
+		body: Binder<Rc<ob::Term>>,
 		is_occurrent: &mut Vec<bool>,
 	) -> Function {
 		let context_len = Level(self.context.len());
@@ -79,7 +119,7 @@ impl Closer {
 			*outer |= *inner;
 		}
 
-		// Find dependents in base and body.
+		// Find dependeees in base and body.
 		let dependees = self.occurrents_to_dependees(body_occurrents);
 
 		// Construct a partial substitution from the dependees.
@@ -105,12 +145,8 @@ impl Closer {
 			let mut captured_parameters = Vec::new();
 
 			for i in &captures {
-				// TODO: Shouldn't these types be constrained 'values' of some sort? Otherwise, stages later down the
-				// pipeline will have to deal with evaluation again to get rid of function calls,
-				// projections... (Even if they aren't present at this stage, which I'm unsure of.)
 				let mut closed_ty = self.close(self.context[i.0].ty.clone(), is_occurrent);
 
-				// NOTE/(TODO: verify?): This should not panic, as its dependencies should be included.
 				closed_ty.substitute(&sub, *i);
 
 				captured_parameters.push((self.context[i.0].name, closed_ty))
@@ -128,96 +164,35 @@ impl Closer {
 		Function { procedure_id, captures: captures.into_iter().map(Variable::Local).collect() }
 	}
 
-	fn close(&mut self, value: Obterm, is_occurrent: &mut Vec<bool>) -> ClosedValue {
-		use Obterm as Dv;
-		match value {
-			// Variables.
-			Dv::Variable(_, l) => {
-				if let Some(has_encountered) = is_occurrent.get_mut(l.0) {
-					*has_encountered = true;
-				}
-
-				ClosedValue::Variable(Variable::Local(l))
-			}
-
-			// Procedures.
-			Dv::Function { base, family: _, body } =>
-				ClosedValue::Function(self.close_function((*base).clone(), body, is_occurrent)),
-
-			// Binding cases.
-			Dv::Let { ty, argument, tail } => {
-				let closed_ty = self.close((*ty).clone(), is_occurrent);
-				let argument = self.close((*argument).clone(), is_occurrent);
-				let tail = self.close_with(tail, [(*ty).clone()], is_occurrent);
-				ClosedValue::Let { ty: closed_ty.into(), argument: argument.into(), tail }
-			}
-			Dv::Pi { base_universe: _, base, family_universe: _, family } => {
-				let closed_base = self.close((*base).clone(), is_occurrent);
-				ClosedValue::Pi(closed_base.into(), self.close_function((*base).clone(), family, is_occurrent))
-			}
-			Dv::Sigma { base_universe: _, base, family_universe: _, family } => {
-				let closed_base = self.close((*base).clone(), is_occurrent);
-				// FIXME: This is completely wrong, we need to infer the universe of base (or otherwise store that information in the variant beforehand.)
-				ClosedValue::Sigma(closed_base.into(), self.close_function((*base).clone(), family, is_occurrent))
-			}
-			Dv::CaseNat { scrutinee, motive, case_nil, case_suc } => {
-				// TODO/FIXME: This is bad, we're manually instantiating binders with their types.
-				// This is extremely error-prone; these binders should already be aware of what type they're binding.
-				// (In addition, as before, the types should almost certainly be distinguished from the object syntax.)
-				// Since we always know what the type of these binders should be, it suggests that these binders should
-				// be a trait and not a struct, as it is right now.
-				let scrutinee = self.close((*scrutinee).clone(), is_occurrent);
-				// TODO: remove unnecessary clone here.
-				let closed_motive = self.close_with(motive.clone(), [Obterm::Nat], is_occurrent);
-				let case_nil = self.close((*case_nil).clone(), is_occurrent);
-				// NOTE: This is an abuse of the binder system, but it seems like it should work.
-				let case_suc = self.close_with(case_suc, [Obterm::Nat, (*motive.body).clone()], is_occurrent);
-				ClosedValue::CaseNat {
-					scrutinee: scrutinee.into(),
-					motive: closed_motive,
-					case_nil: case_nil.into(),
-					case_suc: case_suc.into(),
-				}
-			}
-			Dv::CaseBool { scrutinee, motive, case_false, case_true } => {
-				let scrutinee = self.close((*scrutinee).clone(), is_occurrent);
-				let motive = self.close_with(motive.clone(), [Obterm::Nat], is_occurrent);
-				let case_false = self.close((*case_false).clone(), is_occurrent);
-				let case_true = self.close((*case_true).clone(), is_occurrent);
-				ClosedValue::CaseBool {
-					scrutinee: scrutinee.into(),
-					motive,
-					case_false: case_false.into(),
-					case_true: case_true.into(),
-				}
-			}
-
-			// 0-recursive cases.
-			Dv::Nat => ClosedValue::Nat,
-			Dv::Bool => ClosedValue::Bool,
-			Dv::Universe(k) => ClosedValue::Universe(k),
-			Dv::Num(n) => ClosedValue::Num(n),
-			Dv::BoolValue(b) => ClosedValue::BoolValue(b),
-
-			// 1-recursive cases.
-			Dv::Project(t, p) => ClosedValue::Project(self.close((*t).clone(), is_occurrent).into(), p),
-			Dv::Suc(t) => ClosedValue::Suc(self.close((*t).clone(), is_occurrent).into()),
-			Dv::WrapType(t) => ClosedValue::WrapType(self.close((*t).clone(), is_occurrent).into()),
-			Dv::WrapNew(t) => ClosedValue::WrapNew(self.close((*t).clone(), is_occurrent).into()),
-			Dv::Unwrap(t) => ClosedValue::Unwrap(self.close((*t).clone(), is_occurrent).into()),
-			Dv::RcType(t) => ClosedValue::RcType(self.close((*t).clone(), is_occurrent).into()),
-			Dv::RcNew(t) => ClosedValue::RcNew(self.close((*t).clone(), is_occurrent).into()),
-			Dv::UnRc(t) => ClosedValue::UnRc(self.close((*t).clone(), is_occurrent).into()),
-
-			// 2-recursive cases
-			Dv::Apply { scrutinee, argument } => ClosedValue::Apply {
-				callee: self.close((*scrutinee).clone(), is_occurrent).into(),
-				argument: self.close((*argument).clone(), is_occurrent).into(),
-			},
-			Dv::Pair { basepoint, fiberpoint } => ClosedValue::Pair {
-				basepoint: self.close((*basepoint).clone(), is_occurrent).into(),
-				fiberpoint: self.close((*fiberpoint).clone(), is_occurrent).into(),
-			},
+	fn close_with<const N: usize>(
+		&mut self,
+		binder: Binder<Rc<ob::Term>, N>,
+		tys: [ob::Term; N],
+		is_occurrent: &mut Vec<bool>,
+	) -> Binder<Box<Term>, N> {
+		let level = self.context.len();
+		for (name, ty) in binder.parameters.into_iter().zip(tys) {
+			// Compute ty's dependees (occurrents and occurrents of dependees).
+			let occurrents = ty.occurences(Level(self.context.len()));
+			self.context.push(DynamicContextEntry {
+				name,
+				ty,
+				dependees: self.occurrents_to_dependees(occurrents),
+			});
 		}
+		let result = binder.mapv(|_, body| self.close((*body).clone(), is_occurrent));
+		self.context.truncate(level);
+		result
+	}
+
+	fn occurrents_to_dependees(&self, mut occurrents: Vec<bool>) -> Vec<bool> {
+		for occurrent_index in
+			occurrents.clone().into_iter().enumerate().filter_map(|(i, is_occurrent)| is_occurrent.then_some(i))
+		{
+			for (outer, inner) in occurrents.iter_mut().zip(self.context[occurrent_index].dependees.iter()) {
+				*outer |= *inner;
+			}
+		}
+		occurrents
 	}
 }

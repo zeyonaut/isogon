@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::gamma::{
 	common::Binder,
 	ir::{
-		closed::{self, ClosedValue, Function, Variable},
+		closed::{self, Function, Term, Variable},
 		linear::{
 			Block, Literal, Load, Modifier, Operand, Operation, Procedure, Program, Prototype, Register,
 			Statement, Symbol, SymbolGenerator, Terminator,
@@ -11,19 +11,8 @@ use crate::gamma::{
 	},
 };
 
-struct Preblock {
-	label: Symbol,
-	parameters: Vec<Symbol>,
-	statements: Vec<Statement>,
-}
-
-struct ProcedureBuilder {
-	symbol_generator: SymbolGenerator,
-	level_to_operand: Vec<Operand>,
-	blocks: HashMap<Symbol, Block>,
-}
-
-pub fn sequentialize(program: closed::Program) -> Program {
+/// Converts a hoisted program into a control-flow graph representation.
+pub fn linearize(program: closed::Program) -> Program {
 	let entry = build_procedure(program.entry);
 
 	let procedures = program
@@ -40,7 +29,19 @@ pub fn sequentialize(program: closed::Program) -> Program {
 	Program { entry, procedures }
 }
 
-fn build_procedure(value: ClosedValue) -> Procedure {
+struct Preblock {
+	label: Symbol,
+	parameters: Vec<Symbol>,
+	statements: Vec<Statement>,
+}
+
+struct ProcedureBuilder {
+	symbol_generator: SymbolGenerator,
+	level_to_operand: Vec<Operand>,
+	blocks: HashMap<Symbol, Block>,
+}
+
+fn build_procedure(value: Term) -> Procedure {
 	let mut builder = ProcedureBuilder::new();
 
 	let entry_label = builder.symbol_generator.generate();
@@ -65,7 +66,7 @@ impl ProcedureBuilder {
 	pub fn generate_with<const N: usize>(
 		&mut self,
 		preblock: &mut Preblock,
-		binder: Binder<Box<ClosedValue>, N>,
+		binder: Binder<Box<Term>, N>,
 		operands: [Operand; N],
 	) -> Operand {
 		self.level_to_operand.extend(operands);
@@ -77,7 +78,7 @@ impl ProcedureBuilder {
 	fn generate_operation<const N: usize>(
 		&mut self,
 		preblock: &mut Preblock,
-		values: [ClosedValue; N],
+		values: [Term; N],
 		operation: impl FnOnce([Operand; N]) -> Operation,
 	) -> Operand {
 		let operands = values.map(|value| self.generate(preblock, value));
@@ -89,7 +90,7 @@ impl ProcedureBuilder {
 	fn generate_unary_operation(
 		&mut self,
 		preblock: &mut Preblock,
-		value: ClosedValue,
+		value: Term,
 		operation: impl FnOnce(Operand) -> Operation,
 	) -> Operand {
 		let operand = self.generate(preblock, value);
@@ -121,16 +122,16 @@ impl ProcedureBuilder {
 	}
 
 	// Takes a contextual preblock and a value, modifies the preblock, and returns the modified preblock with an operand representing that value.
-	pub fn generate(&mut self, preblock: &mut Preblock, value: ClosedValue) -> Operand {
+	pub fn generate(&mut self, preblock: &mut Preblock, value: Term) -> Operand {
 		match value {
 			// Control-Flow Constructs
-			ClosedValue::Let { ty: _, argument, tail } => {
+			Term::Let { ty: _, argument, tail } => {
 				// TODO: We might need to pass `ty` to each call of this function.
 				let assignee_operand = self.generate(preblock, (*argument).clone());
 				self.generate_with(preblock, tail, [assignee_operand])
 			}
 			// TODO: This looks like it needs heavy refactoring.
-			ClosedValue::CaseNat { scrutinee, motive: _, case_nil, case_suc } => {
+			Term::CaseNat { scrutinee, motive: _, case_nil, case_suc } => {
 				let scrutinee_operand = self.generate(preblock, *scrutinee);
 				let initial_operand = self.generate(preblock, *case_nil);
 				let is_positive_symbol = self.symbol_generator.generate();
@@ -201,7 +202,7 @@ impl ProcedureBuilder {
 
 				Operand::Load(Load::reg(Register::Local(result_symbol)))
 			}
-			ClosedValue::CaseBool { scrutinee, motive: _, case_false, case_true } => {
+			Term::CaseBool { scrutinee, motive: _, case_false, case_true } => {
 				let scrutinee_operand = self.generate(preblock, *scrutinee);
 
 				let mut false_preblock =
@@ -246,32 +247,32 @@ impl ProcedureBuilder {
 			}
 
 			// Variables
-			ClosedValue::Variable(variable) => self.generate_variable(variable),
+			Term::Variable(variable) => self.generate_variable(variable),
 
 			// Literals
-			ClosedValue::Universe(k) => Operand::Literal(Literal::Universe(k)),
-			ClosedValue::Bool => Operand::Literal(Literal::Bool),
-			ClosedValue::Nat => Operand::Literal(Literal::Nat),
-			ClosedValue::Num(n) => Operand::Literal(Literal::Num(n)),
-			ClosedValue::BoolValue(b) => Operand::Literal(Literal::BoolValue(b)),
+			Term::Universe(k) => Operand::Literal(Literal::Universe(k)),
+			Term::Bool => Operand::Literal(Literal::Bool),
+			Term::Nat => Operand::Literal(Literal::Nat),
+			Term::Num(n) => Operand::Literal(Literal::Num(n)),
+			Term::BoolValue(b) => Operand::Literal(Literal::BoolValue(b)),
 
 			// Modifiers
-			ClosedValue::Project(value, projection) =>
+			Term::Project(value, projection) =>
 				self.generate(preblock, (*value).clone()).modify(Modifier::Projection(projection)),
-			ClosedValue::Unwrap(value) => self.generate(preblock, (*value).clone()).modify(Modifier::Unwrap),
-			ClosedValue::UnRc(value) => self.generate(preblock, (*value).clone()).modify(Modifier::UnRc),
+			Term::Unwrap(value) => self.generate(preblock, (*value).clone()).modify(Modifier::Unwrap),
+			Term::UnRc(value) => self.generate(preblock, (*value).clone()).modify(Modifier::UnRc),
 
 			// Binding Operations
-			ClosedValue::Function(function) => self.generate_function(preblock, function),
+			Term::Function(function) => self.generate_function(preblock, function),
 
-			ClosedValue::Pi(base, family) => {
+			Term::Pi(base, family) => {
 				let base = self.generate(preblock, *base);
 				let family = self.generate_function(preblock, family);
 				let register = self.symbol_generator.generate();
 				preblock.statements.push(Statement::Assign(register, Operation::Pi { base, family }));
 				Operand::Load(Load::reg(Register::Local(register)))
 			}
-			ClosedValue::Sigma(base, family) => {
+			Term::Sigma(base, family) => {
 				let base = self.generate(preblock, *base);
 				let family = self.generate_function(preblock, family);
 				let register = self.symbol_generator.generate();
@@ -280,11 +281,11 @@ impl ProcedureBuilder {
 			}
 
 			// Operations
-			ClosedValue::Pair { basepoint, fiberpoint } =>
+			Term::Pair { basepoint, fiberpoint } =>
 				self.generate_operation(preblock, [*basepoint, *fiberpoint], |[basepoint, fiberpoint]| {
 					Operation::Pair { basepoint, fiberpoint }
 				}),
-			ClosedValue::Apply { callee, argument } => {
+			Term::Apply { callee, argument } => {
 				let result_symbol = self.symbol_generator.generate();
 				let callee = self.generate(preblock, *callee);
 				let argument = self.generate(preblock, *argument);
@@ -305,11 +306,13 @@ impl ProcedureBuilder {
 
 				Operand::Load(Load::reg(Register::Local(result_symbol)))
 			}
-			ClosedValue::Suc(value) => self.generate_unary_operation(preblock, *value, Operation::Suc),
-			ClosedValue::WrapType(value) => self.generate_unary_operation(preblock, *value, Operation::WrapType),
-			ClosedValue::WrapNew(value) => self.generate_unary_operation(preblock, *value, Operation::WrapNew),
-			ClosedValue::RcType(value) => self.generate_unary_operation(preblock, *value, Operation::RcType),
-			ClosedValue::RcNew(value) => self.generate_unary_operation(preblock, *value, Operation::RcNew),
+
+			// Unary Operations
+			Term::Suc(value) => self.generate_unary_operation(preblock, *value, Operation::Suc),
+			Term::WrapType(value) => self.generate_unary_operation(preblock, *value, Operation::WrapType),
+			Term::WrapNew(value) => self.generate_unary_operation(preblock, *value, Operation::WrapNew),
+			Term::RcType(value) => self.generate_unary_operation(preblock, *value, Operation::RcType),
+			Term::RcNew(value) => self.generate_unary_operation(preblock, *value, Operation::RcNew),
 		}
 	}
 }

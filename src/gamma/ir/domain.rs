@@ -340,10 +340,10 @@ impl Conversion<DynamicValue> for Level {
 			) =>
 				self.can_convert(&**left_copyability, right_copyability)
 					&& self.can_convert(&**left_representation, right_representation),
-			(WrapType(left), WrapType(right)) => self.can_convert(&**left, right),
-			(WrapNew(left), WrapNew(right)) => self.can_convert(&**left, right),
-			(RcType(left), RcType(right)) => self.can_convert(&**left, right),
-			(RcNew(left), RcNew(right)) => self.can_convert(&**left, right),
+			(WrapType(left), WrapType(right))
+			| (WrapNew(left), WrapNew(right))
+			| (RcType(left), RcType(right))
+			| (RcNew(left), RcNew(right)) => self.can_convert(&**left, right),
 			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
 			(Function { body: left, .. }, Function { body: right, .. }) =>
 				(self + 1).can_convert(&left.autolyze(self), &right.autolyze(self)),

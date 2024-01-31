@@ -2,7 +2,7 @@ use std::{collections::HashMap, hash::Hash};
 
 use lasso::Rodeo;
 
-use super::closed::ClosedValue;
+use super::closed::Term;
 use crate::gamma::common::{Copyability, Level, Name, Projection, Repr, ReprAtom, UniverseKind};
 
 pub struct Program {
@@ -13,8 +13,8 @@ pub struct Program {
 pub struct Prototype {
 	// TODO: I think these all need to be converted into block and operands too, but I'm not sure in what way.
 	// Perhaps as a chain of blocks prepended to the entry block, with the operands available for drops later?
-	pub outer: Vec<(Name, ClosedValue)>,
-	pub parameter: (Name, ClosedValue),
+	pub outer: Vec<(Name, Term)>,
+	pub parameter: (Name, Term),
 }
 
 pub struct Procedure {
@@ -121,6 +121,25 @@ pub enum Register {
 	Local(Symbol),
 }
 
+pub struct SymbolGenerator(usize);
+
+impl SymbolGenerator {
+	pub fn new() -> Self {
+		Self(0)
+	}
+
+	pub fn generate(&mut self) -> Symbol {
+		let symbol = self.0;
+		self.0 += 1;
+		Symbol(symbol)
+	}
+}
+
+#[repr(transparent)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+pub struct Symbol(pub usize);
+
+// Pretty printers.
 impl Program {
 	pub fn pretty(&self, interner: &Rodeo) {
 		println!("entry:");
@@ -337,21 +356,3 @@ impl Repr {
 		}
 	}
 }
-
-pub struct SymbolGenerator(usize);
-
-impl SymbolGenerator {
-	pub fn new() -> Self {
-		Self(0)
-	}
-
-	pub fn generate(&mut self) -> Symbol {
-		let symbol = self.0;
-		self.0 += 1;
-		Symbol(symbol)
-	}
-}
-
-#[repr(transparent)]
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
-pub struct Symbol(pub usize);

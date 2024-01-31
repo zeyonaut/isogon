@@ -8,7 +8,7 @@ use crate::gamma::common::{
 #[derive(Clone)]
 pub enum Metavalue {
 	Type,
-	Quote(Rc<Obterm>),
+	Quote(Rc<Term>),
 	Function(Closure<Environment, StaticTerm>),
 	Pair(Rc<Self>, Rc<Self>),
 	Num(usize),
@@ -49,9 +49,9 @@ impl Environment {
 		let Some(Value::Static(value)) = self.values.get(self.values.len() - 1 - i) else { panic!() };
 		value.clone()
 	}
-	pub fn lookup_dynamic(&self, Index(i): Index) -> Obterm {
+	pub fn lookup_dynamic(&self, Index(i): Index) -> Term {
 		let Some(Value::Dynamic(name, level)) = self.values.get(self.values.len() - 1 - i) else { panic!() };
-		Obterm::Variable(*name, *level)
+		Term::Variable(*name, *level)
 	}
 
 	#[must_use]
@@ -73,7 +73,7 @@ impl Environment {
 }
 
 #[derive(Clone, Debug)]
-pub enum Obterm {
+pub enum Term {
 	Variable(Name, Level),
 	Let {
 		ty: Rc<Self>,
@@ -136,39 +136,39 @@ pub enum Obterm {
 	UnRc(Rc<Self>),
 }
 
-impl Obterm {
+impl Term {
 	// Yields the characteristic of the subset of all levels < level that occur as a variable in a value.
 	pub fn occurences(&self, Level(level): Level) -> Vec<bool> {
-		fn mark_occurrents(value: &Obterm, is_occurrent: &mut Vec<bool>) {
+		fn mark_occurrents(value: &Term, is_occurrent: &mut Vec<bool>) {
 			match value {
-				Obterm::Variable(_, Level(l)) =>
+				Term::Variable(_, Level(l)) =>
 					if let Some(l_is_occurrent) = is_occurrent.get_mut(*l) {
 						*l_is_occurrent = true;
 					},
 
 				// Cases with binders.
-				Obterm::Function { base, family, body } => {
+				Term::Function { base, family, body } => {
 					mark_occurrents(base, is_occurrent);
 					mark_occurrents(&family.body, is_occurrent);
 					mark_occurrents(&body.body, is_occurrent);
 				}
-				Obterm::Let { ty, argument, tail } => {
+				Term::Let { ty, argument, tail } => {
 					mark_occurrents(ty, is_occurrent);
 					mark_occurrents(argument, is_occurrent);
 					mark_occurrents(&tail.body, is_occurrent);
 				}
-				Obterm::Pi { base, family, base_universe: _, family_universe: _ }
-				| Obterm::Sigma { base, family, base_universe: _, family_universe: _ } => {
+				Term::Pi { base, family, base_universe: _, family_universe: _ }
+				| Term::Sigma { base, family, base_universe: _, family_universe: _ } => {
 					mark_occurrents(base, is_occurrent);
 					mark_occurrents(&family.body, is_occurrent);
 				}
-				Obterm::CaseNat { scrutinee, motive, case_nil, case_suc } => {
+				Term::CaseNat { scrutinee, motive, case_nil, case_suc } => {
 					mark_occurrents(scrutinee, is_occurrent);
 					mark_occurrents(&motive.body, is_occurrent);
 					mark_occurrents(case_nil, is_occurrent);
 					mark_occurrents(&case_suc.body, is_occurrent);
 				}
-				Obterm::CaseBool { scrutinee, motive, case_false, case_true } => {
+				Term::CaseBool { scrutinee, motive, case_false, case_true } => {
 					mark_occurrents(scrutinee, is_occurrent);
 					mark_occurrents(&motive.body, is_occurrent);
 					mark_occurrents(case_false, is_occurrent);
@@ -176,20 +176,20 @@ impl Obterm {
 				}
 
 				// 0-recursive cases.
-				Obterm::Universe(_) | Obterm::Bool | Obterm::BoolValue(_) | Obterm::Nat | Obterm::Num(_) => (),
+				Term::Universe(_) | Term::Bool | Term::BoolValue(_) | Term::Nat | Term::Num(_) => (),
 
 				// 1-recursive cases.
-				Obterm::Project(a, _)
-				| Obterm::Suc(a)
-				| Obterm::WrapType(a)
-				| Obterm::WrapNew(a)
-				| Obterm::Unwrap(a)
-				| Obterm::RcType(a)
-				| Obterm::RcNew(a)
-				| Obterm::UnRc(a) => mark_occurrents(a, is_occurrent),
+				Term::Project(a, _)
+				| Term::Suc(a)
+				| Term::WrapType(a)
+				| Term::WrapNew(a)
+				| Term::Unwrap(a)
+				| Term::RcType(a)
+				| Term::RcNew(a)
+				| Term::UnRc(a) => mark_occurrents(a, is_occurrent),
 
 				// 2-recursive cases.
-				Obterm::Apply { scrutinee: a, argument: b } | Obterm::Pair { basepoint: a, fiberpoint: b } => {
+				Term::Apply { scrutinee: a, argument: b } | Term::Pair { basepoint: a, fiberpoint: b } => {
 					mark_occurrents(a, is_occurrent);
 					mark_occurrents(b, is_occurrent);
 				}

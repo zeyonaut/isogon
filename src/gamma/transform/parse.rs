@@ -5,11 +5,91 @@ use crate::{
 		common::{bind, Copyability, Name, ReprAtom},
 		ir::{
 			presyntax::{DynamicPreterm, StaticPreterm},
-			source::{LexedSource, Lexeme, Token},
+			source::{LexError, LexErrorKind, LexedSource, Lexeme, Token},
 		},
 	},
 	utility::bx,
 };
+
+/// Parses a dynamic preterm from a source string.
+pub fn parse(source: &str) -> (DynamicPreterm, Rodeo) {
+	let lexed_source = match LexedSource::new(source) {
+		Ok(lexed_source) => lexed_source,
+		Err(lex_error) => {
+			print_lex_error(source, lex_error);
+			panic!();
+		}
+	};
+	let mut parser = Parser::new(source, lexed_source);
+	let Some(term) = parser.parse_dynamic() else { panic!() };
+	(term, parser.interner)
+}
+
+pub fn print_lex_error(source: &str, LexError(location, kind): LexError) {
+	const TAB_WIDTH: usize = 3;
+	// SAFETY: Repeated spaces form a valid string.
+	const TAB_REPLACEMENT: &'static str = unsafe { std::str::from_utf8_unchecked(&[b' '; TAB_WIDTH]) };
+
+	let mut lines = source.split_inclusive('\n');
+	let mut line_number: usize = 0;
+	let mut bytes_left = location;
+	let Some(line) = (loop {
+		if let Some(line) = lines.next() {
+			line_number += 1;
+			if line.len() <= bytes_left {
+				bytes_left -= line.len();
+			} else {
+				break Some(line);
+			}
+		} else {
+			break None;
+		}
+	}) else {
+		panic!("invalid lex error location");
+	};
+
+	fn char_list_string(chars: &[char]) -> String {
+		if let Some(c) = chars.get(0) {
+			use std::fmt::Write;
+			let mut string = String::new();
+			write!(string, "`{}`", c).unwrap();
+			for c in chars.into_iter().skip(1) {
+				write!(string, ", `{}`", c).unwrap();
+			}
+			string
+		} else {
+			String::new()
+		}
+	}
+
+	let visual_line = line.replace('\t', &TAB_REPLACEMENT).trim_end().to_owned();
+	let mut visual_offset: usize =
+		unicode_width::UnicodeWidthStr::width(line[0..bytes_left].replace('\t', &TAB_REPLACEMENT).as_str());
+
+	{
+		use LexErrorKind::*;
+		print!("[{}:{}] ", line_number, bytes_left);
+		print!("error: ");
+		match kind {
+			UnrecognizedLexemePrefix =>
+				println!("unrecognized lexeme prefix `{}`", &line[bytes_left..bytes_left + 1]),
+			UnexpectedCharacter(expected) => println!(
+				"expected one of {}; found `{}`",
+				char_list_string(expected),
+				&line[bytes_left..bytes_left + 1].escape_default()
+			),
+			UnexpectedEnd(expected) => {
+				visual_offset += 1;
+				println!("expected one of {}; found end of input", char_list_string(expected));
+			}
+		}
+	}
+	let displayed_line_number = line_number.to_string();
+	let dummy_line_number = " ".repeat(displayed_line_number.len());
+	println!("{} |", dummy_line_number);
+	println!("{} | {}", displayed_line_number, visual_line);
+	println!("{} | {}^", dummy_line_number, " ".repeat(visual_offset));
+}
 
 pub struct Parser<'s> {
 	source: &'s str,
