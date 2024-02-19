@@ -105,5 +105,23 @@ pub enum Repr {
 	Max(Rc<Repr>, Rc<Repr>),
 }
 
+impl Repr {
+	pub fn pair(a: Option<Self>, b: Option<Self>) -> Option<Self> {
+		match (a, b) {
+			(None, b) => b,
+			(a, None) => a,
+			(Some(a), Some(b)) => Some(Self::Pair(a.into(), b.into())),
+		}
+	}
+
+	pub fn max(a: Option<Self>, b: Option<Self>) -> Option<Self> {
+		match (a, b) {
+			(None, b) => b,
+			(a, None) => a,
+			(Some(a), Some(b)) => Some(Self::Max(a.into(), b.into())),
+		}
+	}
+}
+
 #[derive(Clone, Debug)]
 pub struct UniverseKind(pub Copyability, pub Option<Repr>);

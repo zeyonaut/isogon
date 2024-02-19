@@ -27,8 +27,18 @@ fn write_static_spine(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -
 fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use StaticTerm::*;
 	match term {
-		Variable(..) | Universe | Lift(_) | Quote(_) | Nat | Num(..) | Bool | BoolValue(..)
-		| Copyability(..) | CopyabilityType | ReprType | ReprAtom(_) => write_static(term, f, interner),
+		Variable(..)
+		| Universe
+		| Lift { .. }
+		| Quote(_)
+		| Nat
+		| Num(..)
+		| Bool
+		| BoolValue(..)
+		| Copyability(..)
+		| CopyabilityType
+		| ReprType
+		| ReprAtom(_) => write_static(term, f, interner),
 		Let { .. }
 		| Lambda { .. }
 		| Pair { .. }
@@ -119,7 +129,7 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			write_static(&tail.body, f, interner)
 		}
 		Universe => write!(f, "*"),
-		Lift(liftee) => {
+		Lift { liftee, .. } => {
 			write!(f, "'")?;
 			write_dynamic_atom(liftee, f, interner)
 		}
@@ -201,12 +211,12 @@ fn write_dynamic_spine(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo)
 		| Suc(..)
 		| CaseNat { .. }
 		| CaseBool { .. }
-		| WrapType(_)
+		| WrapType { .. }
 		| WrapNew(_)
-		| RcType(_)
+		| RcType { .. }
 		| RcNew(_)
-		| UnRc(_)
-		| Unwrap(_) => write_dynamic(term, f, interner),
+		| UnRc { .. }
+		| Unwrap { .. } => write_dynamic(term, f, interner),
 		_ => write_dynamic_atom(term, f, interner),
 	}
 }
@@ -221,16 +231,16 @@ fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) 
 		| Pair { .. }
 		| Apply { .. }
 		| Project { .. }
-		| UnRc(_)
-		| Unwrap(_)
+		| UnRc { .. }
+		| Unwrap { .. }
 		| Pi { .. }
 		| Sigma { .. }
 		| Suc(..)
 		| CaseNat { .. }
 		| CaseBool { .. }
-		| WrapType(_)
+		| WrapType { .. }
 		| WrapNew(_)
-		| RcType(_)
+		| RcType { .. }
 		| RcNew(_) => {
 			write!(f, "(")?;
 			write_dynamic(term, f, interner)?;
@@ -278,7 +288,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write!(f, "|{}| ", interner.resolve(&body.parameter()))?;
 			write_dynamic(&body.body, f, interner)
 		}
-		Apply { scrutinee, argument } => {
+		Apply { scrutinee, argument, .. } => {
 			write_dynamic_spine(scrutinee, f, interner)?;
 			write!(f, " ")?;
 			write_dynamic_atom(argument, f, interner)
@@ -300,7 +310,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write!(f, ", ")?;
 			write_dynamic(fiberpoint, f, interner)
 		}
-		Project(scrutinee, projection) => {
+		Project { scrutinee, projection, .. } => {
 			write_dynamic_spine(scrutinee, f, interner)?;
 			match projection {
 				Projection::Base => write!(f, "/."),
@@ -313,7 +323,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write!(f, "suc ")?;
 			write_dynamic_atom(prev, f, interner)
 		}
-		CaseNat { scrutinee, motive, case_nil, case_suc } => {
+		CaseNat { scrutinee, motive, case_nil, case_suc, .. } => {
 			write_dynamic_spine(scrutinee, f, interner)?;
 			write!(f, " :: |{}| ", interner.resolve(&motive.parameter()))?;
 			write_dynamic(&motive.body, f, interner)?;
@@ -330,7 +340,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 		}
 		Bool => write!(f, "bool"),
 		BoolValue(b) => write!(f, "{}", if *b { "true" } else { "false" }),
-		CaseBool { scrutinee, motive, case_false, case_true } => {
+		CaseBool { scrutinee, motive, case_false, case_true, .. } => {
 			write_dynamic_spine(scrutinee, f, interner)?;
 			write!(f, " :: bool |{}| ", interner.resolve(&motive.parameter()))?;
 			write_dynamic(&motive.body, f, interner)?;
@@ -340,7 +350,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write_dynamic(case_true, f, interner)?;
 			write!(f, "}}")
 		}
-		WrapType(x) => {
+		WrapType { inner: x, .. } => {
 			write!(f, "Wrap ")?;
 			write_dynamic_atom(x, f, interner)
 		}
@@ -348,11 +358,11 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write!(f, "wrap ")?;
 			write_dynamic_atom(x, f, interner)
 		}
-		Unwrap(x) => {
+		Unwrap { scrutinee: x, .. } => {
 			write_dynamic_spine(x, f, interner)?;
 			write!(f, " unwrap")
 		}
-		RcType(x) => {
+		RcType { inner: x, .. } => {
 			write!(f, "RC ")?;
 			write_dynamic_atom(x, f, interner)
 		}
@@ -360,7 +370,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write!(f, "rc ")?;
 			write_dynamic_atom(x, f, interner)
 		}
-		UnRc(x) => {
+		UnRc { scrutinee: x, .. } => {
 			write_dynamic_spine(x, f, interner)?;
 			write!(f, " unrc")
 		}

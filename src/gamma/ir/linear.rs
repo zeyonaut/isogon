@@ -2,7 +2,6 @@ use std::{collections::HashMap, hash::Hash};
 
 use lasso::Rodeo;
 
-use super::closed::Term;
 use crate::gamma::common::{Copyability, Level, Name, Projection, Repr, ReprAtom, UniverseKind};
 
 pub struct Program {
@@ -13,8 +12,8 @@ pub struct Program {
 pub struct Prototype {
 	// TODO: I think these all need to be converted into block and operands too, but I'm not sure in what way.
 	// Perhaps as a chain of blocks prepended to the entry block, with the operands available for drops later?
-	pub outer: Vec<(Name, Term)>,
-	pub parameter: (Name, Term),
+	pub outer: Vec<(Name, Class)>,
+	pub parameter: (Name, Class),
 }
 
 pub struct Procedure {
@@ -45,6 +44,30 @@ pub enum Terminator {
 		argument: Operand,
 		return_block: Symbol,
 	},
+	Copy {
+		block: Option<Symbol>,
+		operand: Operand,
+	},
+	Drop {
+		block: Option<Symbol>,
+		operand: Operand,
+	},
+}
+
+// A class represents everything required to copy and destroy nontrivially-copyable values.
+// NOTE: This currently encompasses data for both nontrivial and trivial types; not sure if they should be separated at this stage. (We still need to ensure representations are deducible for trivial types.)
+#[derive(Clone)]
+pub enum Class {
+	Operand(Operand),
+	Nat,
+	Class,
+	// TODO: These cases should be recursive (and mention the repr)
+	Wrap,
+	Shared,
+	Pi,
+	// NOTE: Should never both be none.
+	Sigma { base: Option<Box<Self>>, family: Option<Operand> },
+	Pair { base: Option<Box<Self>>, fiber: Option<Box<Self>> },
 }
 
 pub enum Statement {
@@ -52,9 +75,25 @@ pub enum Statement {
 }
 
 pub enum Operation {
+	// Class constructors:
+	NatClass,
+	ClassClass,
+	WrapClass(Option<Operand>),
+	SharedClass(Option<Operand>),
+	FunctionClass { family: Option<Operand> },
+	PairClass { base_repr: Option<Repr>, base_class: Option<Operand>, fiber_class: Option<Operand> },
+	SigmaClass { base_repr: Option<Repr>, base_class: Option<Operand>, family: Option<Operand> },
+
+	// Class projections:
+	WrapClassInner(Option<Operand>),
+	SharedClassInner(Option<Operand>),
+	FunctionClassFamily(Option<Operand>),
+	PairClassBase(Option<Operand>),
+	PairClassFiber(Option<Operand>),
+
 	Function { captures: Vec<Operand>, procedure_index: usize },
 	Pi { base: Operand, family: Operand },
-	Sigma { base: Operand, family: Operand },
+	Sigma { base_universe: UniverseKind, base: Operand, family_universe: UniverseKind, family: Operand },
 	Id(Operand),
 	Pair { basepoint: Operand, fiberpoint: Operand },
 	Suc(Operand),
@@ -109,9 +148,9 @@ impl Load {
 
 #[derive(Clone)]
 pub enum Modifier {
-	Projection(Projection),
-	UnRc,
-	Unwrap,
+	Projection(Projection, UniverseKind),
+	UnRc(UniverseKind),
+	Unwrap(UniverseKind),
 }
 
 #[derive(Clone)]
@@ -186,6 +225,7 @@ impl Statement {
 	pub fn pretty(&self, interner: &Rodeo) {
 		print!("        ");
 		match self {
+			// TODO: print type.
 			Statement::Assign(a, b) => {
 				print!("{} := ", a.0);
 				b.pretty(interner);
@@ -214,7 +254,7 @@ impl Operation {
 				family.pretty(interner);
 				print!("}}");
 			}
-			Operation::Sigma { base, family } => {
+			Operation::Sigma { base, family, .. } => {
 				print!("sigma {{");
 				base.pretty(interner);
 				print!(", ");
@@ -236,6 +276,7 @@ impl Operation {
 			Operation::RcNew(o) => pretty_unary_operation("rc", o, interner),
 			Operation::IsPositive(o) => pretty_unary_operation("is_positive", o, interner),
 			Operation::Pred(o) => pretty_unary_operation("pred", o, interner),
+			_ => todo!(),
 		}
 	}
 }
@@ -282,6 +323,7 @@ impl Terminator {
 				argument.pretty(interner);
 				println!(" => block_{}", return_block.0);
 			}
+			_ => todo!(),
 		}
 	}
 }
@@ -318,10 +360,10 @@ impl Operand {
 
 				for x in &m.modifiers {
 					match x {
-						Modifier::Projection(Projection::Base) => print!("/."),
-						Modifier::Projection(Projection::Fiber) => print!("/!"),
-						Modifier::UnRc => print!("/unrc"),
-						Modifier::Unwrap => print!("/unwrap"),
+						Modifier::Projection(Projection::Base, _) => print!("/."),
+						Modifier::Projection(Projection::Fiber, _) => print!("/!"),
+						Modifier::UnRc(_) => print!("/unrc"),
+						Modifier::Unwrap(_) => print!("/unwrap"),
 					}
 				}
 			}

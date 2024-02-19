@@ -1,8 +1,9 @@
+use super::evaluate::Autolyze;
 use crate::{
 	gamma::{
 		common::{bind, Binder, Closure, Index, Level},
 		ir::{
-			domain::{Autolyze, DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue},
+			domain::{DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue},
 			syntax::{DynamicTerm, StaticTerm},
 		},
 	},
@@ -77,7 +78,11 @@ impl Reify for StaticValue {
 				basepoint: bx!(basepoint.reify_in(level)),
 				fiberpoint: bx!(fiberpoint.reify_in(level)),
 			},
-			Lift(liftee) => StaticTerm::Lift(bx!(liftee.reify_in(level))),
+			Lift { ty: liftee, copy, repr } => StaticTerm::Lift {
+				liftee: liftee.reify_in(level).into(),
+				copy: copy.reify_in(level).into(),
+				repr: repr.reify_in(level).into(),
+			},
 			Quote(quotee) => StaticTerm::Quote(bx!(quotee.reify_in(level))),
 			Nat => StaticTerm::Nat,
 			Num(n) => StaticTerm::Num(*n),
@@ -101,26 +106,50 @@ impl Reify for DynamicNeutral {
 		match self {
 			Variable(name, Level(level)) => DynamicTerm::Variable(*name, Index(context_length - 1 - level)),
 			Splice(splicee) => DynamicTerm::Splice(bx!(splicee.reify_in(level))),
-			Apply(callee, argument) => DynamicTerm::Apply {
-				scrutinee: bx!(callee.reify_in(level)),
-				argument: bx!(argument.reify_in(level)),
+			Apply { scrutinee, argument, fiber_copyability, fiber_representation, base, family } =>
+				DynamicTerm::Apply {
+					scrutinee: bx!(scrutinee.reify_in(level)),
+					argument: bx!(argument.reify_in(level)),
+					fiber_copyability: bx!(fiber_copyability.as_ref().unwrap().reify_in(level)),
+					fiber_representation: bx!(fiber_representation.as_ref().unwrap().reify_in(level)),
+					base: base.as_ref().unwrap().reify_in(level).into(),
+					family: family.as_ref().unwrap().reify_in(level),
+				},
+			Project { scrutinee, projection, copyability, representation } => DynamicTerm::Project {
+				scrutinee: scrutinee.reify_in(level).into(),
+				projection: *projection,
+				projection_copyability: copyability.as_ref().unwrap().reify_in(level).into(),
+				projection_representation: representation.as_ref().unwrap().reify_in(level).into(),
 			},
-			Project(scrutinee, projection) => DynamicTerm::Project(bx!(scrutinee.reify_in(level)), *projection),
 			Suc(prev) => DynamicTerm::Suc(bx!(prev.reify_in(level))),
-			CaseNat { scrutinee, motive, case_nil, case_suc } => DynamicTerm::CaseNat {
-				scrutinee: bx!(scrutinee.reify_in(level)),
-				motive: motive.reify_in(level),
-				case_nil: bx!(case_nil.reify_in(level)),
-				case_suc: case_suc.reify_in(level),
+			CaseNat { scrutinee, case_nil, case_suc, fiber_copyability, fiber_representation, motive } =>
+				DynamicTerm::CaseNat {
+					scrutinee: bx!(scrutinee.reify_in(level)),
+					case_nil: bx!(case_nil.reify_in(level)),
+					case_suc: case_suc.reify_in(level),
+					fiber_copyability: bx!(fiber_copyability.reify_in(level)),
+					fiber_representation: bx!(fiber_representation.reify_in(level)),
+					motive: motive.reify_in(level),
+				},
+			CaseBool { scrutinee, case_false, case_true, fiber_copyability, fiber_representation, motive } =>
+				DynamicTerm::CaseBool {
+					scrutinee: bx!(scrutinee.reify_in(level)),
+					case_false: bx!(case_false.reify_in(level)),
+					case_true: bx!(case_true.reify_in(level)),
+					fiber_copyability: bx!(fiber_copyability.reify_in(level)),
+					fiber_representation: bx!(fiber_representation.reify_in(level)),
+					motive: motive.reify_in(level),
+				},
+			Unwrap { scrutinee, copyability, representation } => DynamicTerm::Unwrap {
+				scrutinee: scrutinee.reify_in(level).into(),
+				copyability: copyability.reify_in(level).into(),
+				representation: representation.reify_in(level).into(),
 			},
-			CaseBool { scrutinee, motive, case_false, case_true } => DynamicTerm::CaseBool {
-				scrutinee: bx!(scrutinee.reify_in(level)),
-				motive: motive.reify_in(level),
-				case_false: bx!(case_false.reify_in(level)),
-				case_true: bx!(case_true.reify_in(level)),
+			UnRc { scrutinee, copyability, representation } => DynamicTerm::UnRc {
+				scrutinee: scrutinee.reify_in(level).into(),
+				copyability: copyability.reify_in(level).into(),
+				representation: representation.reify_in(level).into(),
 			},
-			Unwrap(v) => DynamicTerm::Unwrap(bx!(v.reify_in(level))),
-			UnRc(v) => DynamicTerm::UnRc(bx!(v.reify_in(level))),
 		}
 	}
 }
@@ -178,9 +207,17 @@ impl Reify for DynamicValue {
 			Num(n) => DynamicTerm::Num(*n),
 			Bool => DynamicTerm::Bool,
 			BoolValue(b) => DynamicTerm::BoolValue(*b),
-			WrapType(x) => DynamicTerm::WrapType(bx!(x.reify_in(level))),
+			WrapType { inner, copyability, representation } => DynamicTerm::WrapType {
+				inner: inner.reify_in(level).into(),
+				copyability: copyability.reify_in(level).into(),
+				representation: representation.reify_in(level).into(),
+			},
 			WrapNew(x) => DynamicTerm::WrapNew(bx!(x.reify_in(level))),
-			RcType(x) => DynamicTerm::RcType(bx!(x.reify_in(level))),
+			RcType { inner, copyability, representation } => DynamicTerm::RcType {
+				inner: inner.reify_in(level).into(),
+				copyability: copyability.reify_in(level).into(),
+				representation: representation.reify_in(level).into(),
+			},
 			RcNew(x) => DynamicTerm::RcNew(bx!(x.reify_in(level))),
 		}
 	}

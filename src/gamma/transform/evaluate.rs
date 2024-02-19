@@ -1,6 +1,6 @@
 use crate::{
 	gamma::{
-		common::{Binder, Closure, Projection},
+		common::{Binder, Closure, Level, Projection},
 		ir::{
 			domain::{DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue, Value},
 			syntax::{DynamicTerm, StaticTerm},
@@ -88,7 +88,11 @@ impl Evaluate for StaticTerm {
 			},
 			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate_in(environment)]),
 			Universe => StaticValue::Universe,
-			Lift(liftee) => StaticValue::Lift(liftee.evaluate_in(environment)),
+			Lift { liftee, copy, repr } => StaticValue::Lift {
+				ty: liftee.evaluate_in(environment),
+				copy: copy.evaluate_in(environment).into(),
+				repr: repr.evaluate_in(environment).into(),
+			},
 			Quote(quotee) => StaticValue::Quote(quotee.evaluate_in(environment)),
 			Nat => StaticValue::Nat,
 			Num(n) => StaticValue::Num(n),
@@ -152,23 +156,33 @@ impl Evaluate for DynamicTerm {
 				rc!(basepoint.evaluate_in(environment)),
 				rc!(fiberpoint.evaluate_in(environment)),
 			),
-			Apply { scrutinee, argument } => match scrutinee.evaluate_in(environment) {
-				DynamicValue::Function { body, .. } => body.evaluate_with([argument.evaluate_in(environment)]),
-				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Apply(
-					rc!(neutral),
-					rc!(argument.evaluate_in(environment)),
-				)),
-				_ => panic!(),
-			},
-			Project(scrutinee, projection) => match scrutinee.evaluate_in(environment) {
-				DynamicValue::Pair(basepoint, fiberpoint) => match projection {
-					Projection::Base => basepoint.as_ref().clone(),
-					Projection::Fiber => fiberpoint.as_ref().clone(),
+			Apply { scrutinee, argument, fiber_copyability, fiber_representation, base, family } =>
+				match scrutinee.evaluate_in(environment) {
+					DynamicValue::Function { body, .. } => body.evaluate_with([argument.evaluate_in(environment)]),
+					DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Apply {
+						scrutinee: rc!(neutral),
+						argument: rc!(argument.evaluate_in(environment)),
+						fiber_copyability: Some(fiber_copyability.evaluate_in(environment).into()),
+						fiber_representation: Some(fiber_representation.evaluate_in(environment).into()),
+						base: Some(base.evaluate_in(environment).into()),
+						family: Some(rc!(family.evaluate_in(environment))),
+					}),
+					_ => panic!(),
 				},
-				DynamicValue::Neutral(neutral) =>
-					DynamicValue::Neutral(DynamicNeutral::Project(rc!(neutral), projection)),
-				_ => panic!(),
-			},
+			Project { scrutinee, projection, projection_copyability, projection_representation } =>
+				match scrutinee.evaluate_in(environment) {
+					DynamicValue::Pair(basepoint, fiberpoint) => match projection {
+						Projection::Base => basepoint.as_ref().clone(),
+						Projection::Fiber => fiberpoint.as_ref().clone(),
+					},
+					DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Project {
+						scrutinee: neutral.into(),
+						projection,
+						copyability: Some(projection_copyability.evaluate_in(environment).into()),
+						representation: Some(projection_representation.evaluate_in(environment).into()),
+					}),
+					_ => panic!(),
+				},
 			Pi {
 				base_copyability,
 				base_representation,
@@ -216,53 +230,75 @@ impl Evaluate for DynamicTerm {
 				DynamicValue::Num(n) => DynamicValue::Num(n + 1),
 				_ => panic!(),
 			},
-			CaseNat { scrutinee, motive, case_nil, case_suc } => match scrutinee.evaluate_in(environment) {
-				DynamicValue::Num(n) => (0..n).fold(case_nil.evaluate_in(environment), |previous, i| {
-					case_suc.evaluate_at(environment, [DynamicValue::Num(i), previous])
-				}),
-				DynamicValue::Neutral(neutral) => {
-					let mut neutrals = vec![&neutral];
-					while let DynamicNeutral::Suc(previous) = neutrals.last().unwrap() {
-						neutrals.push(&previous);
+			CaseNat { scrutinee, case_nil, case_suc, fiber_copyability, fiber_representation, motive } =>
+				match scrutinee.evaluate_in(environment) {
+					DynamicValue::Num(n) => (0..n).fold(case_nil.evaluate_in(environment), |previous, i| {
+						case_suc.evaluate_at(environment, [DynamicValue::Num(i), previous])
+					}),
+					DynamicValue::Neutral(neutral) => {
+						let mut neutrals = vec![&neutral];
+						while let DynamicNeutral::Suc(previous) = neutrals.last().unwrap() {
+							neutrals.push(&previous);
+						}
+						let result = DynamicValue::Neutral(DynamicNeutral::CaseNat {
+							scrutinee: rc!(neutrals.pop().unwrap().clone()),
+							case_nil: rc!(case_nil.evaluate_in(environment)),
+							case_suc: rc!(case_suc.clone().evaluate_in(environment)),
+							fiber_copyability: fiber_copyability.evaluate_in(environment).into(),
+							fiber_representation: fiber_representation.evaluate_in(environment).into(),
+							motive: rc!(motive.evaluate_in(environment)),
+						});
+						neutrals
+							.into_iter()
+							.rev()
+							.cloned()
+							.map(DynamicValue::Neutral)
+							.fold(result, |previous, number| case_suc.evaluate_at(environment, [number, previous]))
 					}
-					let result = DynamicValue::Neutral(DynamicNeutral::CaseNat {
-						scrutinee: rc!(neutrals.pop().unwrap().clone()),
-						motive: rc!(motive.evaluate_in(environment)),
-						case_nil: rc!(case_nil.evaluate_in(environment)),
-						case_suc: rc!(case_suc.clone().evaluate_in(environment)),
-					});
-					neutrals
-						.into_iter()
-						.rev()
-						.cloned()
-						.map(DynamicValue::Neutral)
-						.fold(result, |previous, number| case_suc.evaluate_at(environment, [number, previous]))
-				}
-				_ => panic!(),
-			},
+					_ => panic!(),
+				},
 			Bool => DynamicValue::Bool,
 			BoolValue(b) => DynamicValue::BoolValue(b),
-			CaseBool { scrutinee, motive, case_false, case_true } => match scrutinee.evaluate_in(environment) {
-				DynamicValue::BoolValue(b) => if b { case_true } else { case_false }.evaluate_in(environment),
-				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::CaseBool {
-					scrutinee: rc!(neutral),
-					motive: rc!(motive.evaluate_in(environment)),
-					case_false: rc!(case_false.evaluate_in(environment)),
-					case_true: rc!(case_true.evaluate_in(environment)),
-				}),
-				_ => panic!(),
+			CaseBool { scrutinee, case_false, case_true, fiber_copyability, fiber_representation, motive } =>
+				match scrutinee.evaluate_in(environment) {
+					DynamicValue::BoolValue(b) => if b { case_true } else { case_false }.evaluate_in(environment),
+					DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::CaseBool {
+						scrutinee: rc!(neutral),
+						case_false: rc!(case_false.evaluate_in(environment)),
+						case_true: rc!(case_true.evaluate_in(environment)),
+						fiber_copyability: fiber_copyability.evaluate_in(environment).into(),
+						fiber_representation: fiber_representation.evaluate_in(environment).into(),
+						motive: rc!(motive.evaluate_in(environment)),
+					}),
+					_ => panic!(),
+				},
+			WrapType { inner, copyability, representation } => DynamicValue::WrapType {
+				inner: inner.evaluate_in(environment).into(),
+				copyability: copyability.evaluate_in(environment).into(),
+				representation: representation.evaluate_in(environment).into(),
 			},
-			WrapType(ty) => DynamicValue::WrapType(rc!(ty.evaluate_in(environment))),
 			WrapNew(tm) => DynamicValue::WrapNew(rc!(tm.evaluate_in(environment))),
-			Unwrap(tm) => match tm.evaluate_in(environment) {
-				DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::Unwrap(rc!(n))),
+			Unwrap { scrutinee, copyability, representation } => match scrutinee.evaluate_in(environment) {
+				DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::Unwrap {
+					scrutinee: n.into(),
+					copyability: copyability.evaluate_in(environment).into(),
+					representation: representation.evaluate_in(environment).into(),
+				}),
 				DynamicValue::WrapNew(v) => v.as_ref().clone(),
 				_ => panic!(),
 			},
-			RcType(ty) => DynamicValue::RcType(rc!(ty.evaluate_in(environment))),
+			RcType { inner, copyability, representation } => DynamicValue::RcType {
+				inner: inner.evaluate_in(environment).into(),
+				copyability: copyability.evaluate_in(environment).into(),
+				representation: representation.evaluate_in(environment).into(),
+			},
 			RcNew(tm) => DynamicValue::RcNew(rc!(tm.evaluate_in(environment))),
-			UnRc(tm) => match tm.evaluate_in(environment) {
-				DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::UnRc(rc!(n))),
+			UnRc { scrutinee, copyability, representation } => match scrutinee.evaluate_in(environment) {
+				DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::UnRc {
+					scrutinee: n.into(),
+					copyability: copyability.evaluate_in(environment).into(),
+					representation: representation.evaluate_in(environment).into(),
+				}),
 				DynamicValue::RcNew(v) => v.as_ref().clone(),
 				_ => panic!(),
 			},
@@ -307,5 +343,35 @@ impl<const N: usize> EvaluateAt<N> for &Binder<Box<DynamicTerm>, N> {
 	type Value = DynamicValue;
 	fn evaluate_at(self, environment: &Environment, arguments: [Self::Value; N]) -> Self::Value {
 		self.body.clone().evaluate_in(&environment.extend(arguments.map(Value::Dynamic)))
+	}
+}
+
+pub trait Autolyze {
+	type Value;
+	/// Evaluates a closure on its own parameters by postulating them and passing them in.
+	fn autolyze(&self, context_len: Level) -> Self::Value;
+}
+
+impl<const N: usize> Autolyze for Closure<Environment, StaticTerm, N> {
+	type Value = StaticValue;
+	fn autolyze(&self, context_len: Level) -> Self::Value {
+		let mut x = 0;
+		self.evaluate_with(self.parameters.map(|parameter| {
+			let y = context_len + x;
+			x += 1;
+			(parameter, y).into()
+		}))
+	}
+}
+
+impl<const N: usize> Autolyze for Closure<Environment, DynamicTerm, N> {
+	type Value = DynamicValue;
+	fn autolyze(&self, context_len: Level) -> Self::Value {
+		let mut x = 0;
+		self.evaluate_with(self.parameters.map(|parameter| {
+			let y = context_len + x;
+			x += 1;
+			(parameter, y).into()
+		}))
 	}
 }

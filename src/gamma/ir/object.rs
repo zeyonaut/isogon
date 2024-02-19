@@ -99,6 +99,9 @@ pub enum Term {
 	Apply {
 		scrutinee: Rc<Self>,
 		argument: Rc<Self>,
+		fiber_universe: UniverseKind,
+		base: Rc<Self>,
+		family: Binder<Rc<Self>>,
 	},
 	Sigma {
 		base_universe: UniverseKind,
@@ -110,30 +113,33 @@ pub enum Term {
 		basepoint: Rc<Self>,
 		fiberpoint: Rc<Self>,
 	},
-	Project(Rc<Self>, Projection),
+	// TODO: Is this enough information? We might want more information for fiber projections (e.g. the repr of the base.)
+	Project(Rc<Self>, Projection, UniverseKind),
 	Nat,
 	Num(usize),
 	Suc(Rc<Self>),
 	CaseNat {
 		scrutinee: Rc<Self>,
-		motive: Binder<Rc<Self>>,
 		case_nil: Rc<Self>,
 		case_suc: Binder<Rc<Self>, 2>,
+		fiber_universe: UniverseKind,
+		motive: Binder<Rc<Self>>,
 	},
 	Bool,
 	BoolValue(bool),
 	CaseBool {
 		scrutinee: Rc<Self>,
-		motive: Binder<Rc<Self>>,
 		case_false: Rc<Self>,
 		case_true: Rc<Self>,
+		fiber_universe: UniverseKind,
+		motive: Binder<Rc<Self>>,
 	},
-	WrapType(Rc<Self>),
+	WrapType(Rc<Self>, UniverseKind),
 	WrapNew(Rc<Self>),
-	Unwrap(Rc<Self>),
-	RcType(Rc<Self>),
+	Unwrap(Rc<Self>, UniverseKind),
+	RcType(Rc<Self>, UniverseKind),
 	RcNew(Rc<Self>),
-	UnRc(Rc<Self>),
+	UnRc(Rc<Self>, UniverseKind),
 }
 
 impl Term {
@@ -162,36 +168,46 @@ impl Term {
 					mark_occurrents(base, is_occurrent);
 					mark_occurrents(&family.body, is_occurrent);
 				}
-				Term::CaseNat { scrutinee, motive, case_nil, case_suc } => {
+				Term::CaseNat { scrutinee, case_nil, case_suc, fiber_universe: _, motive } => {
 					mark_occurrents(scrutinee, is_occurrent);
-					mark_occurrents(&motive.body, is_occurrent);
 					mark_occurrents(case_nil, is_occurrent);
 					mark_occurrents(&case_suc.body, is_occurrent);
-				}
-				Term::CaseBool { scrutinee, motive, case_false, case_true } => {
-					mark_occurrents(scrutinee, is_occurrent);
+					// TODO: Shouldn't occurrents not be marked if the fiber universe is trivial?
 					mark_occurrents(&motive.body, is_occurrent);
+				}
+				Term::CaseBool { scrutinee, case_false, case_true, fiber_universe: _, motive } => {
+					mark_occurrents(scrutinee, is_occurrent);
 					mark_occurrents(case_false, is_occurrent);
 					mark_occurrents(case_true, is_occurrent);
+					// TODO: Shouldn't occurrents not be marked if the fiber universe is trivial?
+					mark_occurrents(&motive.body, is_occurrent);
 				}
 
 				// 0-recursive cases.
 				Term::Universe(_) | Term::Bool | Term::BoolValue(_) | Term::Nat | Term::Num(_) => (),
 
 				// 1-recursive cases.
-				Term::Project(a, _)
+				Term::Project(a, _, _)
 				| Term::Suc(a)
-				| Term::WrapType(a)
+				| Term::WrapType(a, _)
 				| Term::WrapNew(a)
-				| Term::Unwrap(a)
-				| Term::RcType(a)
+				| Term::Unwrap(a, _)
+				| Term::RcType(a, _)
 				| Term::RcNew(a)
-				| Term::UnRc(a) => mark_occurrents(a, is_occurrent),
+				| Term::UnRc(a, _) => mark_occurrents(a, is_occurrent),
 
-				// 2-recursive cases.
-				Term::Apply { scrutinee: a, argument: b } | Term::Pair { basepoint: a, fiberpoint: b } => {
+				// n-recursive cases.
+				Term::Pair { basepoint: a, fiberpoint: b } => {
 					mark_occurrents(a, is_occurrent);
 					mark_occurrents(b, is_occurrent);
+				}
+
+				Term::Apply { scrutinee: a, argument: b, fiber_universe: _, base, family } => {
+					mark_occurrents(a, is_occurrent);
+					mark_occurrents(b, is_occurrent);
+					// TODO: Shouldn't occurrents not be marked if the fiber universe is trivial?
+					mark_occurrents(&base, is_occurrent);
+					mark_occurrents(&family.body, is_occurrent);
 				}
 			}
 		}

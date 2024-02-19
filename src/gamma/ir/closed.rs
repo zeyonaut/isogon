@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, collections::HashMap};
 
-use crate::gamma::common::{Binder, Level, Name, Projection, UniverseKind};
+use crate::gamma::common::{Binder, Level, Name, Projection, Repr, UniverseKind};
 
 #[derive(Clone, Debug)]
 pub enum Variable {
@@ -24,41 +24,54 @@ pub enum Term {
 		tail: Binder<Box<Self>>,
 	},
 	Universe(UniverseKind),
-	Pi(Box<Self>, Function),
+	Pi {
+		base: Box<Self>,
+		family_universe: UniverseKind,
+		family: Function,
+	},
 	Function(Function),
 	Apply {
 		callee: Box<Self>,
 		argument: Box<Self>,
+		fiber_representation: Option<Repr>,
+		family: Option<Binder<Box<Self>>>,
 	},
-	Sigma(Box<Self>, Function),
+	Sigma {
+		base_universe: UniverseKind,
+		base: Box<Self>,
+		family_universe: UniverseKind,
+		family: Function,
+	},
 	Pair {
 		basepoint: Box<Self>,
 		fiberpoint: Box<Self>,
 	},
-	Project(Box<Self>, Projection),
+	Project(Box<Self>, Projection, UniverseKind),
 	Nat,
 	Num(usize),
 	Suc(Box<Self>),
 	CaseNat {
 		scrutinee: Box<Self>,
-		motive: Binder<Box<Self>>,
 		case_nil: Box<Self>,
 		case_suc: Binder<Box<Self>, 2>,
+		fiber_representation: Option<Repr>,
+		motive: Option<Binder<Box<Self>>>,
 	},
 	Bool,
 	BoolValue(bool),
 	CaseBool {
 		scrutinee: Box<Self>,
-		motive: Binder<Box<Self>>,
 		case_false: Box<Self>,
 		case_true: Box<Self>,
+		fiber_representation: Option<Repr>,
+		motive: Option<Binder<Box<Self>>>,
 	},
 	WrapType(Box<Self>),
 	WrapNew(Box<Self>),
-	Unwrap(Box<Self>),
+	Unwrap(Box<Self>, UniverseKind),
 	RcType(Box<Self>),
 	RcNew(Box<Self>),
-	UnRc(Box<Self>),
+	UnRc(Box<Self>, UniverseKind),
 }
 
 pub struct Procedure {
@@ -89,42 +102,48 @@ impl Substitute for Term {
 				argument.substitute(substitution, minimum_level);
 				tail.substitute(substitution, minimum_level);
 			}
-			Term::Pi(base, family) | Term::Sigma(base, family) => {
+			Term::Pi { base, family, .. } | Term::Sigma { base, family, .. } => {
 				base.substitute(substitution, minimum_level);
 				family.substitute(substitution, minimum_level);
 			}
-			Term::CaseNat { scrutinee, motive, case_nil, case_suc } => {
+			Term::CaseNat { scrutinee, case_nil, case_suc, fiber_representation: _, motive } => {
 				scrutinee.substitute(substitution, minimum_level);
-				motive.substitute(substitution, minimum_level);
 				case_nil.substitute(substitution, minimum_level);
 				case_suc.substitute(substitution, minimum_level);
+				motive.as_mut().map(|x| x.substitute(substitution, minimum_level));
 			}
-			Term::CaseBool { scrutinee, motive, case_false, case_true } => {
+			Term::CaseBool { scrutinee, case_false, case_true, fiber_representation: _, motive } => {
 				scrutinee.substitute(substitution, minimum_level);
-				motive.substitute(substitution, minimum_level);
 				case_false.substitute(substitution, minimum_level);
 				case_true.substitute(substitution, minimum_level);
+				motive.as_mut().map(|x| x.substitute(substitution, minimum_level));
 			}
 
 			// 0-recursive cases.
 			Term::Num(_) | Term::Universe(_) | Term::Nat | Term::Bool | Term::BoolValue(_) => (),
 
 			// 1-recursive cases.
-			Term::Project(t, _)
+			Term::Project(t, _, _)
 			| Term::Suc(t)
 			| Term::WrapType(t)
 			| Term::WrapNew(t)
-			| Term::Unwrap(t)
+			| Term::Unwrap(t, _)
 			| Term::RcType(t)
 			| Term::RcNew(t)
-			| Term::UnRc(t) => {
+			| Term::UnRc(t, _) => {
 				t.substitute(substitution, minimum_level);
 			}
 
-			// 2-recursive cases.
-			Term::Apply { callee: a, argument: b } | Term::Pair { basepoint: a, fiberpoint: b } => {
+			// n-recursive cases.
+			Term::Pair { basepoint: a, fiberpoint: b } => {
 				a.substitute(substitution, minimum_level);
 				b.substitute(substitution, minimum_level);
+			}
+
+			Term::Apply { callee: a, argument: b, fiber_representation: _, family: c } => {
+				a.substitute(substitution, minimum_level);
+				b.substitute(substitution, minimum_level);
+				c.as_mut().map(|c| c.substitute(substitution, minimum_level));
 			}
 		}
 	}

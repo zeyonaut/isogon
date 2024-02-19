@@ -4,7 +4,7 @@ use super::syntax::{DynamicTerm, StaticTerm};
 use crate::{
 	gamma::{
 		common::{Closure, Copyability, Index, Level, Name, Projection, Repr, ReprAtom},
-		transform::evaluate::EvaluateWith,
+		transform::evaluate::Autolyze,
 	},
 	utility::rc,
 };
@@ -43,7 +43,7 @@ pub enum StaticValue {
 	// NOTE: This is a little type-unsafe in exchange for less redundant code; we need to make sure that these two never contain a ReprNone.
 	ReprPair(Rc<Self>, Rc<Self>),
 	ReprMax(Rc<Self>, Rc<Self>),
-	Lift(DynamicValue),
+	Lift { ty: DynamicValue, copy: Rc<Self>, repr: Rc<Self> },
 	Quote(DynamicValue),
 	IndexedProduct(Rc<Self>, Rc<Closure<Environment, StaticTerm>>),
 	Function(Rc<Closure<Environment, StaticTerm>>),
@@ -78,23 +78,49 @@ impl From<Option<&Repr>> for StaticValue {
 pub enum DynamicNeutral {
 	Variable(Name, Level),
 	Splice(StaticNeutral),
-	Apply(Rc<Self>, Rc<DynamicValue>),
-	Project(Rc<Self>, Projection),
+	// NOTE: The family universe is optional because of conversion-checking with eta-conversion.
+	Apply {
+		scrutinee: Rc<Self>,
+		argument: Rc<DynamicValue>,
+		fiber_copyability: Option<Rc<StaticValue>>,
+		fiber_representation: Option<Rc<StaticValue>>,
+		base: Option<Rc<DynamicValue>>,
+		family: Option<Rc<Closure<Environment, DynamicTerm>>>,
+	},
+	// NOTE: The universe is optional because of conversion-checking with eta-conversion.
+	Project {
+		scrutinee: Rc<Self>,
+		projection: Projection,
+		copyability: Option<Rc<StaticValue>>,
+		representation: Option<Rc<StaticValue>>,
+	},
 	CaseNat {
 		scrutinee: Rc<Self>,
-		motive: Rc<Closure<Environment, DynamicTerm>>,
 		case_nil: Rc<DynamicValue>,
 		case_suc: Rc<Closure<Environment, DynamicTerm, 2>>,
+		fiber_copyability: Rc<StaticValue>,
+		fiber_representation: Rc<StaticValue>,
+		motive: Rc<Closure<Environment, DynamicTerm>>,
 	},
 	Suc(Rc<Self>),
 	CaseBool {
 		scrutinee: Rc<Self>,
-		motive: Rc<Closure<Environment, DynamicTerm>>,
 		case_false: Rc<DynamicValue>,
 		case_true: Rc<DynamicValue>,
+		fiber_copyability: Rc<StaticValue>,
+		fiber_representation: Rc<StaticValue>,
+		motive: Rc<Closure<Environment, DynamicTerm>>,
 	},
-	Unwrap(Rc<Self>),
-	UnRc(Rc<Self>),
+	Unwrap {
+		scrutinee: Rc<Self>,
+		copyability: Rc<StaticValue>,
+		representation: Rc<StaticValue>,
+	},
+	UnRc {
+		scrutinee: Rc<Self>,
+		copyability: Rc<StaticValue>,
+		representation: Rc<StaticValue>,
+	},
 }
 
 #[derive(Clone, Debug)]
@@ -130,9 +156,17 @@ pub enum DynamicValue {
 	Num(usize),
 	Bool,
 	BoolValue(bool),
-	WrapType(Rc<Self>),
+	WrapType {
+		inner: Rc<Self>,
+		copyability: Rc<StaticValue>,
+		representation: Rc<StaticValue>,
+	},
 	WrapNew(Rc<Self>),
-	RcType(Rc<Self>),
+	RcType {
+		inner: Rc<Self>,
+		copyability: Rc<StaticValue>,
+		representation: Rc<StaticValue>,
+	},
 	RcNew(Rc<Self>),
 }
 
@@ -219,36 +253,6 @@ impl Environment {
 	}
 }
 
-pub trait Autolyze {
-	type Value;
-	/// Evaluates a closure on its own parameters by postulating them and passing them in.
-	fn autolyze(&self, context_len: Level) -> Self::Value;
-}
-
-impl<const N: usize> Autolyze for Closure<Environment, StaticTerm, N> {
-	type Value = StaticValue;
-	fn autolyze(&self, context_len: Level) -> Self::Value {
-		let mut x = 0;
-		self.evaluate_with(self.parameters.map(|parameter| {
-			let y = context_len + x;
-			x += 1;
-			(parameter, y).into()
-		}))
-	}
-}
-
-impl<const N: usize> Autolyze for Closure<Environment, DynamicTerm, N> {
-	type Value = DynamicValue;
-	fn autolyze(&self, context_len: Level) -> Self::Value {
-		let mut x = 0;
-		self.evaluate_with(self.parameters.map(|parameter| {
-			let y = context_len + x;
-			x += 1;
-			(parameter, y).into()
-		}))
-	}
-}
-
 pub trait Conversion<T> {
 	/// Decides whether two values are judgementally equal.
 	fn can_convert(self, left: &T, right: &T) -> bool;
@@ -269,7 +273,8 @@ impl Conversion<StaticValue> for Level {
 				self.can_convert(&**left0, right0) && self.can_convert(&**left1, right1),
 			(ReprMax(left0, left1), ReprMax(right0, right1)) =>
 				self.can_convert(&**left0, right0) && self.can_convert(&**left1, right1),
-			(Lift(left), Lift(right)) | (Quote(left), Quote(right)) => self.can_convert(left, right),
+			(Lift { ty: left, .. }, Lift { ty: right, .. }) | (Quote(left), Quote(right)) =>
+				self.can_convert(left, right),
 			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
 			(Function(left), Function(right)) =>
 				(self + 1).can_convert(&left.autolyze(self), &right.autolyze(self)),
@@ -340,29 +345,73 @@ impl Conversion<DynamicValue> for Level {
 			) =>
 				self.can_convert(&**left_copyability, right_copyability)
 					&& self.can_convert(&**left_representation, right_representation),
-			(WrapType(left), WrapType(right))
+			(WrapType { inner: left, .. }, WrapType { inner: right, .. })
 			| (WrapNew(left), WrapNew(right))
-			| (RcType(left), RcType(right))
+			| (RcType { inner: left, .. }, RcType { inner: right, .. })
 			| (RcNew(left), RcNew(right)) => self.can_convert(&**left, right),
 			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
 			(Function { body: left, .. }, Function { body: right, .. }) =>
 				(self + 1).can_convert(&left.autolyze(self), &right.autolyze(self)),
 			(Neutral(left), Function { body: right, .. }) => (self + 1).can_convert(
-				&Neutral(Apply(rc!(left.clone()), rc!((right.parameter(), self).into()))),
+				&Neutral(Apply {
+					scrutinee: rc!(left.clone()),
+					argument: rc!((right.parameter(), self).into()),
+					fiber_copyability: None,
+					fiber_representation: None,
+					base: None,
+					family: None,
+				}),
 				&right.autolyze(self),
 			),
 			(Function { body: left, .. }, Neutral(right)) => (self + 1).can_convert(
 				&left.autolyze(self),
-				&Neutral(Apply(rc!(right.clone()), rc!((left.parameter(), self).into()))),
+				&Neutral(Apply {
+					scrutinee: rc!(right.clone()),
+					argument: rc!((left.parameter(), self).into()),
+					fiber_copyability: None,
+					fiber_representation: None,
+					base: None,
+					family: None,
+				}),
 			),
 			(Pair(left_bp, left_fp), Pair(right_bp, right_fp)) =>
 				self.can_convert(&**left_bp, &right_bp) && self.can_convert(&**left_fp, &right_fp),
 			(Neutral(left), Pair(right_bp, right_fp)) =>
-				self.can_convert(&Neutral(Project(rc!(left.clone()), Base)), &right_bp)
-					&& self.can_convert(&Neutral(Project(rc!(left.clone()), Fiber)), &right_fp),
+				self.can_convert(
+					&Neutral(Project {
+						scrutinee: left.clone().into(),
+						projection: Base,
+						copyability: None,
+						representation: None,
+					}),
+					&right_bp,
+				) && self.can_convert(
+					&Neutral(Project {
+						scrutinee: left.clone().into(),
+						projection: Fiber,
+						copyability: None,
+						representation: None,
+					}),
+					&right_fp,
+				),
 			(Pair(left_bp, left_fp), Neutral(right)) =>
-				self.can_convert(&**left_bp, &Neutral(Project(rc!(right.clone()), Base)))
-					&& self.can_convert(&**left_fp, &Neutral(Project(rc!(right.clone()), Fiber))),
+				self.can_convert(
+					&**left_bp,
+					&Neutral(Project {
+						scrutinee: right.clone().into(),
+						projection: Base,
+						copyability: None,
+						representation: None,
+					}),
+				) && self.can_convert(
+					&**left_fp,
+					&Neutral(Project {
+						scrutinee: right.clone().into(),
+						projection: Fiber,
+						copyability: None,
+						representation: None,
+					}),
+				),
 			// NOTE: Annotation conversion not implemented, as it's unclear if it gives any useful advantages.
 			(
 				IndexedProduct { base: left_base, family: left_family, .. },
@@ -387,27 +436,30 @@ impl Conversion<DynamicNeutral> for Level {
 		use DynamicNeutral::*;
 		match (left, right) {
 			(Variable(_, left), Variable(_, right)) => left == right,
-			(Apply(left, left_argument), Apply(right, right_argument)) =>
-				self.can_convert(&**left, right) && self.can_convert(&**left_argument, right_argument),
-			(Project(left, left_projection), Project(right, right_projection)) =>
-				left_projection == right_projection && self.can_convert(&**left, right),
-			(Unwrap(left), Unwrap(right)) | (UnRc(left), UnRc(right)) | (Suc(left), Suc(right)) =>
-				self.can_convert(&**left, right),
+			(
+				Apply { scrutinee: left, argument: left_argument, .. },
+				Apply { scrutinee: right, argument: right_argument, .. },
+			) => self.can_convert(&**left, right) && self.can_convert(&**left_argument, right_argument),
+			(
+				Project { scrutinee: left, projection: left_projection, .. },
+				Project { scrutinee: right, projection: right_projection, .. },
+			) => left_projection == right_projection && self.can_convert(&**left, right),
+			(Unwrap { scrutinee: left, .. }, Unwrap { scrutinee: right, .. })
+			| (UnRc { scrutinee: left, .. }, UnRc { scrutinee: right, .. })
+			| (Suc(left), Suc(right)) => self.can_convert(&**left, right),
 			(Splice(left), Splice(right)) => self.can_convert(left, right),
 			(
-				CaseNat { scrutinee: l_scrutinee, motive: l_motive, case_nil: l_case_nil, case_suc: l_case_suc },
-				CaseNat { scrutinee: r_scrutinee, motive: r_motive, case_nil: r_case_nil, case_suc: r_case_suc },
+				CaseNat { scrutinee: l_scrutinee, case_nil: l_case_nil, case_suc: l_case_suc, .. },
+				CaseNat { scrutinee: r_scrutinee, case_nil: r_case_nil, case_suc: r_case_suc, .. },
 			) =>
 				self.can_convert(&**l_scrutinee, r_scrutinee)
-					&& (self + 1).can_convert(&l_motive.autolyze(self), &r_motive.autolyze(self))
 					&& self.can_convert(&**l_case_nil, r_case_nil)
 					&& (self + 2).can_convert(&l_case_suc.autolyze(self), &r_case_suc.autolyze(self)),
 			(
-				CaseBool { scrutinee: l_scrutinee, motive: l_motive, case_false: l_case_f, case_true: l_case_t },
-				CaseBool { scrutinee: r_scrutinee, motive: r_motive, case_false: r_case_f, case_true: r_case_t },
+				CaseBool { scrutinee: l_scrutinee, case_false: l_case_f, case_true: l_case_t, .. },
+				CaseBool { scrutinee: r_scrutinee, case_false: r_case_f, case_true: r_case_t, .. },
 			) =>
 				self.can_convert(&**l_scrutinee, r_scrutinee)
-					&& (self + 1).can_convert(&l_motive.autolyze(self), &r_motive.autolyze(self))
 					&& self.can_convert(&**l_case_f, r_case_f)
 					&& self.can_convert(&**l_case_t, r_case_t),
 			_ => false,

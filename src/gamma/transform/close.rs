@@ -1,7 +1,7 @@
 use std::{collections::HashMap, rc::Rc};
 
 use crate::gamma::{
-	common::{Binder, Level, Name},
+	common::{Binder, Copyability, Level, Name},
 	ir::{
 		closed::{Function, Procedure, Program, Substitute, Term, Variable},
 		object as ob,
@@ -48,28 +48,16 @@ impl Closer {
 				argument: self.close((*argument).clone(), is_occurrent).into(),
 				tail: self.close_with(tail, [(*ty).clone()], is_occurrent),
 			},
-			ob::Term::Pi { base_universe: _, base, family_universe: _, family } => Term::Pi(
-				self.close((*base).clone(), is_occurrent).into(),
-				self.close_function((*base).clone(), family, is_occurrent),
-			),
-			ob::Term::Sigma { base_universe: _, base, family_universe: _, family } => Term::Sigma(
-				self.close((*base).clone(), is_occurrent).into(),
-				self.close_function((*base).clone(), family, is_occurrent),
-			),
-			ob::Term::CaseNat { scrutinee, motive, case_nil, case_suc } => {
-				Term::CaseNat {
-					scrutinee: self.close((*scrutinee).clone(), is_occurrent).into(),
-					case_nil: self.close((*case_nil).clone(), is_occurrent).into(),
-					// NOTE: This is an abuse of the binder system, but it seems like it should work.
-					case_suc: self.close_with(case_suc, [ob::Term::Nat, (*motive.body).clone()], is_occurrent),
-					motive: self.close_with(motive, [ob::Term::Nat], is_occurrent),
-				}
-			}
-			ob::Term::CaseBool { scrutinee, motive, case_false, case_true } => Term::CaseBool {
-				scrutinee: self.close((*scrutinee).clone(), is_occurrent).into(),
-				motive: self.close_with(motive.clone(), [ob::Term::Nat], is_occurrent),
-				case_false: self.close((*case_false).clone(), is_occurrent).into(),
-				case_true: self.close((*case_true).clone(), is_occurrent).into(),
+			ob::Term::Pi { base_universe: _, base, family_universe, family } => Term::Pi {
+				base: self.close((*base).clone(), is_occurrent).into(),
+				family: self.close_function((*base).clone(), family, is_occurrent),
+				family_universe,
+			},
+			ob::Term::Sigma { base_universe, base, family_universe, family } => Term::Sigma {
+				base_universe,
+				base: self.close((*base).clone(), is_occurrent).into(),
+				family_universe,
+				family: self.close_function((*base).clone(), family, is_occurrent),
 			},
 
 			// 0-recursive cases.
@@ -80,23 +68,48 @@ impl Closer {
 			ob::Term::BoolValue(b) => Term::BoolValue(b),
 
 			// 1-recursive cases.
-			ob::Term::Project(t, p) => Term::Project(self.close((*t).clone(), is_occurrent).into(), p),
+			ob::Term::Project(t, p, u) => Term::Project(self.close((*t).clone(), is_occurrent).into(), p, u),
 			ob::Term::Suc(t) => Term::Suc(self.close((*t).clone(), is_occurrent).into()),
-			ob::Term::WrapType(t) => Term::WrapType(self.close((*t).clone(), is_occurrent).into()),
+			ob::Term::WrapType(t, _) => Term::WrapType(self.close((*t).clone(), is_occurrent).into()),
 			ob::Term::WrapNew(t) => Term::WrapNew(self.close((*t).clone(), is_occurrent).into()),
-			ob::Term::Unwrap(t) => Term::Unwrap(self.close((*t).clone(), is_occurrent).into()),
-			ob::Term::RcType(t) => Term::RcType(self.close((*t).clone(), is_occurrent).into()),
+			ob::Term::Unwrap(t, u) => Term::Unwrap(self.close((*t).clone(), is_occurrent).into(), u),
+			ob::Term::RcType(t, _) => Term::RcType(self.close((*t).clone(), is_occurrent).into()),
 			ob::Term::RcNew(t) => Term::RcNew(self.close((*t).clone(), is_occurrent).into()),
-			ob::Term::UnRc(t) => Term::UnRc(self.close((*t).clone(), is_occurrent).into()),
+			ob::Term::UnRc(t, u) => Term::UnRc(self.close((*t).clone(), is_occurrent).into(), u),
 
 			// 2-recursive cases
-			ob::Term::Apply { scrutinee, argument } => Term::Apply {
-				callee: self.close((*scrutinee).clone(), is_occurrent).into(),
-				argument: self.close((*argument).clone(), is_occurrent).into(),
-			},
 			ob::Term::Pair { basepoint, fiberpoint } => Term::Pair {
 				basepoint: self.close((*basepoint).clone(), is_occurrent).into(),
 				fiberpoint: self.close((*fiberpoint).clone(), is_occurrent).into(),
+			},
+
+			// Other cases
+			ob::Term::Apply { scrutinee, argument, fiber_universe, base, family } => Term::Apply {
+				callee: self.close((*scrutinee).clone(), is_occurrent).into(),
+				argument: self.close((*argument).clone(), is_occurrent).into(),
+				fiber_representation: fiber_universe.1,
+				// TODO: This might be problematic if a function is called more than once with a lambda-expression in its family?
+				family: (fiber_universe.0 == Copyability::Nontrivial)
+					.then(|| self.close_with(family, [(*base).clone()], is_occurrent)),
+			},
+			ob::Term::CaseNat { scrutinee, case_nil, case_suc, fiber_universe, motive } => {
+				Term::CaseNat {
+					scrutinee: self.close((*scrutinee).clone(), is_occurrent).into(),
+					case_nil: self.close((*case_nil).clone(), is_occurrent).into(),
+					// NOTE: This is an abuse of the binder system, but it seems like it should work.
+					case_suc: self.close_with(case_suc, [ob::Term::Nat, (*motive.body).clone()], is_occurrent),
+					fiber_representation: fiber_universe.1,
+					motive: (fiber_universe.0 == Copyability::Nontrivial)
+						.then(|| self.close_with(motive, [ob::Term::Nat], is_occurrent)),
+				}
+			}
+			ob::Term::CaseBool { scrutinee, case_false, case_true, fiber_universe, motive } => Term::CaseBool {
+				scrutinee: self.close((*scrutinee).clone(), is_occurrent).into(),
+				case_false: self.close((*case_false).clone(), is_occurrent).into(),
+				case_true: self.close((*case_true).clone(), is_occurrent).into(),
+				fiber_representation: fiber_universe.1,
+				motive: (fiber_universe.0 == Copyability::Nontrivial)
+					.then(|| self.close_with(motive, [ob::Term::Bool], is_occurrent)),
 			},
 		}
 	}

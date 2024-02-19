@@ -63,7 +63,7 @@ impl Stage for StaticTerm {
 			StaticTerm::Let { argument, tail, .. } =>
 				tail.stage_with(environment, [argument.stage_in(environment)]),
 			StaticTerm::Universe => Metavalue::Type,
-			StaticTerm::Lift(_) => Metavalue::Type,
+			StaticTerm::Lift { .. } => Metavalue::Type,
 			StaticTerm::Quote(term) => Metavalue::Quote(rc!(term.stage_in(environment))),
 			StaticTerm::Nat => Metavalue::Type,
 			StaticTerm::Num(n) => Metavalue::Num(n),
@@ -146,11 +146,24 @@ impl Stage for DynamicTerm {
 				basepoint: rc!(basepoint.stage_in(environment)),
 				fiberpoint: rc!(fiberpoint.stage_in(environment)),
 			},
-			Apply { scrutinee, argument } => Term::Apply {
-				scrutinee: rc!(scrutinee.stage_in(environment)),
-				argument: rc!(argument.stage_in(environment)),
-			},
-			Project(scrutinee, projection) => Term::Project(rc!(scrutinee.stage_in(environment)), projection),
+			Apply { scrutinee, argument, fiber_copyability, fiber_representation, base, family } =>
+				Term::Apply {
+					scrutinee: rc!(scrutinee.stage_in(environment)),
+					argument: rc!(argument.stage_in(environment)),
+					fiber_universe: stage_as_dynamic_universe(
+						*fiber_copyability,
+						*fiber_representation,
+						environment,
+					),
+					base: base.stage_in(environment).into(),
+					family: family.stage_in(environment),
+				},
+			Project { scrutinee, projection, projection_copyability, projection_representation } =>
+				Term::Project(
+					scrutinee.stage_in(environment).into(),
+					projection,
+					stage_as_dynamic_universe(*projection_copyability, *projection_representation, environment),
+				),
 			Pi {
 				base_copyability,
 				base_representation,
@@ -202,26 +215,50 @@ impl Stage for DynamicTerm {
 			Nat => Term::Nat,
 			Num(n) => Term::Num(n),
 			Suc(prev) => Term::Suc(rc!(prev.stage_in(environment))),
-			CaseNat { scrutinee, motive, case_nil, case_suc } => Term::CaseNat {
-				scrutinee: rc!(scrutinee.stage_in(environment)),
-				motive: motive.stage_in(environment),
-				case_nil: rc!(case_nil.stage_in(environment)),
-				case_suc: case_suc.stage_in(environment),
-			},
+			CaseNat { scrutinee, case_nil, case_suc, fiber_copyability, fiber_representation, motive } =>
+				Term::CaseNat {
+					scrutinee: rc!(scrutinee.stage_in(environment)),
+					case_nil: rc!(case_nil.stage_in(environment)),
+					case_suc: case_suc.stage_in(environment),
+					fiber_universe: stage_as_dynamic_universe(
+						*fiber_copyability,
+						*fiber_representation,
+						environment,
+					),
+					motive: motive.stage_in(environment),
+				},
 			Bool => Term::Bool,
 			BoolValue(b) => Term::BoolValue(b),
-			CaseBool { scrutinee, motive, case_false, case_true } => Term::CaseBool {
-				scrutinee: rc!(scrutinee.stage_in(environment)),
-				motive: motive.stage_in(environment),
-				case_false: rc!(case_false.stage_in(environment)),
-				case_true: rc!(case_true.stage_in(environment)),
-			},
-			WrapType(x) => Term::WrapType(rc!(x.stage_in(environment))),
+			CaseBool { scrutinee, case_false, case_true, fiber_copyability, fiber_representation, motive } =>
+				Term::CaseBool {
+					scrutinee: rc!(scrutinee.stage_in(environment)),
+					case_false: rc!(case_false.stage_in(environment)),
+					case_true: rc!(case_true.stage_in(environment)),
+					fiber_universe: stage_as_dynamic_universe(
+						*fiber_copyability,
+						*fiber_representation,
+						environment,
+					),
+					motive: motive.stage_in(environment),
+				},
+			WrapType { inner, copyability, representation } => Term::WrapType(
+				inner.stage_in(environment).into(),
+				stage_as_dynamic_universe(*copyability, *representation, environment),
+			),
 			WrapNew(x) => Term::WrapNew(rc!(x.stage_in(environment))),
-			Unwrap(x) => Term::Unwrap(rc!(x.stage_in(environment))),
-			RcType(x) => Term::RcType(rc!(x.stage_in(environment))),
+			Unwrap { scrutinee, copyability, representation } => Term::Unwrap(
+				scrutinee.stage_in(environment).into(),
+				stage_as_dynamic_universe(*copyability, *representation, environment),
+			),
+			RcType { inner, copyability, representation } => Term::RcType(
+				inner.stage_in(environment).into(),
+				stage_as_dynamic_universe(*copyability, *representation, environment),
+			),
 			RcNew(x) => Term::RcNew(rc!(x.stage_in(environment))),
-			UnRc(x) => Term::UnRc(rc!(x.stage_in(environment))),
+			UnRc { scrutinee, copyability, representation } => Term::UnRc(
+				scrutinee.stage_in(environment).into(),
+				stage_as_dynamic_universe(*copyability, *representation, environment),
+			),
 		}
 	}
 }

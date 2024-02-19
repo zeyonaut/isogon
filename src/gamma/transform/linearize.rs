@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use crate::gamma::{
-	common::Binder,
+	common::{Binder, Copyability, Repr, ReprAtom, UniverseKind},
 	ir::{
 		closed::{self, Function, Term, Variable},
 		linear::{
-			Block, Literal, Load, Modifier, Operand, Operation, Procedure, Program, Prototype, Register,
-			Statement, Symbol, SymbolGenerator, Terminator,
+			Block, Class, Literal, Load, Modifier, Operand, Operation, Procedure, Program, Register, Statement,
+			Symbol, SymbolGenerator, Terminator,
 		},
 	},
 };
@@ -15,6 +15,10 @@ use crate::gamma::{
 pub fn linearize(program: closed::Program) -> Program {
 	let entry = build_procedure(program.entry);
 
+	// TODO: Convert types here to classes.
+	// Requires linearized code to compute the operand(s) of the class - prepend to entry, or store separately (and how? one-hole contexts?)
+	todo!()
+	/*
 	let procedures = program
 		.procedures
 		.into_iter()
@@ -27,6 +31,7 @@ pub fn linearize(program: closed::Program) -> Program {
 		.collect::<Vec<_>>();
 
 	Program { entry, procedures }
+	*/
 }
 
 struct Preblock {
@@ -36,13 +41,16 @@ struct Preblock {
 }
 
 struct ProcedureBuilder {
+	register_context: RegisterContext,
 	symbol_generator: SymbolGenerator,
 	level_to_operand: Vec<Operand>,
+	// Locals that have not been destroyed yet.
+	unhandled_locals: Vec<Symbol>,
 	blocks: HashMap<Symbol, Block>,
 }
 
 fn build_procedure(value: Term) -> Procedure {
-	let mut builder = ProcedureBuilder::new();
+	let mut builder = ProcedureBuilder::new(todo!(), todo!());
 
 	let entry_label = builder.symbol_generator.generate();
 	let mut preblock = Preblock { label: entry_label, parameters: vec![], statements: vec![] };
@@ -54,9 +62,58 @@ fn build_procedure(value: Term) -> Procedure {
 	Procedure { entry_label, blocks: builder.blocks }
 }
 
+#[derive(Clone)]
+struct RegisterType {
+	class: Option<Class>,
+	repr: Option<Repr>,
+}
+
+impl RegisterType {
+	const fn new(class: Option<Class>, repr: Option<Repr>) -> Self {
+		Self { class, repr }
+	}
+
+	const NAT: Self = Self::new(Some(Class::Nat), Some(Repr::Atom(ReprAtom::Nat)));
+	const CLASS: Self = Self::new(Some(Class::Class), Some(Repr::Atom(ReprAtom::Class)));
+	const BOOL: Self = Self::new(None, Some(Repr::Atom(ReprAtom::Byte)));
+	const NONE: Self = Self::new(None, None);
+
+	const fn operand(operand: Operand, repr: Option<Repr>) -> Self {
+		Self { class: Some(Class::Operand(operand)), repr }
+	}
+}
+
+struct RegisterContext {
+	outer: Vec<RegisterType>,
+	parameter: Option<RegisterType>,
+	local: HashMap<Symbol, RegisterType>,
+}
+
+impl RegisterContext {
+	pub fn get(&self, register: Register) -> RegisterType {
+		match register {
+			Register::Outer(level) => self.outer[level.0].clone(),
+			Register::Parameter => self.parameter.as_ref().unwrap().clone(),
+			Register::Local(local) => self.local[&local].clone(),
+		}
+	}
+}
+
 impl ProcedureBuilder {
-	fn new() -> Self {
-		Self { symbol_generator: SymbolGenerator::new(), level_to_operand: vec![], blocks: HashMap::new() }
+	fn new(outer: Vec<RegisterType>, parameter: Option<RegisterType>) -> Self {
+		Self {
+			register_context: RegisterContext { outer, parameter, local: HashMap::new() },
+			symbol_generator: SymbolGenerator::new(),
+			level_to_operand: vec![],
+			unhandled_locals: vec![],
+			blocks: HashMap::new(),
+		}
+	}
+
+	fn register_register(&mut self, ty: RegisterType) -> Symbol {
+		let symbol = self.symbol_generator.generate();
+		self.register_context.local.insert(symbol, ty);
+		symbol
 	}
 
 	pub fn terminate(&mut self, Preblock { label, parameters, statements }: Preblock, terminator: Terminator) {
@@ -124,126 +181,19 @@ impl ProcedureBuilder {
 	// Takes a contextual preblock and a value, modifies the preblock, and returns the modified preblock with an operand representing that value.
 	pub fn generate(&mut self, preblock: &mut Preblock, value: Term) -> Operand {
 		match value {
-			// Control-Flow Constructs
 			Term::Let { ty: _, argument, tail } => {
-				// TODO: We might need to pass `ty` to each call of this function.
-				let assignee_operand = self.generate(preblock, (*argument).clone());
-				self.generate_with(preblock, tail, [assignee_operand])
+				todo!()
 			}
-			// TODO: This looks like it needs heavy refactoring.
-			Term::CaseNat { scrutinee, motive: _, case_nil, case_suc } => {
-				let scrutinee_operand = self.generate(preblock, *scrutinee);
-				let initial_operand = self.generate(preblock, *case_nil);
-				let is_positive_symbol = self.symbol_generator.generate();
-				preblock
-					.statements
-					.push(Statement::Assign(is_positive_symbol, Operation::Id(scrutinee_operand.clone())));
 
-				let result_symbol = self.symbol_generator.generate();
-				let prev_preblock = std::mem::replace(
-					preblock,
-					Preblock {
-						label: self.symbol_generator.generate(),
-						parameters: vec![result_symbol],
-						statements: vec![],
-					},
-				);
-
-				let count_symbol = self.symbol_generator.generate();
-				let accumulator_symbol = self.symbol_generator.generate();
-				let mut loop_preblock = Preblock {
-					label: self.symbol_generator.generate(),
-					parameters: vec![count_symbol, accumulator_symbol],
-					statements: vec![],
-				};
-				self.terminate(
-					prev_preblock,
-					Terminator::Branch {
-						operand: Operand::Load(Load::reg(Register::Local(is_positive_symbol))),
-						false_block: preblock.label,
-						false_operands: vec![initial_operand.clone()],
-						true_block: loop_preblock.label,
-						true_operands: vec![scrutinee_operand, initial_operand],
-					},
-				);
-
-				let new_accumulator = self.generate_with(
-					&mut loop_preblock,
-					case_suc,
-					[
-						Operand::Load(Load::reg(Register::Local(count_symbol))),
-						Operand::Load(Load::reg(Register::Local(accumulator_symbol))),
-					],
-				);
-				let new_count_symbol = self.symbol_generator.generate();
-				loop_preblock.statements.push(Statement::Assign(
-					new_count_symbol,
-					Operation::Pred(Operand::Load(Load::reg(Register::Local(count_symbol)))),
-				));
-				let is_new_count_positive_symbool = self.symbol_generator.generate();
-				loop_preblock.statements.push(Statement::Assign(
-					is_new_count_positive_symbool,
-					Operation::IsPositive(Operand::Load(Load::reg(Register::Local(new_count_symbol)))),
-				));
-				let loop_preblock_label = loop_preblock.label;
-				self.terminate(
-					loop_preblock,
-					Terminator::Branch {
-						operand: Operand::Load(Load::reg(Register::Local(is_new_count_positive_symbool))),
-						false_block: preblock.label,
-						false_operands: vec![new_accumulator.clone()],
-						true_block: loop_preblock_label,
-						true_operands: vec![
-							Operand::Load(Load::reg(Register::Local(new_count_symbol))),
-							new_accumulator,
-						],
-					},
-				);
-
-				Operand::Load(Load::reg(Register::Local(result_symbol)))
+			Term::Apply { callee, argument, fiber_representation, family } => {
+				todo!()
 			}
-			Term::CaseBool { scrutinee, motive: _, case_false, case_true } => {
-				let scrutinee_operand = self.generate(preblock, *scrutinee);
+			Term::CaseBool { scrutinee, case_false, case_true, fiber_representation, motive } => {
+				todo!()
+			}
 
-				let mut false_preblock =
-					Preblock { label: self.symbol_generator.generate(), parameters: vec![], statements: vec![] };
-				let mut true_preblock =
-					Preblock { label: self.symbol_generator.generate(), parameters: vec![], statements: vec![] };
-				let result_operand = self.symbol_generator.generate();
-
-				// TODO: Use `motive` here to name the preblock parameter.
-				let prev_preblock = std::mem::replace(
-					preblock,
-					Preblock {
-						label: self.symbol_generator.generate(),
-						parameters: vec![result_operand],
-						statements: vec![],
-					},
-				);
-				self.terminate(
-					prev_preblock,
-					Terminator::Branch {
-						operand: scrutinee_operand,
-						false_block: false_preblock.label,
-						false_operands: vec![],
-						true_block: true_preblock.label,
-						true_operands: vec![],
-					},
-				);
-
-				let false_operand = self.generate(&mut false_preblock, *case_false);
-				let true_operand = self.generate(&mut true_preblock, *case_true);
-
-				self.terminate(
-					false_preblock,
-					Terminator::Jump { block: Some(preblock.label), operand: false_operand },
-				);
-				self.terminate(
-					true_preblock,
-					Terminator::Jump { block: Some(preblock.label), operand: true_operand },
-				);
-
-				Operand::Load(Load::reg(Register::Local(result_operand)))
+			Term::CaseNat { scrutinee, case_nil, case_suc, fiber_representation, motive } => {
+				todo!()
 			}
 
 			// Variables
@@ -257,26 +207,31 @@ impl ProcedureBuilder {
 			Term::BoolValue(b) => Operand::Literal(Literal::BoolValue(b)),
 
 			// Modifiers
-			Term::Project(value, projection) =>
-				self.generate(preblock, (*value).clone()).modify(Modifier::Projection(projection)),
-			Term::Unwrap(value) => self.generate(preblock, (*value).clone()).modify(Modifier::Unwrap),
-			Term::UnRc(value) => self.generate(preblock, (*value).clone()).modify(Modifier::UnRc),
+			Term::Project(value, projection, universe) =>
+				self.generate(preblock, (*value).clone()).modify(Modifier::Projection(projection, universe)),
+			Term::Unwrap(value, universe) =>
+				self.generate(preblock, (*value).clone()).modify(Modifier::Unwrap(universe)),
+			Term::UnRc(value, universe) =>
+				self.generate(preblock, (*value).clone()).modify(Modifier::UnRc(universe)),
 
 			// Binding Operations
 			Term::Function(function) => self.generate_function(preblock, function),
 
-			Term::Pi(base, family) => {
+			Term::Pi { base, family, .. } => {
 				let base = self.generate(preblock, *base);
 				let family = self.generate_function(preblock, family);
 				let register = self.symbol_generator.generate();
 				preblock.statements.push(Statement::Assign(register, Operation::Pi { base, family }));
 				Operand::Load(Load::reg(Register::Local(register)))
 			}
-			Term::Sigma(base, family) => {
+			Term::Sigma { base_universe, base, family_universe, family } => {
 				let base = self.generate(preblock, *base);
 				let family = self.generate_function(preblock, family);
 				let register = self.symbol_generator.generate();
-				preblock.statements.push(Statement::Assign(register, Operation::Sigma { base, family }));
+				preblock.statements.push(Statement::Assign(
+					register,
+					Operation::Sigma { base_universe, base, family_universe, family },
+				));
 				Operand::Load(Load::reg(Register::Local(register)))
 			}
 
@@ -285,27 +240,6 @@ impl ProcedureBuilder {
 				self.generate_operation(preblock, [*basepoint, *fiberpoint], |[basepoint, fiberpoint]| {
 					Operation::Pair { basepoint, fiberpoint }
 				}),
-			Term::Apply { callee, argument } => {
-				let result_symbol = self.symbol_generator.generate();
-				let callee = self.generate(preblock, *callee);
-				let argument = self.generate(preblock, *argument);
-
-				let prev_preblock = std::mem::replace(
-					preblock,
-					Preblock {
-						label: self.symbol_generator.generate(),
-						parameters: vec![result_symbol],
-						statements: vec![],
-					},
-				);
-
-				self.terminate(
-					prev_preblock,
-					Terminator::Apply { callee, argument, return_block: preblock.label },
-				);
-
-				Operand::Load(Load::reg(Register::Local(result_symbol)))
-			}
 
 			// Unary Operations
 			Term::Suc(value) => self.generate_unary_operation(preblock, *value, Operation::Suc),
