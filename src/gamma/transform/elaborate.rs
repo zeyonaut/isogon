@@ -222,7 +222,7 @@ pub fn synthesize_static(context: &Context, term: StaticPreterm) -> (StaticTerm,
 			let case_suc = verify_static(
 				&context.clone().bind_static(case_suc_parameters.0, StaticValue::Nat).bind_static(
 					case_suc_parameters.1,
-					motive_value.evaluate_with([(case_suc_parameters.0, context.len()).into()]),
+					motive_value.autolyze(context.len()),
 				),
 				*case_suc,
 				motive_value.evaluate_with([StaticValue::Neutral(StaticNeutral::Suc(rc!(
@@ -271,11 +271,10 @@ pub fn verify_static(context: &Context, term: StaticPreterm, ty: StaticValue) ->
 	use StaticPreterm::*;
 	match (term, ty) {
 		(Lambda { parameter, body }, StaticValue::IndexedProduct(base, family)) => {
-			// TODO: Use Autolyze.
 			let body = verify_static(
 				&context.clone().bind_static(parameter, base.as_ref().clone()),
 				*body,
-				family.evaluate_with([(parameter, context.len()).into()]),
+				family.autolyze(context.len()),
 			);
 			StaticTerm::Lambda(bind([parameter], bx!(body)))
 		}
@@ -649,7 +648,6 @@ pub fn synthesize_dynamic(
 			let motive = Closure::new(context.environment.clone(), [motive_parameter], motive.clone());
 			let case_nil = verify_dynamic(context, *case_nil, motive.evaluate_with([DynamicValue::Num(0)]));
 			// NOTE: I'm not entirely sure this is 'right', as motive is is formed in a smaller context, but I believe this should be 'safe' because of de Bruijn levels.
-			// TODO: Use Autolyze?
 			let case_suc = verify_dynamic(
 				&context
 					.clone()
@@ -661,7 +659,7 @@ pub fn synthesize_dynamic(
 					)
 					.bind_dynamic(
 						case_suc_parameters.1,
-						motive.evaluate_with([(case_suc_parameters.0, context.len()).into()]),
+						motive.autolyze(context.len()),
 						fiber_copy.clone(),
 						fiber_repr.clone(),
 					),
@@ -746,8 +744,7 @@ pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue)
 			Lambda { parameter, body },
 			DynamicValue::IndexedProduct { base, base_copyability, base_representation, family, .. },
 		) => {
-			// TODO: Use Autolyze.
-			let fiber = family.evaluate_with([(parameter, context.len()).into()]);
+			let fiber = family.autolyze(context.len());
 			// TODO: Is this necessary?
 			let family = bind([parameter], fiber.reify_in(context.len() + 1).into());
 			let body = verify_dynamic(
