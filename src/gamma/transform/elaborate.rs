@@ -220,10 +220,10 @@ pub fn synthesize_static(context: &Context, term: StaticPreterm) -> (StaticTerm,
 			let case_nil = verify_static(context, *case_nil, motive_value.evaluate_with([StaticValue::Num(0)]));
 			// NOTE: I'm not entirely sure this is 'right', as motive is is formed in a smaller context, but I believe this should be 'safe' because of de Bruijn levels.
 			let case_suc = verify_static(
-				&context.clone().bind_static(case_suc_parameters.0, StaticValue::Nat).bind_static(
-					case_suc_parameters.1,
-					motive_value.autolyze(context.len()),
-				),
+				&context
+					.clone()
+					.bind_static(case_suc_parameters.0, StaticValue::Nat)
+					.bind_static(case_suc_parameters.1, motive_value.autolyze(context.len())),
 				*case_suc,
 				motive_value.evaluate_with([StaticValue::Neutral(StaticNeutral::Suc(rc!(
 					StaticNeutral::Variable(case_suc_parameters.0, context.len())

@@ -45,12 +45,13 @@ pub enum Terminator {
 		return_block: Symbol,
 	},
 	Copy {
+		// NOTE: This should "call" the block with the result of the copy, which may not be a memcpy. I think.
 		block: Option<Symbol>,
 		operand: Operand,
 	},
 	Drop {
-		block: Option<Symbol>,
-		operand: Operand,
+		block: Symbol,
+		variable: Symbol,
 	},
 }
 
@@ -61,13 +62,12 @@ pub enum Class {
 	Operand(Operand),
 	Nat,
 	Class,
-	// TODO: These cases should be recursive (and mention the repr)
-	Wrap,
-	Shared,
 	Pi,
-	// NOTE: Should never both be none.
-	Sigma { base: Option<Box<Self>>, family: Option<Operand> },
-	Pair { base: Option<Box<Self>>, fiber: Option<Box<Self>> },
+	// NOTE: These should never both be none.
+	Pair { base: Option<Box<Self>>, base_repr: Option<Repr>, fiber: Option<Box<Self>> },
+	// TODO: These cases should mention the repr
+	Wrap(Option<Box<Self>>),
+	Shared(Option<Box<Self>>),
 }
 
 pub enum Statement {
@@ -75,41 +75,38 @@ pub enum Statement {
 }
 
 pub enum Operation {
-	// Class constructors:
-	NatClass,
-	ClassClass,
-	WrapClass(Option<Operand>),
-	SharedClass(Option<Operand>),
-	FunctionClass { family: Option<Operand> },
-	PairClass { base_repr: Option<Repr>, base_class: Option<Operand>, fiber_class: Option<Operand> },
-	SigmaClass { base_repr: Option<Repr>, base_class: Option<Operand>, family: Option<Operand> },
-
-	// Class projections:
-	WrapClassInner(Option<Operand>),
-	SharedClassInner(Option<Operand>),
-	FunctionClassFamily(Option<Operand>),
-	PairClassBase(Option<Operand>),
-	PairClassFiber(Option<Operand>),
-
-	Function { captures: Vec<Operand>, procedure_index: usize },
-	Pi { base: Operand, family: Operand },
-	Sigma { base_universe: UniverseKind, base: Operand, family_universe: UniverseKind, family: Operand },
 	Id(Operand),
+
+	// Value formers:
+	Function { captures: Vec<Operand>, procedure_index: usize },
 	Pair { basepoint: Operand, fiberpoint: Operand },
 	Suc(Operand),
-	WrapType(Operand),
 	WrapNew(Operand),
-	RcType(Operand),
 	RcNew(Operand),
 	IsPositive(Operand),
 	Pred(Operand),
+
+	// Class constructors:
+	WrapClass(Operand),
+	SharedClass(Operand),
+	// NOTE: It is possible for both classes to be none.
+	Sigma { base_universe: UniverseKind, base: Operand, family_universe: UniverseKind, family: Operand },
+	// NOTE: Both classes should never both be none.
+	PairClass { base_repr: Option<Repr>, base_class: Option<Operand>, fiber_class: Option<Operand> },
+
+	// Class projections:
+	// TODO: Should fiber projections be considered projections in the general case? In the case of a sigma, they require calling into user code.
+	PairClassProjection(Operand, Projection),
+	WrapClassInner(Operand),
+	SharedClassInner(Operand),
 }
 
 #[derive(Clone)]
 pub enum Literal {
+	None,
 	Nat,
-	Bool,
-	Universe(UniverseKind),
+	Class,
+	Pi,
 	Num(usize),
 	BoolValue(bool),
 }
@@ -153,7 +150,7 @@ pub enum Modifier {
 	Unwrap(UniverseKind),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum Register {
 	Outer(Level),
 	Parameter,
@@ -247,20 +244,6 @@ impl Operation {
 				}
 				print!("}}")
 			}
-			Operation::Pi { base, family } => {
-				print!("pi {{");
-				base.pretty(interner);
-				print!(", ");
-				family.pretty(interner);
-				print!("}}");
-			}
-			Operation::Sigma { base, family, .. } => {
-				print!("sigma {{");
-				base.pretty(interner);
-				print!(", ");
-				family.pretty(interner);
-				print!("}}");
-			}
 			Operation::Id(a) => a.pretty(interner),
 			Operation::Pair { basepoint, fiberpoint } => {
 				print!("(");
@@ -270,9 +253,7 @@ impl Operation {
 				print!(")");
 			}
 			Operation::Suc(o) => pretty_unary_operation("suc", o, interner),
-			Operation::WrapType(o) => pretty_unary_operation("Wrap", o, interner),
 			Operation::WrapNew(o) => pretty_unary_operation("wrap", o, interner),
-			Operation::RcType(o) => pretty_unary_operation("RC", o, interner),
 			Operation::RcNew(o) => pretty_unary_operation("rc", o, interner),
 			Operation::IsPositive(o) => pretty_unary_operation("is_positive", o, interner),
 			Operation::Pred(o) => pretty_unary_operation("pred", o, interner),
@@ -332,22 +313,10 @@ impl Operand {
 	pub fn pretty(&self, _interner: &Rodeo) {
 		match self {
 			Operand::Literal(v) => match v {
+				Literal::None => print!("none"),
 				Literal::Nat => print!("nat"),
-				Literal::Bool => print!("bool"),
-				Literal::Universe(UniverseKind(c, r)) => {
-					print!("@type(");
-					match c {
-						Copyability::Trivial => print!("c0"),
-						Copyability::Nontrivial => print!("c1"),
-					}
-					print!(", ");
-					if let Some(repr) = r.as_ref() {
-						repr.pretty();
-					} else {
-						print!("rnone");
-					}
-					print!(")")
-				}
+				Literal::Class => print!("class"),
+				Literal::Pi => print!("pi"),
 				Literal::Num(n) => print!("{n}"),
 				Literal::BoolValue(b) => print!("{b}"),
 			},
