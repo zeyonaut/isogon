@@ -1,4 +1,4 @@
-def sigma : |x : copy| -> |xr : repr| -> |B : '(* x xr)| -> |y : copy| -> |yr : repr| -> '([B] -> * y yr) -> '(* (cmax x y) (rpair xr yr))
+def! sigma : |x : copy| -> |xr : repr| -> |B : '(* x xr)| -> |y : copy| -> |yr : repr| -> '([B] -> * y yr) -> '(* (cmax x y) (rpair xr yr))
 	= |x| |xr| |B| |y| |yr| |F| <|b : [B]| & [F] b>;
 
 [sigma c1 rnat <nat> c1 rpointer <|n| n :: |n| * c1 rpointer {

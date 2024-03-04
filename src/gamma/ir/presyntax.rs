@@ -7,7 +7,7 @@ pub enum Preterm {
 	Quote(Box<Self>),
 	Splice(Box<Self>),
 
-	Let { assignee: Name, ty: Box<Self>, argument: Box<Self>, tail: Box<Self> },
+	Let { assignee: Name, is_crisp: bool, ty: Box<Self>, argument: Box<Self>, tail: Box<Self> },
 
 	Pi { parameter: Name, base: Box<Self>, family: Box<Self> },
 	Sigma { parameter: Name, base: Box<Self>, family: Box<Self> },

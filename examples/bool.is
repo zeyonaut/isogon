@@ -1,10 +1,10 @@
-let T : bool -> * c1 rpointer
+let! T : bool -> * c1 rpointer
 	= |b| b :: |x| (* c1 rpointer) {
 		| false -> RC (nat  & bool)
 		| true  -> RC (bool & nat)
 	};
 
-let test : |b : bool| -> T b
+let! test : |b : bool| -> T b
 	= |b| b :: |x| (T x) {
 		| false -> rc (0, false)
 		| true  -> rc (true, 1)

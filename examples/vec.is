@@ -1,40 +1,40 @@
-def unit : copy -> '(* c1 rfun)
+def! unit : copy -> '(* c1 rfun)
 	= |c| <|A : * c rnone| -> A -> A>;
 
-let tt : [unit c0]
+let! tt : [unit c0]
 	= |A| |a| a;
 
-def bitvec : nat -> '(* c1 rpointer)
+def! bitvec : nat -> '(* c1 rpointer)
 	= |n| n :: |n| '(* c1 rpointer) {
 		| 0        -> <RC [unit c0]>
 		| suc @n.T -> <RC (bool & [T])>
 	};
 
-def not : bool -> bool
+def! not : bool -> bool
 	= |b| b :: |b| bool {
 		| false -> true
 		| true  -> false
 	};
 
-def lower : bool -> 'bool
+def! lower : bool -> 'bool
 	= |b| b :: |b| 'bool {
 		| false -> <false>
 		| true  -> <true>
 	};
 
-def is_even : nat -> bool
+def! is_even : nat -> bool
 	= |n| n :: |n| bool {
 		| 0        -> true
 		| suc @n.x -> not x
 	};
 
-def pred : nat -> nat
+def! pred : nat -> nat
 	= |n| n :: |n| nat {
 		| 0        -> 0
 		| suc @n.x -> n
 	};
 
-def make_bitvec : |n : nat| -> '[bitvec n]
+def! make_bitvec : |n : nat| -> '[bitvec n]
 	= |n| n :: |n| nat & '[bitvec n] {
 		| 0        -> pred n, <rc tt>
 		| suc @n.v -> pred (v/.), <rc ([lower (is_even (v/.))], [v/!])>

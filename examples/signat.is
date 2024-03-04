@@ -1,13 +1,13 @@
-let unit : * c1 rfun
+let! unit : * c1 rfun
 	= |A : * c0 rnone| -> A -> A;
 
-let list : nat -> * c1 rpointer
+let! list : nat -> * c1 rpointer
 	= |n| n :: |n| * c1 rpointer {
 		| 0        -> RC unit
 		| suc @n.T -> RC (T & nat)
 	};
 
-let make_list : |n : nat| -> list n
+let! make_list : |n : nat| -> list n
 	= |n| n :: |n| list n {
 		| 0        -> rc (|A| |a| a)
 		| suc @n.k -> rc (k, n)

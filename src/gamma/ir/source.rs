@@ -10,6 +10,7 @@ pub enum Token {
 	Number,
 	Project(Field),
 	Amp,
+	Bang,
 	Pipe,
 	Colon,
 	TwoColon,
@@ -182,6 +183,7 @@ impl LexedSource {
 				}
 				'&' => Amp,
 				'@' => At,
+				'!' => Bang,
 				'|' => Pipe,
 				':' =>
 					if let Some(':') = scanner.peek() {

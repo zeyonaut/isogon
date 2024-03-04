@@ -1,10 +1,10 @@
-let add : nat -> nat -> nat
+let! add : nat -> nat -> nat
 	= |a| |b| a :: |n| nat {
 		| 0        -> b
 		| suc @n.k -> suc k
 	};
 
-let fib2 : nat -> (nat & nat) -> (nat & nat)
+let! fib2 : nat -> (nat & nat) -> (nat & nat)
 	= |n| |x| n :: |n| (nat & nat) {
 		| 0        -> x
 		| suc @n.x -> add (x/.) (x/!), x/.

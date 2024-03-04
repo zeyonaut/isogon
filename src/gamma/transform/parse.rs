@@ -215,10 +215,10 @@ peg::parser! {
 			/ spine()
 
 		rule preterm() -> Preterm
-			= _ [Token::Keyword(Keyword::Let)] _ name:identifier() _ [Token::Colon] ty:spine_headed() _ [Token::Equal] argument:spine_headed() _ [Token::Semi] tail:preterm()
-				{ Preterm::Let { assignee: name, ty: ty.into(), argument: argument.into(), tail: tail.into() }}
-			/ _ [Token::Keyword(Keyword::Def)] name:identifier() _ [Token::Colon] ty:spine_headed() _ [Token::Equal] argument:spine_headed() _ [Token::Semi] tail:preterm()
-				{ Preterm::Splice(Preterm::Let { assignee: name, ty: ty.into(), argument: argument.into(), tail: Preterm::Quote(tail.into()).into() }.into()) }
+			= _ [Token::Keyword(Keyword::Let)] is_crisp:([Token::Bang] {()})? _ name:identifier() _ [Token::Colon] ty:spine_headed() _ [Token::Equal] argument:spine_headed() _ [Token::Semi] tail:preterm()
+				{ Preterm::Let { assignee: name, is_crisp: is_crisp.is_some(), ty: ty.into(), argument: argument.into(), tail: tail.into() }}
+			/ _ [Token::Keyword(Keyword::Def)] is_crisp:([Token::Bang] {()})? name:identifier() _ [Token::Colon] ty:spine_headed() _ [Token::Equal] argument:spine_headed() _ [Token::Semi] tail:preterm()
+				{ Preterm::Splice(Preterm::Let { assignee: name, is_crisp: is_crisp.is_some(), ty: ty.into(), argument: argument.into(), tail: Preterm::Quote(tail.into()).into() }.into()) }
 			/ spine_headed()
 
 		pub rule program() -> Preterm
