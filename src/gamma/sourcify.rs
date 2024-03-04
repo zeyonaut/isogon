@@ -3,7 +3,7 @@ use std::fmt::Write;
 use lasso::Rodeo;
 
 use super::{
-	common::{Copyability, Projection, ReprAtom},
+	common::{Copyability, Field, ReprAtom},
 	ir::syntax::{DynamicTerm, StaticTerm},
 };
 
@@ -116,8 +116,8 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 		Project(scrutinee, projection) => {
 			write_static_spine(scrutinee, f, interner)?;
 			match projection {
-				Projection::Base => write!(f, "/."),
-				Projection::Fiber => write!(f, "/!"),
+				Field::Base => write!(f, "/."),
+				Field::Fiber => write!(f, "/!"),
 			}
 		}
 		Let { ty, argument, tail } => {
@@ -134,9 +134,9 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			write_dynamic_atom(liftee, f, interner)
 		}
 		Quote(quotee) => {
-			write!(f, "[")?;
+			write!(f, "<")?;
 			write_dynamic(quotee, f, interner)?;
-			write!(f, "]")
+			write!(f, ">")
 		}
 		Nat => write!(f, "nat"),
 		Num(n) => write!(f, "{n}"),
@@ -163,7 +163,7 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 		BoolValue(b) => write!(f, "{}", if *b { "true" } else { "false" }),
 		CaseBool { scrutinee, motive, case_false, case_true } => {
 			write_static_spine(scrutinee, f, interner)?;
-			write!(f, " :: bool |{}| ", interner.resolve(&motive.parameter()))?;
+			write!(f, " :: |{}| ", interner.resolve(&motive.parameter()))?;
 			write_static(&motive.body, f, interner)?;
 			write!(f, " {{false -> ")?;
 			write_static(case_false, f, interner)?;
@@ -313,8 +313,8 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 		Project { scrutinee, projection, .. } => {
 			write_dynamic_spine(scrutinee, f, interner)?;
 			match projection {
-				Projection::Base => write!(f, "/."),
-				Projection::Fiber => write!(f, "/!"),
+				Field::Base => write!(f, "/."),
+				Field::Fiber => write!(f, "/!"),
 			}
 		}
 		Nat => write!(f, "nat"),
@@ -331,7 +331,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write_dynamic(case_nil, f, interner)?;
 			write!(
 				f,
-				" | suc {} {} -> ",
+				" | suc @{}.{} -> ",
 				interner.resolve(&case_suc.parameters[0]),
 				interner.resolve(&case_suc.parameters[1])
 			)?;

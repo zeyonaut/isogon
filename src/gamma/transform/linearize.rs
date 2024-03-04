@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::gamma::{
-	common::{Binder, Copyability, Projection, Repr, ReprAtom, UniverseKind},
+	common::{Binder, Copyability, Field, Repr, ReprAtom, UniverseKind},
 	ir::{
 		closed::{self, Function, Term, Variable},
 		linear::{
@@ -396,8 +396,8 @@ impl ProcedureBuilder {
 											self.assign(preblock, Operation::PairClassProjection(operand, *projection)),
 										)))),
 									Class::Pair { base, base_repr, fiber } => match projection {
-										Projection::Base => *base.unwrap(),
-										Projection::Fiber => *fiber.unwrap(),
+										Field::Base => *base.unwrap(),
+										Field::Fiber => *fiber.unwrap(),
 									},
 									_ => panic!("invalid modifier"),
 								},

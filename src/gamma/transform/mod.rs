@@ -17,4 +17,4 @@ pub use elaborate::elaborate;
 //pub use explicitize::explicitize;
 pub use linearize::linearize;
 //pub use lower::lower;
-pub use parse::parse;
+//pub use parse::parse;

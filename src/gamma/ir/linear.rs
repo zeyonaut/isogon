@@ -2,7 +2,7 @@ use std::{collections::HashMap, hash::Hash};
 
 use lasso::Rodeo;
 
-use crate::gamma::common::{Copyability, Level, Name, Projection, Repr, ReprAtom, UniverseKind};
+use crate::gamma::common::{Copyability, Field, Level, Name, Repr, ReprAtom, UniverseKind};
 
 pub struct Program {
 	pub entry: Procedure,
@@ -96,7 +96,7 @@ pub enum Operation {
 
 	// Class projections:
 	// TODO: Should fiber projections be considered projections in the general case? In the case of a sigma, they require calling into user code.
-	PairClassProjection(Operand, Projection),
+	PairClassProjection(Operand, Field),
 	WrapClassInner(Operand),
 	SharedClassInner(Operand),
 }
@@ -145,7 +145,7 @@ impl Load {
 
 #[derive(Clone)]
 pub enum Modifier {
-	Projection(Projection, UniverseKind),
+	Projection(Field, UniverseKind),
 	UnRc(UniverseKind),
 	Unwrap(UniverseKind),
 }
@@ -329,8 +329,8 @@ impl Operand {
 
 				for x in &m.modifiers {
 					match x {
-						Modifier::Projection(Projection::Base, _) => print!("/."),
-						Modifier::Projection(Projection::Fiber, _) => print!("/!"),
+						Modifier::Projection(Field::Base, _) => print!("/."),
+						Modifier::Projection(Field::Fiber, _) => print!("/!"),
 						Modifier::UnRc(_) => print!("/unrc"),
 						Modifier::Unwrap(_) => print!("/unwrap"),
 					}

@@ -1,6 +1,6 @@
 use crate::{
 	gamma::{
-		common::{Binder, Closure, Level, Projection},
+		common::{Binder, Closure, Field, Level},
 		ir::{
 			domain::{DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue, Value},
 			syntax::{DynamicTerm, StaticTerm},
@@ -79,8 +79,8 @@ impl Evaluate for StaticTerm {
 			),
 			Project(scrutinee, projection) => match scrutinee.evaluate_in(environment) {
 				StaticValue::Pair(basepoint, fiberpoint) => match projection {
-					Projection::Base => basepoint.as_ref().clone(),
-					Projection::Fiber => fiberpoint.as_ref().clone(),
+					Field::Base => basepoint.as_ref().clone(),
+					Field::Fiber => fiberpoint.as_ref().clone(),
 				},
 				StaticValue::Neutral(neutral) =>
 					StaticValue::Neutral(StaticNeutral::Project(rc!(neutral), projection)),
@@ -172,8 +172,8 @@ impl Evaluate for DynamicTerm {
 			Project { scrutinee, projection, projection_copyability, projection_representation } =>
 				match scrutinee.evaluate_in(environment) {
 					DynamicValue::Pair(basepoint, fiberpoint) => match projection {
-						Projection::Base => basepoint.as_ref().clone(),
-						Projection::Fiber => fiberpoint.as_ref().clone(),
+						Field::Base => basepoint.as_ref().clone(),
+						Field::Fiber => fiberpoint.as_ref().clone(),
 					},
 					DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Project {
 						scrutinee: neutral.into(),

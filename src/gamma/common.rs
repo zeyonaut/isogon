@@ -23,7 +23,7 @@ impl std::ops::AddAssign<usize> for Level {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Projection {
+pub enum Field {
 	Base,
 	Fiber,
 }

@@ -1,4 +1,4 @@
-use crate::gamma::common::{Binder, Copyability, Index, Name, Projection, Repr, ReprAtom};
+use crate::gamma::common::{Binder, Copyability, Field, Index, Name, Repr, ReprAtom};
 
 #[derive(Clone, Debug)]
 pub enum StaticTerm {
@@ -26,7 +26,7 @@ pub enum StaticTerm {
 		basepoint: Box<Self>,
 		fiberpoint: Box<Self>,
 	},
-	Project(Box<Self>, Projection),
+	Project(Box<Self>, Field),
 	Nat,
 	Num(usize),
 	Suc(Box<Self>),
@@ -145,7 +145,7 @@ pub enum DynamicTerm {
 	},
 	Project {
 		scrutinee: Box<Self>,
-		projection: Projection,
+		projection: Field,
 		projection_copyability: Box<StaticTerm>,
 		projection_representation: Box<StaticTerm>,
 	},

@@ -1,6 +1,6 @@
 use std::str::Chars;
 
-use crate::gamma::common::Projection;
+use crate::gamma::common::Field;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Token {
@@ -8,14 +8,17 @@ pub enum Token {
 	Keyword(Keyword),
 	Identifier,
 	Number,
-	Project(Projection),
+	Project(Field),
 	Amp,
 	Pipe,
 	Colon,
 	TwoColon,
 	Semi,
+	Period,
 	Comma,
 	Equal,
+	AngleL,
+	AngleR,
 	ParenL,
 	ParenR,
 	SquareL,
@@ -25,6 +28,7 @@ pub enum Token {
 	Ast,
 	Tick,
 	Arrow,
+	At,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -56,18 +60,6 @@ pub enum Keyword {
 	RNone,
 	RUniv,
 	Repr,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Lexeme {
-	pub token: Token,
-	pub range: (usize, usize),
-}
-
-impl Lexeme {
-	pub fn new(token: Token, range: (usize, usize)) -> Self {
-		Self { token, range }
-	}
 }
 
 pub struct LexError(pub usize, pub LexErrorKind);
@@ -111,7 +103,8 @@ impl<'s> Scanner<'s> {
 }
 
 pub struct LexedSource {
-	pub lexemes: Vec<Lexeme>,
+	pub tokens: Box<[Token]>,
+	pub ranges: Box<[(usize, usize)]>,
 }
 
 impl LexedSource {
@@ -155,7 +148,8 @@ impl LexedSource {
 		use LexErrorKind::*;
 		use Token::*;
 		let mut scanner = Scanner::new(source);
-		let mut lexemes = Vec::new();
+		let mut tokens = Vec::new();
+		let mut ranges = Vec::new();
 		while let Some((initial, start)) = scanner.next() {
 			let token = match initial {
 				' ' | '\n' | '\t' => {
@@ -179,14 +173,15 @@ impl LexedSource {
 				'/' => {
 					const EXPECTED: [char; 2] = ['.', '!'];
 					match scanner.pop() {
-						Some('.') => Project(Projection::Base),
-						Some('!') => Project(Projection::Fiber),
+						Some('.') => Project(Field::Base),
+						Some('!') => Project(Field::Fiber),
 						Some(_) =>
 							return Err(LexError(scanner.previous_position(), UnexpectedCharacter(&EXPECTED))),
-						None => return Err(LexError(scanner.previous_position(), UnexpectedEnd(&EXPECTED))),
+						None => return Err(LexError(scanner.position(), UnexpectedEnd(&EXPECTED))),
 					}
 				}
 				'&' => Amp,
+				'@' => At,
 				'|' => Pipe,
 				':' =>
 					if let Some(':') = scanner.peek() {
@@ -196,8 +191,11 @@ impl LexedSource {
 						Colon
 					},
 				';' => Semi,
+				'.' => Period,
 				',' => Comma,
 				'=' => Equal,
+				'<' => AngleL,
+				'>' => AngleR,
 				'(' => ParenL,
 				')' => ParenR,
 				'[' => SquareL,
@@ -212,14 +210,16 @@ impl LexedSource {
 						Some('>') => Arrow,
 						Some(_) =>
 							return Err(LexError(scanner.previous_position(), UnexpectedCharacter(&EXPECTED))),
-						None => return Err(LexError(scanner.previous_position(), UnexpectedEnd(&EXPECTED))),
+						None => return Err(LexError(scanner.position(), UnexpectedEnd(&EXPECTED))),
 					}
 				}
 				_ => return Err(LexError(scanner.previous_position(), UnrecognizedLexemePrefix)),
 			};
-			lexemes.push(Lexeme::new(token, (start, scanner.position())))
+			tokens.push(token);
+			ranges.push((start, scanner.position()));
 		}
 
-		Ok(Self { lexemes })
+		debug_assert!(tokens.len() == ranges.len());
+		Ok(Self { tokens: tokens.into_boxed_slice(), ranges: ranges.into_boxed_slice() })
 	}
 }

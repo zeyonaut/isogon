@@ -4,7 +4,9 @@ mod sourcify;
 mod transform;
 
 use lasso::Rodeo;
-use transform::{close, elaborate, evaluate::Evaluate, linearize, parse, stage::Stage, unstage::Unstage};
+use transform::{
+	close, elaborate, evaluate::Evaluate, linearize, parse::parse, stage::Stage, unstage::Unstage,
+};
 
 use self::{ir::syntax::DynamicTerm, sourcify::write_dynamic};
 use crate::gamma::transform::reify::Reify;
@@ -44,8 +46,6 @@ pub fn run(source: &str) {
 	println!("Linearization complete.");
 	println!("Linearized program:");
 	linear_program.pretty(&interner);
-
-	// TODO: Make drops explicit.
 
 	// TODO: Lower to Cranelift.
 }

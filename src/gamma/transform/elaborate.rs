@@ -1,9 +1,9 @@
 use crate::{
 	gamma::{
-		common::{bind, Closure, Copyability, Index, Level, Name, Projection, ReprAtom},
+		common::{bind, Closure, Copyability, Field, Index, Level, Name, ReprAtom},
 		ir::{
 			domain::{Conversion, DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue, Value},
-			presyntax::{DynamicPreterm, StaticPreterm},
+			presyntax::{Constructor, Former, Pattern, Preterm, Projector},
 			syntax::{DynamicTerm, StaticTerm},
 		},
 		transform::{
@@ -15,7 +15,7 @@ use crate::{
 };
 
 /// Elaborates a dynamic preterm to a dynamic term and synthesizes its type.
-pub fn elaborate(term: DynamicPreterm) -> (DynamicTerm, DynamicValue) {
+pub fn elaborate(term: Preterm) -> (DynamicTerm, DynamicValue) {
 	let (term, ty, ..) = synthesize_dynamic(&Context::empty(), term);
 	(term, ty)
 }
@@ -80,10 +80,9 @@ impl Context {
 	}
 }
 
-pub fn synthesize_static(context: &Context, term: StaticPreterm) -> (StaticTerm, StaticValue) {
-	use StaticPreterm::*;
+pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, StaticValue) {
 	match term {
-		Variable(name) => context
+		Preterm::Variable(name) => context
 			.tys
 			.iter()
 			.rev()
@@ -100,73 +99,16 @@ pub fn synthesize_static(context: &Context, term: StaticPreterm) -> (StaticTerm,
 				}
 			})
 			.unwrap(),
-		CopyabilityType => (StaticTerm::CopyabilityType, StaticValue::Universe),
-		Copyability(c) => (StaticTerm::Copyability(c), StaticValue::CopyabilityType),
-		MaxCopyability(a, b) => {
-			let a = verify_static(context, *a, StaticValue::CopyabilityType);
-			let b = verify_static(context, *b, StaticValue::CopyabilityType);
-			(StaticTerm::MaxCopyability(bx!(a), bx!(b)), StaticValue::CopyabilityType)
-		}
-		ReprType => (StaticTerm::ReprType, StaticValue::Universe),
-		ReprAtom(r) => (StaticTerm::ReprAtom(r), StaticValue::ReprType),
-		ReprPair(r0, r1) => {
-			let r0 = verify_static(context, *r0, StaticValue::ReprType);
-			let r1 = verify_static(context, *r1, StaticValue::ReprType);
-			(StaticTerm::ReprPair(bx!(r0), bx!(r1)), StaticValue::ReprType)
-		}
-		ReprMax(r0, r1) => {
-			let r0 = verify_static(context, *r0, StaticValue::ReprType);
-			let r1 = verify_static(context, *r1, StaticValue::ReprType);
-			(StaticTerm::ReprMax(bx!(r0), bx!(r1)), StaticValue::ReprType)
-		}
-		ReprUniv(c) => {
-			let c = verify_static(context, *c, StaticValue::CopyabilityType);
-			(StaticTerm::ReprUniv(bx!(c)), StaticValue::ReprType)
-		}
-		Lambda { .. } | Pair { .. } => panic!(),
-		Apply { scrutinee, argument } => {
-			let (scrutinee, scrutinee_ty) = synthesize_static(context, *scrutinee);
-			let StaticValue::IndexedProduct(base, family) = scrutinee_ty else { panic!() };
-			let argument = verify_static(context, *argument, (*base).clone());
+
+		Preterm::Quote(quotee) => {
+			let (quotee, quotee_ty, copy, repr) = synthesize_dynamic(context, *quotee);
 			(
-				StaticTerm::Apply { scrutinee: bx!(scrutinee), argument: bx!(argument.clone()) },
-				family.evaluate_with([argument.evaluate_in(&context.environment)]),
+				StaticTerm::Quote(bx!(quotee)),
+				StaticValue::Lift { ty: quotee_ty.into(), copy: copy.into(), repr: repr.into() },
 			)
 		}
-		Project(scrutinee, projection) => {
-			let (scrutinee, scrutinee_ty) = synthesize_static(context, *scrutinee);
-			let StaticValue::IndexedSum(base, family) = scrutinee_ty else { panic!() };
-			match projection {
-				Projection::Base => (StaticTerm::Project(bx!(scrutinee), projection), base.as_ref().clone()),
-				Projection::Fiber => {
-					let basepoint = StaticTerm::Project(bx!(scrutinee.clone()), Projection::Base);
-					let basepoint = basepoint.evaluate_in(&context.environment);
-					(StaticTerm::Project(bx!(scrutinee), projection), family.evaluate_with([basepoint]))
-				}
-			}
-		}
-		Universe => (StaticTerm::Universe, StaticValue::Universe),
-		Pi { parameter, base, family } => {
-			let base = verify_static(context, *base, StaticValue::Universe);
-			let base_value = base.clone().evaluate_in(&context.environment);
-			let family = verify_static(
-				&context.clone().bind_static(parameter, base_value),
-				*family,
-				StaticValue::Universe,
-			);
-			(StaticTerm::Pi(bx!(base), bind([parameter], bx!(family))), StaticValue::Universe)
-		}
-		Sigma { parameter, base, family } => {
-			let base = verify_static(context, *base, StaticValue::Universe);
-			let base_value = base.clone().evaluate_in(&context.environment);
-			let family = verify_static(
-				&context.clone().bind_static(parameter, base_value),
-				*family,
-				StaticValue::Universe,
-			);
-			(StaticTerm::Sigma(bx!(base), bind([parameter], bx!(family))), StaticValue::Universe)
-		}
-		Let { assignee, ty, argument, tail } => {
+
+		Preterm::Let { assignee, ty, argument, tail } => {
 			let ty = verify_static(context, *ty, StaticValue::Universe);
 			let ty_value = ty.clone().evaluate_in(&context.environment);
 			let argument = verify_static(context, *argument, ty_value.clone());
@@ -179,96 +121,235 @@ pub fn synthesize_static(context: &Context, term: StaticPreterm) -> (StaticTerm,
 				tail_ty,
 			)
 		}
-		Lift(liftee) => {
-			let (liftee, copy, repr) = elaborate_dynamic_type(context, *liftee);
-			(
-				StaticTerm::Lift {
-					liftee: liftee.into(),
-					copy: copy.reify_in(context.len()).into(),
-					repr: repr.reify_in(context.len()).into(),
-				},
-				StaticValue::Universe,
-			)
-		}
-		Quote(quotee) => {
-			let (quotee, quotee_ty, copy, repr) = synthesize_dynamic(context, *quotee);
-			(
-				StaticTerm::Quote(bx!(quotee)),
-				StaticValue::Lift { ty: quotee_ty.into(), copy: copy.into(), repr: repr.into() },
-			)
-		}
 
-		Nat => (StaticTerm::Nat, StaticValue::Universe),
-		Num(n) => (StaticTerm::Num(n), StaticValue::Nat),
-		Suc(prev) => {
-			let prev = verify_static(context, *prev, StaticValue::Nat);
-			if let StaticTerm::Num(p) = prev {
-				(StaticTerm::Num(p + 1), StaticValue::Nat)
-			} else {
-				(StaticTerm::Suc(bx!(prev)), StaticValue::Nat)
+		Preterm::Pi { parameter, base, family } => {
+			let base = verify_static(context, *base, StaticValue::Universe);
+			let base_value = base.clone().evaluate_in(&context.environment);
+			let family = verify_static(
+				&context.clone().bind_static(parameter, base_value),
+				*family,
+				StaticValue::Universe,
+			);
+			(StaticTerm::Pi(bx!(base), bind([parameter], bx!(family))), StaticValue::Universe)
+		}
+		Preterm::Sigma { parameter, base, family } => {
+			let base = verify_static(context, *base, StaticValue::Universe);
+			let base_value = base.clone().evaluate_in(&context.environment);
+			let family = verify_static(
+				&context.clone().bind_static(parameter, base_value),
+				*family,
+				StaticValue::Universe,
+			);
+			(StaticTerm::Sigma(bx!(base), bind([parameter], bx!(family))), StaticValue::Universe)
+		}
+		Preterm::Lambda { .. } | Preterm::Pair { .. } => panic!(),
+
+		Preterm::Former(former, arguments) => match former {
+			Former::Lift => {
+				let [liftee] = arguments.try_into().unwrap();
+				let (liftee, copy, repr) = elaborate_dynamic_type(context, liftee);
+				(
+					StaticTerm::Lift {
+						liftee: liftee.into(),
+						copy: copy.reify_in(context.len()).into(),
+						repr: repr.reify_in(context.len()).into(),
+					},
+					StaticValue::Universe,
+				)
+			}
+			Former::Nat if arguments.is_empty() => (StaticTerm::Nat, StaticValue::Universe),
+			Former::Bool if arguments.is_empty() => (StaticTerm::Bool, StaticValue::Universe),
+			Former::Copy if arguments.is_empty() => (StaticTerm::CopyabilityType, StaticValue::Universe),
+			Former::Repr if arguments.is_empty() => (StaticTerm::ReprType, StaticValue::Universe),
+			Former::Universe if arguments.is_empty() => (StaticTerm::Universe, StaticValue::Universe),
+			_ => panic!(),
+		},
+		Preterm::Constructor(constructor, arguments) => match constructor {
+			Constructor::Num(n) if arguments.is_empty() => (StaticTerm::Num(n), StaticValue::Nat),
+			Constructor::Suc => {
+				let [prev] = arguments.try_into().unwrap();
+				let prev = verify_static(context, prev, StaticValue::Nat);
+				if let StaticTerm::Num(p) = prev {
+					(StaticTerm::Num(p + 1), StaticValue::Nat)
+				} else {
+					(StaticTerm::Suc(bx!(prev)), StaticValue::Nat)
+				}
+			}
+			Constructor::BoolValue(b) if arguments.is_empty() => (StaticTerm::BoolValue(b), StaticValue::Bool),
+			Constructor::Copyability(c) if arguments.is_empty() =>
+				(StaticTerm::Copyability(c), StaticValue::CopyabilityType),
+			Constructor::CopyMax => {
+				let [a, b] = arguments.try_into().unwrap();
+				let a = verify_static(context, a, StaticValue::CopyabilityType);
+				let b = verify_static(context, b, StaticValue::CopyabilityType);
+				(StaticTerm::MaxCopyability(bx!(a), bx!(b)), StaticValue::CopyabilityType)
+			}
+			Constructor::ReprAtom(r) if arguments.is_empty() => (StaticTerm::ReprAtom(r), StaticValue::ReprType),
+			Constructor::ReprPair => {
+				let [r0, r1] = arguments.try_into().unwrap();
+				let r0 = verify_static(context, r0, StaticValue::ReprType);
+				let r1 = verify_static(context, r1, StaticValue::ReprType);
+				(StaticTerm::ReprPair(bx!(r0), bx!(r1)), StaticValue::ReprType)
+			}
+			Constructor::ReprMax => {
+				let [r0, r1] = arguments.try_into().unwrap();
+				let r0 = verify_static(context, r0, StaticValue::ReprType);
+				let r1 = verify_static(context, r1, StaticValue::ReprType);
+				(StaticTerm::ReprMax(bx!(r0), bx!(r1)), StaticValue::ReprType)
+			}
+			Constructor::ReprUniv => {
+				let [c] = arguments.try_into().unwrap();
+				let c = verify_static(context, c, StaticValue::CopyabilityType);
+				(StaticTerm::ReprUniv(bx!(c)), StaticValue::ReprType)
+			}
+			_ => panic!(),
+		},
+
+		Preterm::Project(scrutinee, projector) => match projector {
+			Projector::Field(field) => {
+				let (scrutinee, scrutinee_ty) = synthesize_static(context, *scrutinee);
+				let StaticValue::IndexedSum(base, family) = scrutinee_ty else { panic!() };
+				match field {
+					Field::Base => (StaticTerm::Project(bx!(scrutinee), field), base.as_ref().clone()),
+					Field::Fiber => {
+						let basepoint = StaticTerm::Project(bx!(scrutinee.clone()), Field::Base);
+						let basepoint = basepoint.evaluate_in(&context.environment);
+						(StaticTerm::Project(bx!(scrutinee), field), family.evaluate_with([basepoint]))
+					}
+				}
+			}
+			_ => panic!(),
+		},
+
+		Preterm::Call { callee, argument } => {
+			let (callee, scrutinee_ty) = synthesize_static(context, *callee);
+			let StaticValue::IndexedProduct(base, family) = scrutinee_ty else { panic!() };
+			let argument = verify_static(context, *argument, (*base).clone());
+			(
+				StaticTerm::Apply { scrutinee: bx!(callee), argument: bx!(argument.clone()) },
+				family.evaluate_with([argument.evaluate_in(&context.environment)]),
+			)
+		}
+		Preterm::Split { scrutinee, motive_parameter, motive, cases } => {
+			let (scrutinee, scrutinee_ty) = synthesize_static(context, *scrutinee);
+			let scrutinee_value = scrutinee.clone().evaluate_in(&context.environment);
+			match scrutinee_ty {
+				StaticValue::Nat => {
+					assert!(cases.len() == 2);
+					let motive = verify_static(
+						&context.clone().bind_static(motive_parameter, StaticValue::Nat),
+						*motive,
+						StaticValue::Universe,
+					);
+					let motive_value =
+						Closure::new(context.environment.clone(), [motive_parameter], motive.clone());
+					// Avoid cloning.
+					let case_nil_position = cases
+						.iter()
+						.position(|(pattern, _)| {
+							if let Pattern::Construction(Constructor::Num(0), args) = pattern {
+								args.is_empty()
+							} else {
+								false
+							}
+						})
+						.unwrap();
+					let case_nil = cases[case_nil_position].1.clone();
+					let (index, witness) = {
+						let Pattern::Construction(Constructor::Suc, args) = cases[1 - case_nil_position].0.clone()
+						else {
+							panic!()
+						};
+						let [arg] = args.try_into().unwrap();
+						let Pattern::Witness { index, witness } = arg else { panic!() };
+						(index, witness)
+					};
+					let case_suc = cases[1 - case_nil_position].1.clone();
+					let case_nil =
+						verify_static(context, case_nil, motive_value.evaluate_with([StaticValue::Num(0)]));
+					let case_suc = verify_static(
+						&context
+							.clone()
+							.bind_static(index, StaticValue::Nat)
+							.bind_static(witness, motive_value.autolyze(context.len())),
+						case_suc,
+						motive_value.evaluate_with([StaticValue::Neutral(StaticNeutral::Suc(rc!(
+							StaticNeutral::Variable(index, context.len())
+						)))]),
+					);
+					(
+						StaticTerm::CaseNat {
+							scrutinee: bx!(scrutinee),
+							motive: bind([motive_parameter], bx!(motive)),
+							case_nil: bx!(case_nil),
+							case_suc: bind([index, witness], bx!(case_suc)),
+						},
+						motive_value.evaluate_with([scrutinee_value]),
+					)
+				}
+				StaticValue::Bool => {
+					assert!(cases.len() == 2);
+					let motive_term = verify_static(
+						&context.clone().bind_static(motive_parameter, StaticValue::Bool),
+						*motive,
+						StaticValue::Universe,
+					);
+					let motive_value =
+						Closure::new(context.environment.clone(), [motive_parameter], motive_term.clone());
+					// TODO: Avoid cloning.
+					let case_false = cases[cases
+						.iter()
+						.position(|(pattern, _)| {
+							if let Pattern::Construction(Constructor::BoolValue(false), args) = pattern {
+								args.is_empty()
+							} else {
+								false
+							}
+						})
+						.unwrap()]
+					.1
+					.clone();
+					let case_true = cases[cases
+						.iter()
+						.position(|(pattern, _)| {
+							if let Pattern::Construction(Constructor::BoolValue(true), args) = pattern {
+								args.is_empty()
+							} else {
+								false
+							}
+						})
+						.unwrap()]
+					.1
+					.clone();
+					let case_false = verify_static(
+						context,
+						case_false,
+						motive_value.evaluate_with([StaticValue::BoolValue(false)]),
+					);
+					let case_true = verify_static(
+						context,
+						case_true,
+						motive_value.evaluate_with([StaticValue::BoolValue(true)]),
+					);
+					(
+						StaticTerm::CaseBool {
+							scrutinee: bx!(scrutinee),
+							motive: bind([motive_parameter], bx!(motive_term)),
+							case_false: bx!(case_false),
+							case_true: bx!(case_true),
+						},
+						motive_value.evaluate_with([scrutinee_value]),
+					)
+				}
+				_ => panic!(),
 			}
 		}
-		CaseNat { scrutinee, motive_parameter, motive, case_nil, case_suc_parameters, case_suc } => {
-			let scrutinee = verify_static(context, *scrutinee, StaticValue::Nat);
-			let scrutinee_value = scrutinee.clone().evaluate_in(&context.environment);
-			let motive = verify_static(
-				&context.clone().bind_static(motive_parameter, StaticValue::Nat),
-				*motive,
-				StaticValue::Universe,
-			);
-			let motive_value = Closure::new(context.environment.clone(), [motive_parameter], motive.clone());
-			let case_nil = verify_static(context, *case_nil, motive_value.evaluate_with([StaticValue::Num(0)]));
-			// NOTE: I'm not entirely sure this is 'right', as motive is is formed in a smaller context, but I believe this should be 'safe' because of de Bruijn levels.
-			let case_suc = verify_static(
-				&context
-					.clone()
-					.bind_static(case_suc_parameters.0, StaticValue::Nat)
-					.bind_static(case_suc_parameters.1, motive_value.autolyze(context.len())),
-				*case_suc,
-				motive_value.evaluate_with([StaticValue::Neutral(StaticNeutral::Suc(rc!(
-					StaticNeutral::Variable(case_suc_parameters.0, context.len())
-				)))]),
-			);
-			(
-				StaticTerm::CaseNat {
-					scrutinee: bx!(scrutinee),
-					motive: bind([motive_parameter], bx!(motive)),
-					case_nil: bx!(case_nil),
-					case_suc: bind([case_suc_parameters.0, case_suc_parameters.1], bx!(case_suc)),
-				},
-				motive_value.evaluate_with([scrutinee_value]),
-			)
-		}
-		Bool => (StaticTerm::Bool, StaticValue::Universe),
-		BoolValue(b) => (StaticTerm::BoolValue(b), StaticValue::Bool),
-		CaseBool { scrutinee, motive, case_false, case_true } => {
-			let scrutinee = verify_static(context, *scrutinee, StaticValue::Bool);
-			let scrutinee_value = scrutinee.clone().evaluate_in(&context.environment);
-			let motive_term = verify_static(
-				&context.clone().bind_static(motive.parameter(), StaticValue::Bool),
-				*motive.body,
-				StaticValue::Universe,
-			);
-			let motive_value = Closure::new(context.environment.clone(), motive.parameters, motive_term.clone());
-			let case_false =
-				verify_static(context, *case_false, motive_value.evaluate_with([StaticValue::BoolValue(false)]));
-			let case_true =
-				verify_static(context, *case_true, motive_value.evaluate_with([StaticValue::BoolValue(true)]));
-			(
-				StaticTerm::CaseBool {
-					scrutinee: bx!(scrutinee),
-					motive: bind(motive.parameters, bx!(motive_term)),
-					case_false: bx!(case_false),
-					case_true: bx!(case_true),
-				},
-				motive_value.evaluate_with([scrutinee_value]),
-			)
-		}
+		_ => panic!(),
 	}
 }
 
-pub fn verify_static(context: &Context, term: StaticPreterm, ty: StaticValue) -> StaticTerm {
-	use StaticPreterm::*;
+pub fn verify_static(context: &Context, term: Preterm, ty: StaticValue) -> StaticTerm {
+	use Preterm::*;
 	match (term, ty) {
 		(Lambda { parameter, body }, StaticValue::IndexedProduct(base, family)) => {
 			let body = verify_static(
@@ -320,11 +401,10 @@ pub fn verify_static(context: &Context, term: StaticPreterm, ty: StaticValue) ->
 // Term, type, copyability, representation
 pub fn synthesize_dynamic(
 	context: &Context,
-	term: DynamicPreterm,
+	term: Preterm,
 ) -> (DynamicTerm, DynamicValue, StaticValue, StaticValue) {
-	use DynamicPreterm::*;
 	match term {
-		Variable(name) => context
+		Preterm::Variable(name) => context
 			.tys
 			.iter()
 			.rev()
@@ -341,7 +421,16 @@ pub fn synthesize_dynamic(
 				}
 			})
 			.unwrap(),
-		Let { assignee, ty, argument, tail } => {
+
+		Preterm::Splice(splicee) => {
+			let (splicee, StaticValue::Lift { ty: liftee, copy, repr }) = synthesize_static(context, *splicee)
+			else {
+				panic!()
+			};
+			(DynamicTerm::Splice(bx!(splicee)), liftee, (*copy).clone(), (*repr).clone())
+		}
+
+		Preterm::Let { assignee, ty, argument, tail } => {
 			let (ty, base_copy, base_repr) = elaborate_dynamic_type(context, *ty);
 			let ty_value = ty.clone().evaluate_in(&context.environment);
 			let argument = verify_dynamic(context, *argument, ty_value.clone());
@@ -358,188 +447,8 @@ pub fn synthesize_dynamic(
 				tail_repr,
 			)
 		}
-		Splice(splicee) => {
-			let (splicee, StaticValue::Lift { ty: liftee, copy, repr }) = synthesize_static(context, *splicee)
-			else {
-				panic!()
-			};
-			(DynamicTerm::Splice(bx!(splicee)), liftee, (*copy).clone(), (*repr).clone())
-		}
-		Lambda { .. } | Pair { .. } => panic!(),
-		Apply { scrutinee, argument } => {
-			let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *scrutinee);
-			let DynamicValue::IndexedProduct { base, family_copyability, family_representation, family, .. } =
-				scrutinee_ty
-			else {
-				panic!()
-			};
-			let argument = verify_dynamic(context, *argument, (*base).clone());
-			let argument_value = argument.clone().evaluate_in(&context.environment);
-			(
-				DynamicTerm::Apply {
-					scrutinee: bx!(scrutinee),
-					argument: bx!(argument),
-					fiber_copyability: family_copyability.reify_in(context.len()).into(),
-					fiber_representation: family_representation.reify_in(context.len()).into(),
-					base: base.reify_in(context.len()).into(),
-					family: bind(
-						family.parameters,
-						bx!(family.autolyze(context.len()).reify_in(context.len() + 1)),
-					),
-				},
-				family.evaluate_with([argument_value]),
-				(*family_copyability).clone(),
-				(*family_representation).clone(),
-			)
-		}
-		Project(scrutinee, projection) => {
-			let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *scrutinee);
-			let DynamicValue::IndexedSum {
-				base_copyability,
-				base_representation,
-				base,
-				family_copyability,
-				family_representation,
-				family,
-			} = scrutinee_ty
-			else {
-				panic!()
-			};
-			let basepoint = DynamicTerm::Project {
-				scrutinee: scrutinee.clone().into(),
-				projection: Projection::Base,
-				projection_copyability: base_copyability.reify_in(context.len()).into(),
-				projection_representation: base_representation.reify_in(context.len()).into(),
-			};
-			match projection {
-				Projection::Base =>
-					(basepoint, base.as_ref().clone(), (*base_copyability).clone(), (*base_representation).clone()),
-				Projection::Fiber => {
-					let basepoint = basepoint.evaluate_in(&context.environment);
-					(
-						DynamicTerm::Project {
-							scrutinee: scrutinee.into(),
-							projection,
-							projection_copyability: family_copyability.reify_in(context.len()).into(),
-							projection_representation: family_representation.reify_in(context.len()).into(),
-						},
-						family.evaluate_with([basepoint]),
-						(*family_copyability).clone(),
-						(*family_representation).clone(),
-					)
-				}
-			}
-		}
-		Universe { copyability, representation } => {
-			let copyability = verify_static(context, *copyability, StaticValue::CopyabilityType);
-			let copyability_value = copyability.clone().evaluate_in(&context.environment);
 
-			let representation = verify_static(context, *representation, StaticValue::ReprType);
-
-			let universe_representation = StaticValue::univ_representation(copyability_value.clone());
-
-			(
-				DynamicTerm::Universe {
-					copyability: bx!(copyability.clone()),
-					representation: bx!(representation),
-				},
-				DynamicValue::Universe {
-					copyability: rc!(copyability_value.clone()),
-					representation: rc!(universe_representation.clone()),
-				},
-				copyability_value,
-				universe_representation,
-			)
-		}
-		WrapType(ty) => {
-			let (ty, copy, rep) = elaborate_dynamic_type(context, *ty);
-			(
-				DynamicTerm::WrapType {
-					inner: ty.into(),
-					copyability: copy.reify_in(context.len()).into(),
-					representation: rep.reify_in(context.len()).into(),
-				},
-				DynamicValue::Universe {
-					copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial).clone()),
-					representation: rc!(rep.clone()),
-				},
-				StaticValue::Copyability(Copyability::Nontrivial),
-				StaticValue::ReprAtom(ReprAtom::Class),
-			)
-		}
-		WrapNew(tm) => {
-			let (tm, ty, copy, repr) = synthesize_dynamic(context, *tm);
-			(
-				DynamicTerm::WrapNew(bx!(tm)),
-				DynamicValue::WrapType {
-					inner: ty.into(),
-					copyability: copy.into(),
-					representation: repr.clone().into(),
-				},
-				StaticValue::Copyability(Copyability::Nontrivial),
-				repr,
-			)
-		}
-		Unwrap(tm) => {
-			let (tm, DynamicValue::WrapType { inner: ty, copyability, representation }, _, _) =
-				synthesize_dynamic(context, *tm)
-			else {
-				panic!()
-			};
-			(
-				DynamicTerm::Unwrap {
-					scrutinee: bx!(tm),
-					copyability: copyability.reify_in(context.len()).into(),
-					representation: representation.reify_in(context.len()).into(),
-				},
-				ty.as_ref().clone(),
-				(*copyability).clone(),
-				(*representation).clone(),
-			)
-		}
-		RcType(ty) => {
-			let (ty, copy, repr) = elaborate_dynamic_type(context, *ty);
-			(
-				DynamicTerm::RcType {
-					inner: bx!(ty),
-					copyability: copy.reify_in(context.len()).into(),
-					representation: repr.reify_in(context.len()).into(),
-				},
-				DynamicValue::Universe {
-					copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)),
-					representation: rc!(StaticValue::ReprAtom(ReprAtom::Pointer)),
-				},
-				StaticValue::Copyability(Copyability::Nontrivial),
-				StaticValue::ReprAtom(ReprAtom::Class),
-			)
-		}
-		RcNew(tm) => {
-			let (tm, ty, copy, repr) = synthesize_dynamic(context, *tm);
-			(
-				DynamicTerm::RcNew(bx!(tm)),
-				DynamicValue::RcType { inner: ty.into(), copyability: copy.into(), representation: repr.into() },
-				StaticValue::Copyability(Copyability::Nontrivial),
-				StaticValue::ReprAtom(ReprAtom::Pointer),
-			)
-		}
-		UnRc(tm) => {
-			let (tm, DynamicValue::RcType { inner: ty, copyability, representation }, _, _) =
-				synthesize_dynamic(context, *tm)
-			else {
-				panic!()
-			};
-			(
-				DynamicTerm::UnRc {
-					scrutinee: tm.into(),
-					copyability: copyability.reify_in(context.len()).into(),
-					representation: representation.reify_in(context.len()).into(),
-				},
-				ty.as_ref().clone(),
-				(*copyability).clone(),
-				(*representation).clone(),
-			)
-		}
-		Pi { parameter, base, family } => {
+		Preterm::Pi { parameter, base, family } => {
 			let (base, base_copyability, base_representation) = elaborate_dynamic_type(context, *base);
 			let base_value = base.clone().evaluate_in(&context.environment);
 			let (family, family_copyability, family_representation) = elaborate_dynamic_type(
@@ -568,7 +477,7 @@ pub fn synthesize_dynamic(
 				StaticValue::ReprAtom(ReprAtom::Class),
 			)
 		}
-		Sigma { parameter, base, family } => {
+		Preterm::Sigma { parameter, base, family } => {
 			let (base, base_copyability, base_representation) = elaborate_dynamic_type(context, *base);
 			let base_value = base.clone().evaluate_in(&context.environment);
 			let (family, family_copyability, family_representation) = elaborate_dynamic_type(
@@ -600,148 +509,399 @@ pub fn synthesize_dynamic(
 				StaticValue::univ_representation(copyability),
 			)
 		}
-		Nat => (
-			DynamicTerm::Nat,
-			DynamicValue::Universe {
-				copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)),
-				representation: rc!(StaticValue::ReprAtom(ReprAtom::Nat)),
-			},
-			StaticValue::Copyability(Copyability::Nontrivial),
-			StaticValue::ReprAtom(ReprAtom::Class),
-		),
-		Num(n) => (
-			DynamicTerm::Num(n),
-			DynamicValue::Nat,
-			StaticValue::Copyability(Copyability::Nontrivial),
-			StaticValue::ReprAtom(ReprAtom::Nat),
-		),
-		Suc(prev) => {
-			let prev = verify_dynamic(context, *prev, DynamicValue::Nat);
-			if let DynamicTerm::Num(p) = prev {
+		Preterm::Lambda { .. } | Preterm::Pair { .. } => panic!(),
+
+		Preterm::Former(former, arguments) => match former {
+			Former::Wrap => {
+				let [ty] = arguments.try_into().unwrap();
+				let (ty, copy, rep) = elaborate_dynamic_type(context, ty);
 				(
-					DynamicTerm::Num(p + 1),
-					DynamicValue::Nat,
+					DynamicTerm::WrapType {
+						inner: ty.into(),
+						copyability: copy.reify_in(context.len()).into(),
+						representation: rep.reify_in(context.len()).into(),
+					},
+					DynamicValue::Universe {
+						copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial).clone()),
+						representation: rc!(rep.clone()),
+					},
 					StaticValue::Copyability(Copyability::Nontrivial),
-					StaticValue::ReprAtom(ReprAtom::Nat),
-				)
-			} else {
-				(
-					DynamicTerm::Suc(bx!(prev)),
-					DynamicValue::Nat,
-					StaticValue::Copyability(Copyability::Nontrivial),
-					StaticValue::ReprAtom(ReprAtom::Nat),
+					StaticValue::ReprAtom(ReprAtom::Class),
 				)
 			}
-		}
-		CaseNat { scrutinee, motive_parameter, motive, case_nil, case_suc_parameters, case_suc } => {
-			let scrutinee = verify_dynamic(context, *scrutinee, DynamicValue::Nat);
-			let scrutinee_value = scrutinee.clone().evaluate_in(&context.environment);
-			let (motive, fiber_copy, fiber_repr) = elaborate_dynamic_type(
-				&context.clone().bind_dynamic(
-					motive_parameter,
-					DynamicValue::Nat,
+			Former::Rc => {
+				let [ty] = arguments.try_into().unwrap();
+				let (ty, copy, repr) = elaborate_dynamic_type(context, ty);
+				(
+					DynamicTerm::RcType {
+						inner: bx!(ty),
+						copyability: copy.reify_in(context.len()).into(),
+						representation: repr.reify_in(context.len()).into(),
+					},
+					DynamicValue::Universe {
+						copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)),
+						representation: rc!(StaticValue::ReprAtom(ReprAtom::Pointer)),
+					},
 					StaticValue::Copyability(Copyability::Nontrivial),
-					StaticValue::ReprAtom(ReprAtom::Nat),
-				),
-				*motive,
-			);
-			let motive = Closure::new(context.environment.clone(), [motive_parameter], motive.clone());
-			let case_nil = verify_dynamic(context, *case_nil, motive.evaluate_with([DynamicValue::Num(0)]));
-			// NOTE: I'm not entirely sure this is 'right', as motive is is formed in a smaller context, but I believe this should be 'safe' because of de Bruijn levels.
-			let case_suc = verify_dynamic(
-				&context
-					.clone()
-					.bind_dynamic(
-						case_suc_parameters.0,
+					StaticValue::ReprAtom(ReprAtom::Class),
+				)
+			}
+			Former::Nat if arguments.is_empty() => (
+				DynamicTerm::Nat,
+				DynamicValue::Universe {
+					copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)),
+					representation: rc!(StaticValue::ReprAtom(ReprAtom::Nat)),
+				},
+				StaticValue::Copyability(Copyability::Nontrivial),
+				StaticValue::ReprAtom(ReprAtom::Class),
+			),
+			Former::Bool if arguments.is_empty() => (
+				DynamicTerm::Bool,
+				DynamicValue::Universe {
+					copyability: rc!(StaticValue::Copyability(Copyability::Trivial)),
+					representation: rc!(StaticValue::ReprAtom(ReprAtom::Byte)),
+				},
+				StaticValue::Copyability(Copyability::Trivial),
+				StaticValue::ReprNone,
+			),
+			Former::Universe => {
+				let [copyability, representation] = arguments.try_into().unwrap();
+				let copyability = verify_static(context, copyability, StaticValue::CopyabilityType);
+				let copyability_value = copyability.clone().evaluate_in(&context.environment);
+
+				let representation = verify_static(context, representation, StaticValue::ReprType);
+
+				let universe_representation = StaticValue::univ_representation(copyability_value.clone());
+
+				(
+					DynamicTerm::Universe {
+						copyability: bx!(copyability.clone()),
+						representation: bx!(representation),
+					},
+					DynamicValue::Universe {
+						copyability: rc!(copyability_value.clone()),
+						representation: rc!(universe_representation.clone()),
+					},
+					copyability_value,
+					universe_representation,
+				)
+			}
+			_ => panic!(),
+		},
+		Preterm::Constructor(constructor, arguments) => match constructor {
+			Constructor::Rc => {
+				let [tm] = arguments.try_into().unwrap();
+				let (tm, ty, copy, repr) = synthesize_dynamic(context, tm);
+				(
+					DynamicTerm::RcNew(bx!(tm)),
+					DynamicValue::RcType {
+						inner: ty.into(),
+						copyability: copy.into(),
+						representation: repr.into(),
+					},
+					StaticValue::Copyability(Copyability::Nontrivial),
+					StaticValue::ReprAtom(ReprAtom::Pointer),
+				)
+			}
+			Constructor::Wrap => {
+				let [tm] = arguments.try_into().unwrap();
+				let (tm, ty, copy, repr) = synthesize_dynamic(context, tm);
+				(
+					DynamicTerm::WrapNew(bx!(tm)),
+					DynamicValue::WrapType {
+						inner: ty.into(),
+						copyability: copy.into(),
+						representation: repr.clone().into(),
+					},
+					StaticValue::Copyability(Copyability::Nontrivial),
+					repr,
+				)
+			}
+			Constructor::Num(n) if arguments.is_empty() => (
+				DynamicTerm::Num(n),
+				DynamicValue::Nat,
+				StaticValue::Copyability(Copyability::Nontrivial),
+				StaticValue::ReprAtom(ReprAtom::Nat),
+			),
+			Constructor::Suc => {
+				let [prev] = arguments.try_into().unwrap();
+				let prev = verify_dynamic(context, prev, DynamicValue::Nat);
+				if let DynamicTerm::Num(p) = prev {
+					(
+						DynamicTerm::Num(p + 1),
 						DynamicValue::Nat,
 						StaticValue::Copyability(Copyability::Nontrivial),
 						StaticValue::ReprAtom(ReprAtom::Nat),
 					)
-					.bind_dynamic(
-						case_suc_parameters.1,
-						motive.autolyze(context.len()),
-						fiber_copy.clone(),
-						fiber_repr.clone(),
+				} else {
+					(
+						DynamicTerm::Suc(bx!(prev)),
+						DynamicValue::Nat,
+						StaticValue::Copyability(Copyability::Nontrivial),
+						StaticValue::ReprAtom(ReprAtom::Nat),
+					)
+				}
+			}
+			Constructor::BoolValue(b) if arguments.is_empty() => (
+				DynamicTerm::BoolValue(b),
+				DynamicValue::Bool,
+				StaticValue::Copyability(Copyability::Trivial),
+				StaticValue::ReprAtom(ReprAtom::Byte),
+			),
+			_ => panic!(),
+		},
+
+		Preterm::Project(scrutinee, projector) => match projector {
+			Projector::Rc => {
+				let (tm, DynamicValue::RcType { inner: ty, copyability, representation }, _, _) =
+					synthesize_dynamic(context, *scrutinee)
+				else {
+					panic!()
+				};
+				(
+					DynamicTerm::UnRc {
+						scrutinee: tm.into(),
+						copyability: copyability.reify_in(context.len()).into(),
+						representation: representation.reify_in(context.len()).into(),
+					},
+					ty.as_ref().clone(),
+					(*copyability).clone(),
+					(*representation).clone(),
+				)
+			}
+			Projector::Wrap => {
+				let (tm, DynamicValue::WrapType { inner: ty, copyability, representation }, _, _) =
+					synthesize_dynamic(context, *scrutinee)
+				else {
+					panic!()
+				};
+				(
+					DynamicTerm::Unwrap {
+						scrutinee: bx!(tm),
+						copyability: copyability.reify_in(context.len()).into(),
+						representation: representation.reify_in(context.len()).into(),
+					},
+					ty.as_ref().clone(),
+					(*copyability).clone(),
+					(*representation).clone(),
+				)
+			}
+			Projector::Field(field) => {
+				let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *scrutinee);
+				let DynamicValue::IndexedSum {
+					base_copyability,
+					base_representation,
+					base,
+					family_copyability,
+					family_representation,
+					family,
+				} = scrutinee_ty
+				else {
+					panic!()
+				};
+				let basepoint = DynamicTerm::Project {
+					scrutinee: scrutinee.clone().into(),
+					projection: Field::Base,
+					projection_copyability: base_copyability.reify_in(context.len()).into(),
+					projection_representation: base_representation.reify_in(context.len()).into(),
+				};
+				match field {
+					Field::Base => (
+						basepoint,
+						base.as_ref().clone(),
+						(*base_copyability).clone(),
+						(*base_representation).clone(),
 					),
-				*case_suc,
-				motive.evaluate_with([DynamicValue::Neutral(DynamicNeutral::Suc(rc!(
-					DynamicNeutral::Variable(case_suc_parameters.0, context.len())
-				)))]),
-			);
+					Field::Fiber => {
+						let basepoint = basepoint.evaluate_in(&context.environment);
+						(
+							DynamicTerm::Project {
+								scrutinee: scrutinee.into(),
+								projection: field,
+								projection_copyability: family_copyability.reify_in(context.len()).into(),
+								projection_representation: family_representation.reify_in(context.len()).into(),
+							},
+							family.evaluate_with([basepoint]),
+							(*family_copyability).clone(),
+							(*family_representation).clone(),
+						)
+					}
+				}
+			}
+		},
+		Preterm::Call { callee, argument } => {
+			let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *callee);
+			let DynamicValue::IndexedProduct { base, family_copyability, family_representation, family, .. } =
+				scrutinee_ty
+			else {
+				panic!()
+			};
+			let argument = verify_dynamic(context, *argument, (*base).clone());
+			let argument_value = argument.clone().evaluate_in(&context.environment);
 			(
-				DynamicTerm::CaseNat {
+				DynamicTerm::Apply {
 					scrutinee: bx!(scrutinee),
-					case_nil: bx!(case_nil),
-					case_suc: bind([case_suc_parameters.0, case_suc_parameters.1], bx!(case_suc)),
-					fiber_copyability: fiber_copy.reify_in(context.len()).into(),
-					fiber_representation: fiber_repr.reify_in(context.len()).into(),
-					motive: bind(
-						motive.parameters,
-						bx!(motive.autolyze(context.len()).reify_in(context.len() + 1)),
+					argument: bx!(argument),
+					fiber_copyability: family_copyability.reify_in(context.len()).into(),
+					fiber_representation: family_representation.reify_in(context.len()).into(),
+					base: base.reify_in(context.len()).into(),
+					family: bind(
+						family.parameters,
+						bx!(family.autolyze(context.len()).reify_in(context.len() + 1)),
 					),
 				},
-				motive.evaluate_with([scrutinee_value]),
-				fiber_copy,
-				fiber_repr,
+				family.evaluate_with([argument_value]),
+				(*family_copyability).clone(),
+				(*family_representation).clone(),
 			)
 		}
-		Bool => (
-			DynamicTerm::Bool,
-			DynamicValue::Universe {
-				copyability: rc!(StaticValue::Copyability(Copyability::Trivial)),
-				representation: rc!(StaticValue::ReprAtom(ReprAtom::Byte)),
-			},
-			StaticValue::Copyability(Copyability::Trivial),
-			StaticValue::ReprNone,
-		),
-		BoolValue(b) => (
-			DynamicTerm::BoolValue(b),
-			DynamicValue::Bool,
-			StaticValue::Copyability(Copyability::Trivial),
-			StaticValue::ReprAtom(ReprAtom::Byte),
-		),
-		CaseBool { scrutinee, motive, case_false, case_true } => {
-			let scrutinee = verify_dynamic(context, *scrutinee, DynamicValue::Bool);
+		Preterm::Split { scrutinee, motive_parameter, motive, cases } => {
+			let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *scrutinee);
 			let scrutinee_value = scrutinee.clone().evaluate_in(&context.environment);
-			let (motive_term, fiber_copy, fiber_repr) = elaborate_dynamic_type(
-				&context.clone().bind_dynamic(
-					motive.parameter(),
-					DynamicValue::Bool,
-					StaticValue::Copyability(Copyability::Trivial),
-					StaticValue::ReprAtom(ReprAtom::Byte),
-				),
-				*motive.body,
-			);
-			let motive = Closure::new(context.environment.clone(), motive.parameters, motive_term.clone());
-			let case_false =
-				verify_dynamic(context, *case_false, motive.evaluate_with([DynamicValue::BoolValue(false)]));
-			let case_true =
-				verify_dynamic(context, *case_true, motive.evaluate_with([DynamicValue::BoolValue(true)]));
-			(
-				DynamicTerm::CaseBool {
-					scrutinee: bx!(scrutinee),
-					case_false: bx!(case_false),
-					case_true: bx!(case_true),
-					fiber_copyability: fiber_copy.reify_in(context.len()).into(),
-					fiber_representation: fiber_repr.reify_in(context.len()).into(),
-					motive: bind(
-						motive.parameters,
-						bx!(motive.autolyze(context.len()).reify_in(context.len() + 1)),
-					),
-				},
-				motive.evaluate_with([scrutinee_value]),
-				fiber_copy,
-				fiber_repr,
-			)
+			match scrutinee_ty {
+				DynamicValue::Nat => {
+					assert!(cases.len() == 2);
+					let (motive, fiber_copy, fiber_repr) = elaborate_dynamic_type(
+						&context.clone().bind_dynamic(
+							motive_parameter,
+							DynamicValue::Nat,
+							StaticValue::Copyability(Copyability::Nontrivial),
+							StaticValue::ReprAtom(ReprAtom::Nat),
+						),
+						*motive,
+					);
+					let motive = Closure::new(context.environment.clone(), [motive_parameter], motive.clone());
+					// Avoid cloning.
+					let case_nil_position = cases
+						.iter()
+						.position(|(pattern, _)| {
+							if let Pattern::Construction(Constructor::Num(0), args) = pattern {
+								args.is_empty()
+							} else {
+								false
+							}
+						})
+						.unwrap();
+					let case_nil = cases[case_nil_position].1.clone();
+					let (index, witness) = {
+						let Pattern::Construction(Constructor::Suc, args) = cases[1 - case_nil_position].0.clone()
+						else {
+							panic!()
+						};
+						let [arg] = args.try_into().unwrap();
+						let Pattern::Witness { index, witness } = arg else { panic!() };
+						(index, witness)
+					};
+					let case_suc = cases[1 - case_nil_position].1.clone();
+					let case_nil = verify_dynamic(context, case_nil, motive.evaluate_with([DynamicValue::Num(0)]));
+					// NOTE: I'm not entirely sure this is 'right', as motive is is formed in a smaller context, but I believe this should be 'safe' because of de Bruijn levels.
+					let case_suc = verify_dynamic(
+						&context
+							.clone()
+							.bind_dynamic(
+								index,
+								DynamicValue::Nat,
+								StaticValue::Copyability(Copyability::Nontrivial),
+								StaticValue::ReprAtom(ReprAtom::Nat),
+							)
+							.bind_dynamic(
+								witness,
+								motive.autolyze(context.len()),
+								fiber_copy.clone(),
+								fiber_repr.clone(),
+							),
+						case_suc,
+						motive.evaluate_with([DynamicValue::Neutral(DynamicNeutral::Suc(rc!(
+							DynamicNeutral::Variable(index, context.len())
+						)))]),
+					);
+					(
+						DynamicTerm::CaseNat {
+							scrutinee: bx!(scrutinee),
+							case_nil: bx!(case_nil),
+							case_suc: bind([index, witness], bx!(case_suc)),
+							fiber_copyability: fiber_copy.reify_in(context.len()).into(),
+							fiber_representation: fiber_repr.reify_in(context.len()).into(),
+							motive: bind(
+								motive.parameters,
+								bx!(motive.autolyze(context.len()).reify_in(context.len() + 1)),
+							),
+						},
+						motive.evaluate_with([scrutinee_value]),
+						fiber_copy,
+						fiber_repr,
+					)
+				}
+				DynamicValue::Bool => {
+					assert!(cases.len() == 2);
+					let (motive_term, fiber_copy, fiber_repr) = elaborate_dynamic_type(
+						&context.clone().bind_dynamic(
+							motive_parameter,
+							DynamicValue::Bool,
+							StaticValue::Copyability(Copyability::Trivial),
+							StaticValue::ReprAtom(ReprAtom::Byte),
+						),
+						*motive,
+					);
+					let motive =
+						Closure::new(context.environment.clone(), [motive_parameter], motive_term.clone());
+					// TODO: Avoid cloning.
+					let case_false = cases[cases
+						.iter()
+						.position(|(pattern, _)| {
+							if let Pattern::Construction(Constructor::BoolValue(false), args) = pattern {
+								args.is_empty()
+							} else {
+								false
+							}
+						})
+						.unwrap()]
+					.1
+					.clone();
+					let case_true = cases[cases
+						.iter()
+						.position(|(pattern, _)| {
+							if let Pattern::Construction(Constructor::BoolValue(true), args) = pattern {
+								args.is_empty()
+							} else {
+								false
+							}
+						})
+						.unwrap()]
+					.1
+					.clone();
+					let case_false =
+						verify_dynamic(context, case_false, motive.evaluate_with([DynamicValue::BoolValue(false)]));
+					let case_true =
+						verify_dynamic(context, case_true, motive.evaluate_with([DynamicValue::BoolValue(true)]));
+					(
+						DynamicTerm::CaseBool {
+							scrutinee: bx!(scrutinee),
+							case_false: bx!(case_false),
+							case_true: bx!(case_true),
+							fiber_copyability: fiber_copy.reify_in(context.len()).into(),
+							fiber_representation: fiber_repr.reify_in(context.len()).into(),
+							motive: bind(
+								motive.parameters,
+								bx!(motive.autolyze(context.len()).reify_in(context.len() + 1)),
+							),
+						},
+						motive.evaluate_with([scrutinee_value]),
+						fiber_copy,
+						fiber_repr,
+					)
+				}
+				_ => panic!(),
+			}
 		}
+		_ => panic!(),
 	}
 }
 
-pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue) -> DynamicTerm {
-	use DynamicPreterm::*;
+pub fn verify_dynamic(context: &Context, term: Preterm, ty: DynamicValue) -> DynamicTerm {
 	match (term, ty) {
 		(
-			Lambda { parameter, body },
+			Preterm::Lambda { parameter, body },
 			DynamicValue::IndexedProduct { base, base_copyability, base_representation, family, .. },
 		) => {
 			let fiber = family.autolyze(context.len());
@@ -763,13 +923,13 @@ pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue)
 				body: bind([parameter], body.into()),
 			}
 		}
-		(Pair { basepoint, fiberpoint }, DynamicValue::IndexedSum { base, family, .. }) => {
+		(Preterm::Pair { basepoint, fiberpoint }, DynamicValue::IndexedSum { base, family, .. }) => {
 			let basepoint = verify_dynamic(context, *basepoint, base.as_ref().clone());
 			let basepoint_value = basepoint.clone().evaluate_in(&context.environment);
 			let fiberpoint = verify_dynamic(context, *fiberpoint, family.evaluate_with([basepoint_value]));
 			DynamicTerm::Pair { basepoint: bx!(basepoint), fiberpoint: bx!(fiberpoint) }
 		}
-		(Let { assignee, ty, argument, tail }, _) => {
+		(Preterm::Let { assignee, ty, argument, tail }, _) => {
 			let (ty, assig_copy, assig_repr) = elaborate_dynamic_type(context, *ty);
 			let ty_value = ty.clone().evaluate_in(&context.environment);
 			let argument = verify_dynamic(context, *argument, ty_value.clone());
@@ -787,12 +947,14 @@ pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue)
 			);
 			DynamicTerm::Let { ty: bx!(ty), argument: bx!(argument), tail: bind([assignee], bx!(tail)) }
 		}
-		(WrapNew(tm), DynamicValue::WrapType { inner: ty, .. }) => {
-			let tm = verify_dynamic(context, *tm, ty.as_ref().clone());
+		(Preterm::Constructor(Constructor::Wrap, tms), DynamicValue::WrapType { inner: ty, .. }) => {
+			let [tm] = tms.try_into().unwrap();
+			let tm = verify_dynamic(context, tm, ty.as_ref().clone());
 			DynamicTerm::WrapNew(bx!(tm))
 		}
-		(RcNew(tm), DynamicValue::RcType { inner: ty, .. }) => {
-			let tm = verify_dynamic(context, *tm, ty.as_ref().clone());
+		(Preterm::Constructor(Constructor::Rc, tms), DynamicValue::RcType { inner: ty, .. }) => {
+			let [tm] = tms.try_into().unwrap();
+			let tm = verify_dynamic(context, tm, ty.as_ref().clone());
 			DynamicTerm::RcNew(bx!(tm))
 		}
 		(term, ty) => {
@@ -813,7 +975,7 @@ pub fn verify_dynamic(context: &Context, term: DynamicPreterm, ty: DynamicValue)
 
 pub fn elaborate_dynamic_type(
 	context: &Context,
-	term: DynamicPreterm,
+	term: Preterm,
 ) -> (DynamicTerm, /* copyability */ StaticValue, /* representation */ StaticValue) {
 	let (term, DynamicValue::Universe { copyability, representation }, _, _) =
 		synthesize_dynamic(context, term)

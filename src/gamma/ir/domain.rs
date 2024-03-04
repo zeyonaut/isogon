@@ -3,7 +3,7 @@ use std::rc::Rc;
 use super::syntax::{DynamicTerm, StaticTerm};
 use crate::{
 	gamma::{
-		common::{Closure, Copyability, Index, Level, Name, Projection, Repr, ReprAtom},
+		common::{Closure, Copyability, Field, Index, Level, Name, Repr, ReprAtom},
 		transform::evaluate::Autolyze,
 	},
 	utility::rc,
@@ -13,7 +13,7 @@ use crate::{
 pub enum StaticNeutral {
 	Variable(Name, Level),
 	Apply(Rc<Self>, Rc<StaticValue>),
-	Project(Rc<Self>, Projection),
+	Project(Rc<Self>, Field),
 	CaseNat {
 		scrutinee: Rc<Self>,
 		motive: Rc<Closure<Environment, StaticTerm>>,
@@ -90,7 +90,7 @@ pub enum DynamicNeutral {
 	// NOTE: The universe is optional because of conversion-checking with eta-conversion.
 	Project {
 		scrutinee: Rc<Self>,
-		projection: Projection,
+		projection: Field,
 		copyability: Option<Rc<StaticValue>>,
 		representation: Option<Rc<StaticValue>>,
 	},
@@ -337,7 +337,7 @@ impl Conversion<DynamicValue> for Level {
 	fn can_convert(self, left: &DynamicValue, right: &DynamicValue) -> bool {
 		use DynamicNeutral::*;
 		use DynamicValue::*;
-		use Projection::*;
+		use Field::*;
 		match (left, right) {
 			(
 				Universe { copyability: left_copyability, representation: left_representation },

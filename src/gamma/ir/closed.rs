@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, collections::HashMap};
 
-use crate::gamma::common::{Binder, Level, Name, Projection, Repr, UniverseKind};
+use crate::gamma::common::{Binder, Field, Level, Name, Repr, UniverseKind};
 
 #[derive(Clone, Debug)]
 pub enum Variable {
@@ -46,7 +46,7 @@ pub enum Term {
 		basepoint: Box<Self>,
 		fiberpoint: Box<Self>,
 	},
-	Project(Box<Self>, Projection, UniverseKind),
+	Project(Box<Self>, Field, UniverseKind),
 	Nat,
 	Num(usize),
 	Suc(Box<Self>),

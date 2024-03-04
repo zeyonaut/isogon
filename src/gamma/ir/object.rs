@@ -1,9 +1,7 @@
 use std::{fmt::Debug, rc::Rc};
 
 use super::syntax::StaticTerm;
-use crate::gamma::common::{
-	Binder, Closure, Copyability, Index, Level, Name, Projection, Repr, UniverseKind,
-};
+use crate::gamma::common::{Binder, Closure, Copyability, Field, Index, Level, Name, Repr, UniverseKind};
 
 #[derive(Clone)]
 pub enum Metavalue {
@@ -114,7 +112,7 @@ pub enum Term {
 		fiberpoint: Rc<Self>,
 	},
 	// TODO: Is this enough information? We might want more information for fiber projections (e.g. the repr of the base.)
-	Project(Rc<Self>, Projection, UniverseKind),
+	Project(Rc<Self>, Field, UniverseKind),
 	Nat,
 	Num(usize),
 	Suc(Rc<Self>),

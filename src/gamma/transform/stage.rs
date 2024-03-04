@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::{
 	gamma::{
-		common::{Binder, Closure, Copyability, Projection, Repr, ReprAtom, UniverseKind},
+		common::{Binder, Closure, Copyability, Field, Repr, ReprAtom, UniverseKind},
 		ir::{
 			object::{Environment, Metavalue, Term, Value},
 			syntax::{DynamicTerm, StaticTerm},
@@ -56,8 +56,8 @@ impl Stage for StaticTerm {
 			StaticTerm::Project(scrutinee, projection) => {
 				let Metavalue::Pair(basepoint, fiberpoint) = scrutinee.stage_in(environment) else { panic!() };
 				match projection {
-					Projection::Base => basepoint.as_ref().clone(),
-					Projection::Fiber => fiberpoint.as_ref().clone(),
+					Field::Base => basepoint.as_ref().clone(),
+					Field::Fiber => fiberpoint.as_ref().clone(),
 				}
 			}
 			StaticTerm::Let { argument, tail, .. } =>

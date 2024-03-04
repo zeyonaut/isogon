@@ -1,7 +1,7 @@
 let A : * c1 rfun = |PA : * c0 rnone| -> PA;
-def B : '* c1 rfun -> '* c1 rfun = |T| [A -> [T]];
+def B : '(* c1 rfun) -> '(* c1 rfun) = |T| <A -> [T]>;
 let C : * c0 rnone = |PC : * c0 rnone| & PC;
 let D : * c0 rnone = * c0 rnone & * c0 rnone;
 let x : |T : * c0 rnone| & * c0 rnone -> * c0 rnone -> * c1 (rpair rfun rnone) = * c0 rnone, (|T| |K| A & T & K);
 
-[B [x/! (x/.) C]]
+[B <x/! (x/.) C>]
