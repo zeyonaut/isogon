@@ -6,7 +6,7 @@ let add : nat -> nat -> nat
 
 let fib2 : nat -> (nat & nat) -> (nat & nat)
 	= |n| |x| n :: |n| (nat & nat) {
-		| 0       -> x
+		| 0        -> x
 		| suc @n.x -> add (x/.) (x/!), x/.
 	};
 

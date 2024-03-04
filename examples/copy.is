@@ -2,6 +2,6 @@ def sigma : |x : copy| -> |xr : repr| -> |B : '(* x xr)| -> |y : copy| -> |yr : 
 	= |x| |xr| |B| |y| |yr| |F| <|b : [B]| & [F] b>;
 
 [sigma c1 rnat <nat> c1 rpointer <|n| n :: |n| * c1 rpointer {
-	| 0       -> RC bool
+	| 0        -> RC bool
 	| suc @n.a -> RC (bool & bool)
 }>]
