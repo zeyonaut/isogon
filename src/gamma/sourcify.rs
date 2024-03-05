@@ -3,7 +3,7 @@ use std::fmt::Write;
 use lasso::Rodeo;
 
 use super::{
-	common::{Copyability, Field, ReprAtom},
+	common::{Copyability, Field, Name, ReprAtom},
 	ir::syntax::{DynamicTerm, StaticTerm},
 };
 
@@ -60,12 +60,20 @@ fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) ->
 	}
 }
 
+fn resolve<'a>(interner: &'a Rodeo, name: &Option<Name>) -> &'a str {
+	if let Some(name) = name {
+		interner.resolve(name)
+	} else {
+		"_"
+	}
+}
+
 fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use StaticTerm::*;
 
 	use self::Copyability as C;
 	match term {
-		Variable(name, ..) => write!(f, "{}", interner.resolve(name)),
+		Variable(name, ..) => write!(f, "{}", resolve(interner, name)),
 		CopyabilityType => write!(f, "copy"),
 		Copyability(C::Trivial) => write!(f, "c0"),
 		Copyability(C::Nontrivial) => write!(f, "c1"),
@@ -76,7 +84,7 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			write_static_atom(b, f, interner)
 		}
 		Pi(base, family) => {
-			let parameter = interner.resolve(&family.parameter());
+			let parameter = resolve(interner, &family.parameter());
 			if parameter != "_" {
 				write!(f, "|{parameter} : ")?;
 				write_static(base, f, interner)?;
@@ -88,7 +96,7 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			write_static(&family.body, f, interner)
 		}
 		Lambda(function) => {
-			write!(f, "|{}| ", interner.resolve(&function.parameter()))?;
+			write!(f, "|{}| ", resolve(interner, &function.parameter()))?;
 			write_static(&function.body, f, interner)
 		}
 		Apply { scrutinee, argument } => {
@@ -97,7 +105,7 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			write_static_atom(argument, f, interner)
 		}
 		Sigma(base, family) => {
-			let parameter = interner.resolve(&family.parameter());
+			let parameter = resolve(interner, &family.parameter());
 			if parameter != "_" {
 				write!(f, "|{parameter} : ")?;
 				write_static(base, f, interner)?;
@@ -121,7 +129,7 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			}
 		}
 		Let { ty, argument, tail } => {
-			write!(f, "let {} : ", interner.resolve(&tail.parameter()))?;
+			write!(f, "let {} : ", resolve(interner, &tail.parameter()))?;
 			write_static(ty, f, interner)?;
 			write!(f, " = ")?;
 			write_static(argument, f, interner)?;
@@ -146,15 +154,15 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 		}
 		CaseNat { scrutinee, motive, case_nil, case_suc } => {
 			write_static_spine(scrutinee, f, interner)?;
-			write!(f, " :: |{}| ", interner.resolve(&motive.parameter()))?;
+			write!(f, " :: |{}| ", resolve(interner, &motive.parameter()))?;
 			write_static(&motive.body, f, interner)?;
 			write!(f, " {{0 -> ")?;
 			write_static(case_nil, f, interner)?;
 			write!(
 				f,
 				" | suc {} {} -> ",
-				interner.resolve(&case_suc.parameters[0]),
-				interner.resolve(&case_suc.parameters[1])
+				resolve(interner, &case_suc.parameters[0]),
+				resolve(interner, &case_suc.parameters[1])
 			)?;
 			write_static(&case_suc.body, f, interner)?;
 			write!(f, "}}")
@@ -163,7 +171,7 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 		EnumValue(k, v) => write!(f, "{v}_{k}"),
 		CaseEnum { scrutinee, motive, cases } => {
 			write_static_spine(scrutinee, f, interner)?;
-			write!(f, " :: |{}| ", interner.resolve(&motive.parameter()))?;
+			write!(f, " :: |{}| ", resolve(interner, &motive.parameter()))?;
 			write_static(&motive.body, f, interner)?;
 			for (i, case) in cases.iter().enumerate() {
 				if i > 0 {
@@ -256,14 +264,14 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 	use DynamicTerm::*;
 	match term {
 		Let { ty, argument, tail } => {
-			write!(f, "let {} : ", interner.resolve(&tail.parameter()))?;
+			write!(f, "let {} : ", resolve(interner, &tail.parameter()))?;
 			write_dynamic(ty, f, interner)?;
 			write!(f, " = ")?;
 			write_dynamic(argument, f, interner)?;
 			write!(f, "; ")?;
 			write_dynamic(&tail.body, f, interner)
 		}
-		Variable(name, ..) => write!(f, "{}", interner.resolve(name)),
+		Variable(name, ..) => write!(f, "{}", resolve(interner, name)),
 		Splice(splicee) => {
 			write!(f, "[")?;
 			write_static(splicee, f, interner)?;
@@ -276,7 +284,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write_static_atom(&representation, f, interner)
 		}
 		Pi { base, family, .. } => {
-			let parameter = interner.resolve(&family.parameter());
+			let parameter = resolve(interner, &family.parameter());
 			if parameter != "_" {
 				write!(f, "|{parameter} : ")?;
 				write_dynamic(base, f, interner)?;
@@ -288,7 +296,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write_dynamic(&family.body, f, interner)
 		}
 		Lambda { body, .. } => {
-			write!(f, "|{}| ", interner.resolve(&body.parameter()))?;
+			write!(f, "|{}| ", resolve(interner, &body.parameter()))?;
 			write_dynamic(&body.body, f, interner)
 		}
 		Apply { scrutinee, argument, .. } => {
@@ -297,7 +305,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write_dynamic_atom(argument, f, interner)
 		}
 		Sigma { base, family, .. } => {
-			let parameter = interner.resolve(&family.parameter());
+			let parameter = resolve(interner, &family.parameter());
 			if parameter != "_" {
 				write!(f, "|{parameter} : ")?;
 				write_dynamic(base, f, interner)?;
@@ -328,15 +336,15 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 		}
 		CaseNat { scrutinee, motive, case_nil, case_suc, .. } => {
 			write_dynamic_spine(scrutinee, f, interner)?;
-			write!(f, " :: |{}| ", interner.resolve(&motive.parameter()))?;
+			write!(f, " :: |{}| ", resolve(interner, &motive.parameter()))?;
 			write_dynamic(&motive.body, f, interner)?;
 			write!(f, " {{0 -> ")?;
 			write_dynamic(case_nil, f, interner)?;
 			write!(
 				f,
 				" | suc @{}.{} -> ",
-				interner.resolve(&case_suc.parameters[0]),
-				interner.resolve(&case_suc.parameters[1])
+				resolve(interner, &case_suc.parameters[0]),
+				resolve(interner, &case_suc.parameters[1])
 			)?;
 			write_dynamic(&case_suc.body, f, interner)?;
 			write!(f, "}}")
@@ -345,7 +353,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 		EnumValue(k, v) => write!(f, "{v}_{k}"),
 		CaseEnum { scrutinee, motive, cases, .. } => {
 			write_dynamic_spine(scrutinee, f, interner)?;
-			write!(f, " :: bool |{}| ", interner.resolve(&motive.parameter()))?;
+			write!(f, " :: bool |{}| ", resolve(interner, &motive.parameter()))?;
 			write_dynamic(&motive.body, f, interner)?;
 			write!(f, " {{")?;
 			for (i, case) in cases.iter().enumerate() {

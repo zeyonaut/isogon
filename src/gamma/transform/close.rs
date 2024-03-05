@@ -19,7 +19,7 @@ pub fn close(value: ob::Term) -> Program {
 
 #[derive(Debug)]
 struct DynamicContextEntry {
-	name: Name,
+	name: Option<Name>,
 	ty: ob::Term,
 	dependees: Vec<bool>,
 }

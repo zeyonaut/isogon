@@ -11,7 +11,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub enum StaticNeutral {
-	Variable(Name, Level),
+	Variable(Option<Name>, Level),
 	Apply(Rc<Self>, Rc<StaticValue>),
 	Project(Rc<Self>, Field),
 	CaseNat {
@@ -75,7 +75,7 @@ impl From<Option<&Repr>> for StaticValue {
 
 #[derive(Clone, Debug)]
 pub enum DynamicNeutral {
-	Variable(Name, Level),
+	Variable(Option<Name>, Level),
 	Splice(StaticNeutral),
 	// NOTE: The family universe is optional because of conversion-checking with eta-conversion.
 	Apply {
@@ -207,14 +207,14 @@ impl StaticValue {
 	}
 }
 
-impl From<(Name, Level)> for StaticValue {
-	fn from((name, level): (Name, Level)) -> Self {
+impl From<(Option<Name>, Level)> for StaticValue {
+	fn from((name, level): (Option<Name>, Level)) -> Self {
 		Self::Neutral(StaticNeutral::Variable(name, level))
 	}
 }
 
-impl From<(Name, Level)> for DynamicValue {
-	fn from((name, level): (Name, Level)) -> Self {
+impl From<(Option<Name>, Level)> for DynamicValue {
+	fn from((name, level): (Option<Name>, Level)) -> Self {
 		Self::Neutral(DynamicNeutral::Variable(name, level))
 	}
 }

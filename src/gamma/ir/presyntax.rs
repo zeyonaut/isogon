@@ -7,19 +7,47 @@ pub enum Preterm {
 	Quote(Box<Self>),
 	Splice(Box<Self>),
 
-	Let { assignee: Name, is_crisp: bool, ty: Box<Self>, argument: Box<Self>, tail: Box<Self> },
+	Let {
+		assignee: Option<Name>,
+		is_crisp: bool,
+		ty: Box<Self>,
+		argument: Box<Self>,
+		tail: Box<Self>,
+	},
 
-	Pi { parameter: Name, base: Box<Self>, family: Box<Self> },
-	Sigma { parameter: Name, base: Box<Self>, family: Box<Self> },
-	Lambda { parameter: Name, body: Box<Self> },
-	Pair { basepoint: Box<Self>, fiberpoint: Box<Self> },
+	Pi {
+		parameter: Option<Name>,
+		base: Box<Self>,
+		family: Box<Self>,
+	},
+	Sigma {
+		parameter: Option<Name>,
+		base: Box<Self>,
+		family: Box<Self>,
+	},
+	Lambda {
+		parameter: Option<Name>,
+		body: Box<Self>,
+	},
+	Pair {
+		basepoint: Box<Self>,
+		fiberpoint: Box<Self>,
+	},
 
 	Former(Former, Vec<Self>),
 	Constructor(Constructor, Vec<Self>),
 
 	Project(Box<Self>, Projector),
-	Call { callee: Box<Self>, argument: Box<Self> },
-	Split { scrutinee: Box<Self>, motive_parameter: Name, motive: Box<Self>, cases: Vec<(Pattern, Self)> },
+	Call {
+		callee: Box<Self>,
+		argument: Box<Self>,
+	},
+	Split {
+		scrutinee: Box<Self>,
+		motive_parameter: Option<Name>,
+		motive: Box<Self>,
+		cases: Vec<(Pattern, Self)>,
+	},
 }
 
 #[derive(Debug, Clone)]

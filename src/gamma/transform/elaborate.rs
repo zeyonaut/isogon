@@ -43,7 +43,7 @@ impl ContextEntry {
 pub struct Context {
 	lock: usize,
 	environment: Environment,
-	tys: Vec<(Name, ContextEntry)>,
+	tys: Vec<(Option<Name>, ContextEntry)>,
 }
 
 impl Context {
@@ -62,7 +62,7 @@ impl Context {
 	}
 
 	#[must_use]
-	pub fn bind_static(mut self, name: Name, is_crisp: bool, ty: StaticValue) -> Self {
+	pub fn bind_static(mut self, name: Option<Name>, is_crisp: bool, ty: StaticValue) -> Self {
 		self.environment.push(Value::Static(StaticValue::Neutral(StaticNeutral::Variable(name, self.len()))));
 		self.tys.push((name, ContextEntry::new(is_crisp, ContextType::Static(ty))));
 		self
@@ -71,7 +71,7 @@ impl Context {
 	#[must_use]
 	pub fn bind_dynamic(
 		mut self,
-		name: Name,
+		name: Option<Name>,
 		is_crisp: bool,
 		ty: DynamicValue,
 		copy: StaticValue,
@@ -85,7 +85,13 @@ impl Context {
 	}
 
 	#[must_use]
-	pub fn extend_static(mut self, name: Name, is_crisp: bool, ty: StaticValue, value: StaticValue) -> Self {
+	pub fn extend_static(
+		mut self,
+		name: Option<Name>,
+		is_crisp: bool,
+		ty: StaticValue,
+		value: StaticValue,
+	) -> Self {
 		self.environment.0.push(Value::Static(value));
 		self.tys.push((name, ContextEntry::new(is_crisp, ContextType::Static(ty))));
 		self
@@ -94,7 +100,7 @@ impl Context {
 	#[must_use]
 	pub fn extend_dynamic(
 		mut self,
-		name: Name,
+		name: Option<Name>,
 		is_crisp: bool,
 		ty: DynamicValue,
 		copy: StaticValue,
@@ -115,10 +121,10 @@ pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, Stati
 			.rev()
 			.enumerate()
 			.find_map(|(i, (name_1, entry))| {
-				if &name == name_1 {
+				if &Some(name) == name_1 {
 					if context.len().0 - 1 - i >= context.lock || entry.is_crisp {
 						if let ContextType::Static(ty) = &entry.ty {
-							Some((StaticTerm::Variable(name, Index(i)), ty.clone()))
+							Some((StaticTerm::Variable(Some(name), Index(i)), ty.clone()))
 						} else {
 							panic!("expected static variable; found dynamic variable");
 						}
@@ -303,14 +309,14 @@ pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, Stati
 					let case_nil =
 						verify_static(context, case_nil, motive_value.evaluate_with([StaticValue::Num(0)]));
 					let case_suc = verify_static(
-						&context.clone().bind_static(index, false, StaticValue::Nat).bind_static(
-							witness,
+						&context.clone().bind_static(Some(index), false, StaticValue::Nat).bind_static(
+							Some(witness),
 							false,
 							motive_value.autolyze(context.len()),
 						),
 						case_suc,
 						motive_value.evaluate_with([StaticValue::Neutral(StaticNeutral::Suc(rc!(
-							StaticNeutral::Variable(index, context.len())
+							StaticNeutral::Variable(Some(index), context.len())
 						)))]),
 					);
 					(
@@ -318,7 +324,7 @@ pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, Stati
 							scrutinee: bx!(scrutinee),
 							motive: bind([motive_parameter], bx!(motive)),
 							case_nil: bx!(case_nil),
-							case_suc: bind([index, witness], bx!(case_suc)),
+							case_suc: bind([Some(index), Some(witness)], bx!(case_suc)),
 						},
 						motive_value.evaluate_with([scrutinee_value]),
 					)
@@ -436,10 +442,15 @@ pub fn synthesize_dynamic(
 			.rev()
 			.enumerate()
 			.find_map(|(i, (name_1, entry))| {
-				if &name == name_1 {
+				if &Some(name) == name_1 {
 					if context.len().0 - 1 - i >= context.lock || entry.is_crisp {
 						if let ContextType::Dynamic(ty, copy, repr) = &entry.ty {
-							Some((DynamicTerm::Variable(name, Index(i)), ty.clone(), copy.clone(), repr.clone()))
+							Some((
+								DynamicTerm::Variable(Some(name), Index(i)),
+								ty.clone(),
+								copy.clone(),
+								repr.clone(),
+							))
 						} else {
 							panic!("expected dynamic variable; found static variable");
 						}
@@ -842,14 +853,14 @@ pub fn synthesize_dynamic(
 						&context
 							.clone()
 							.bind_dynamic(
-								index,
+								Some(index),
 								false,
 								DynamicValue::Nat,
 								StaticValue::Copyability(Copyability::Nontrivial),
 								StaticValue::ReprAtom(ReprAtom::Nat),
 							)
 							.bind_dynamic(
-								witness,
+								Some(witness),
 								false,
 								motive.autolyze(context.len()),
 								fiber_copy.clone(),
@@ -857,14 +868,14 @@ pub fn synthesize_dynamic(
 							),
 						case_suc,
 						motive.evaluate_with([DynamicValue::Neutral(DynamicNeutral::Suc(rc!(
-							DynamicNeutral::Variable(index, context.len())
+							DynamicNeutral::Variable(Some(index), context.len())
 						)))]),
 					);
 					(
 						DynamicTerm::CaseNat {
 							scrutinee: bx!(scrutinee),
 							case_nil: bx!(case_nil),
-							case_suc: bind([index, witness], bx!(case_suc)),
+							case_suc: bind([Some(index), Some(witness)], bx!(case_suc)),
 							fiber_copyability: fiber_copy.reify_in(context.len()).into(),
 							fiber_representation: fiber_repr.reify_in(context.len()).into(),
 							motive: bind(

@@ -2,7 +2,7 @@ use crate::gamma::common::{Binder, Copyability, Field, Index, Name, Repr, ReprAt
 
 #[derive(Clone, Debug)]
 pub enum StaticTerm {
-	Variable(Name, Index),
+	Variable(Option<Name>, Index),
 	Let {
 		ty: Box<Self>,
 		argument: Box<Self>,
@@ -74,7 +74,7 @@ impl From<Option<&Repr>> for StaticTerm {
 
 #[derive(Clone, Debug)]
 pub enum DynamicTerm {
-	Variable(Name, Index),
+	Variable(Option<Name>, Index),
 	Let {
 		// Type of the assignee.
 		ty: Box<Self>,

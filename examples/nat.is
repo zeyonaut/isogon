@@ -1,17 +1,17 @@
 let! add : nat -> nat -> nat
-	= |a| |b| a :: |n| nat {
+	= |a| |b| a :: |_| nat {
 		| 0        -> b
 		| suc @n.k -> suc k
 	};
 
 let! mul : nat -> nat -> nat
-	= |a| |b| a :: |n| nat {
+	= |a| |b| a :: |_| nat {
 		| 0        -> 0
 		| suc @n.k -> add b k
 	};
 
 let! pow : nat -> nat -> nat
-	= |a| |b| a :: |n| nat {
+	= |a| |b| a :: |_| nat {
 		| 0        -> 1
 		| suc @n.k -> mul b k
 	};

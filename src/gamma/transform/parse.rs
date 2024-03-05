@@ -181,8 +181,8 @@ peg::parser! {
 			/ former:former() {Preterm::Former(former, vec![])}
 			/ constructor:constructor() {Preterm::Constructor(constructor, vec![])}
 
-		rule bound_spine_headed() -> (Name, Preterm)
-			= _ [Token::Pipe] variable:identifier() _ [Token::Pipe] body:spine_headed() {(variable, body)}
+		rule bound_spine_headed() -> (Option<Name>, Preterm)
+			= _ [Token::Pipe] variable:(name:identifier() {Some(name)} / [Token::LowDash] {None}) _ [Token::Pipe] body:spine_headed() {(variable, body)}
 
 		// Case arms.
 		rule atomic_pattern() -> Pattern
@@ -211,18 +211,18 @@ peg::parser! {
 		#[cache]
 		rule spine_headed() -> Preterm
 			// TODO: Refactor to avoid caching?
-			= _ [Token::Pipe] parameter:identifier() _ [Token::Pipe] body:spine_headed() {Preterm::Lambda { parameter, body: body.into() }}
-			/ _ [Token::Pipe] parameter:identifier() _ [Token::Colon] base:spine_headed() _ [Token::Pipe] _ [Token::Arrow] right:spine_headed() {Preterm::Pi { parameter, base: base.into(), family: right.into() }}
-			/ _ [Token::Pipe] parameter:identifier() _ [Token::Colon] base:spine_headed() _ [Token::Pipe] _ [Token::Amp] right:spine_headed() {Preterm::Sigma { parameter, base: base.into(), family: right.into() }}
-			/ left:spine() _ [Token::Arrow] right:spine_headed() {Preterm::Pi { parameter: parser.interner.get_or_intern_static("_"), base: left.into(), family: right.into() }}
-			/ left:spine() _ [Token::Amp] right:spine_headed() {Preterm::Sigma { parameter: parser.interner.get_or_intern_static("_"), base: left.into(), family: right.into() }}
+			= _ [Token::Pipe] parameter:(name:identifier() {Some(name)} / [Token::LowDash] {None}) _ [Token::Pipe] body:spine_headed() {Preterm::Lambda { parameter, body: body.into() }}
+			/ _ [Token::Pipe] parameter:identifier() _ [Token::Colon] base:spine_headed() _ [Token::Pipe] _ [Token::Arrow] right:spine_headed() {Preterm::Pi { parameter: Some(parameter), base: base.into(), family: right.into() }}
+			/ _ [Token::Pipe] parameter:identifier() _ [Token::Colon] base:spine_headed() _ [Token::Pipe] _ [Token::Amp] right:spine_headed() {Preterm::Sigma { parameter: Some(parameter), base: base.into(), family: right.into() }}
+			/ left:spine() _ [Token::Arrow] right:spine_headed() {Preterm::Pi { parameter: None, base: left.into(), family: right.into() }}
+			/ left:spine() _ [Token::Amp] right:spine_headed() {Preterm::Sigma { parameter: None, base: left.into(), family: right.into() }}
 			/ left:spine() _ [Token::Comma] right:spine_headed() {Preterm::Pair { basepoint: left.into(), fiberpoint: right.into() }}
 			/ spine()
 
 		rule preterm() -> Preterm
-			= _ [Token::Keyword(Keyword::Let)] is_crisp:([Token::Bang] {()})? _ name:identifier() _ [Token::Colon] ty:spine_headed() _ [Token::Equal] argument:spine_headed() _ [Token::Semi] tail:preterm()
+			= _ [Token::Keyword(Keyword::Let)] is_crisp:([Token::Bang] {()})? _ name:(name:identifier() {Some(name)} / [Token::LowDash] {None}) _ [Token::Colon] ty:spine_headed() _ [Token::Equal] argument:spine_headed() _ [Token::Semi] tail:preterm()
 				{ Preterm::Let { assignee: name, is_crisp: is_crisp.is_some(), ty: ty.into(), argument: argument.into(), tail: tail.into() }}
-			/ _ [Token::Keyword(Keyword::Def)] is_crisp:([Token::Bang] {()})? name:identifier() _ [Token::Colon] ty:spine_headed() _ [Token::Equal] argument:spine_headed() _ [Token::Semi] tail:preterm()
+			/ _ [Token::Keyword(Keyword::Def)] is_crisp:([Token::Bang] {()})? name:(name:identifier() {Some(name)} / [Token::LowDash] {None}) _ [Token::Colon] ty:spine_headed() _ [Token::Equal] argument:spine_headed() _ [Token::Semi] tail:preterm()
 				{ Preterm::Splice(Preterm::Let { assignee: name, is_crisp: is_crisp.is_some(), ty: ty.into(), argument: argument.into(), tail: Preterm::Quote(tail.into()).into() }.into()) }
 			/ spine_headed()
 

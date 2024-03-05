@@ -2,7 +2,7 @@ let! unit : * c1 rfun
 	= |A : * c0 rnone| -> A -> A;
 
 let! list : nat -> * c1 rpointer
-	= |n| n :: |n| * c1 rpointer {
+	= |n| n :: |_| * c1 rpointer {
 		| 0        -> RC unit
 		| suc @n.T -> RC (T & nat)
 	};

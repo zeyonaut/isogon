@@ -74,8 +74,8 @@ pub enum Term {
 }
 
 pub struct Procedure {
-	pub captured_parameters: Vec<(Name, Term)>,
-	pub parameter: (Name, Term),
+	pub captured_parameters: Vec<(Option<Name>, Term)>,
+	pub parameter: (Option<Name>, Term),
 	pub body: Term,
 }
 

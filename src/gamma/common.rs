@@ -32,22 +32,22 @@ pub type Name = Spur;
 
 #[derive(Clone, Debug)]
 pub struct Binder<T, const N: usize = 1> {
-	pub parameters: [Name; N],
+	pub parameters: [Option<Name>; N],
 	pub body: T,
 }
 
 impl<T, const N: usize> Binder<T, N> {
-	pub fn new(parameters: [Name; N], body: T) -> Self {
+	pub fn new(parameters: [Option<Name>; N], body: T) -> Self {
 		Self { parameters, body }
 	}
 }
 
-pub fn bind<T, const N: usize>(parameters: [Name; N], body: T) -> Binder<T, N> {
+pub fn bind<T, const N: usize>(parameters: [Option<Name>; N], body: T) -> Binder<T, N> {
 	Binder::new(parameters, body)
 }
 
 impl<T> Binder<T, 1> {
-	pub fn parameter(&self) -> Name {
+	pub fn parameter(&self) -> Option<Name> {
 		let [parameter] = self.parameters;
 		parameter
 	}
@@ -58,7 +58,7 @@ impl<A, const N: usize> Binder<A, N> {
 		Binder { parameters: self.parameters, body: f(&self.body).into() }
 	}
 
-	pub fn mapv<B, C: From<B>>(self, f: impl FnOnce([Name; N], A) -> B) -> Binder<C, N> {
+	pub fn mapv<B, C: From<B>>(self, f: impl FnOnce([Option<Name>; N], A) -> B) -> Binder<C, N> {
 		Binder { parameters: self.parameters, body: f(self.parameters, self.body).into() }
 	}
 }
@@ -66,18 +66,18 @@ impl<A, const N: usize> Binder<A, N> {
 #[derive(Clone, Debug)]
 pub struct Closure<E, T, const N: usize = 1> {
 	pub environment: E,
-	pub parameters: [Name; N],
+	pub parameters: [Option<Name>; N],
 	pub body: T,
 }
 
 impl<E, T, const N: usize> Closure<E, T, N> {
-	pub fn new(environment: E, parameters: [Name; N], body: T) -> Self {
+	pub fn new(environment: E, parameters: [Option<Name>; N], body: T) -> Self {
 		Self { environment, parameters, body }
 	}
 }
 
 impl<E, T> Closure<E, T, 1> {
-	pub fn parameter(&self) -> Name {
+	pub fn parameter(&self) -> Option<Name> {
 		let [parameter] = self.parameters;
 		parameter
 	}

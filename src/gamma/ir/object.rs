@@ -29,7 +29,7 @@ impl Debug for Metavalue {
 #[derive(Clone, Debug)]
 pub enum Value {
 	Static(Metavalue),
-	Dynamic(Name, Level),
+	Dynamic(Option<Name>, Level),
 }
 
 #[derive(Clone, Debug)]
@@ -53,7 +53,7 @@ impl Environment {
 	}
 
 	#[must_use]
-	pub fn bind<const N: usize>(&self, names: [Name; N]) -> Self {
+	pub fn bind<const N: usize>(&self, names: [Option<Name>; N]) -> Self {
 		let mut environment = self.clone();
 		for name in names {
 			environment.values.push(Value::Dynamic(name, environment.dynamic_context_length));
@@ -72,7 +72,7 @@ impl Environment {
 
 #[derive(Clone, Debug)]
 pub enum Term {
-	Variable(Name, Level),
+	Variable(Option<Name>, Level),
 	Let {
 		ty: Rc<Self>,
 		argument: Rc<Self>,
