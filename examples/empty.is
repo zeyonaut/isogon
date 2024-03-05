@@ -1,0 +1,15 @@
+let! empty : *c0 rbyte = #0;
+
+let! unit : *c0 rbyte = #1;
+
+let! tt : unit = 0_1;
+
+let thunk_true : unit -> bool = |x|
+	x :: |a| bool {
+		0_1 -> true
+	};
+
+let absurd : empty -> bool = |x|
+	x :: |a| bool {};
+
+absurd

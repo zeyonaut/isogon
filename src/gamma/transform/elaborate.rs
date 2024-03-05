@@ -192,7 +192,7 @@ pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, Stati
 				)
 			}
 			Former::Nat if arguments.is_empty() => (StaticTerm::Nat, StaticValue::Universe),
-			Former::Bool if arguments.is_empty() => (StaticTerm::Bool, StaticValue::Universe),
+			Former::Enum(card) if arguments.is_empty() => (StaticTerm::Enum(card), StaticValue::Universe),
 			Former::Copy if arguments.is_empty() => (StaticTerm::CopyabilityType, StaticValue::Universe),
 			Former::Repr if arguments.is_empty() => (StaticTerm::ReprType, StaticValue::Universe),
 			Former::Universe if arguments.is_empty() => (StaticTerm::Universe, StaticValue::Universe),
@@ -209,7 +209,8 @@ pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, Stati
 					(StaticTerm::Suc(bx!(prev)), StaticValue::Nat)
 				}
 			}
-			Constructor::BoolValue(b) if arguments.is_empty() => (StaticTerm::BoolValue(b), StaticValue::Bool),
+			Constructor::EnumValue(k, v) if arguments.is_empty() =>
+				(StaticTerm::EnumValue(k, v), StaticValue::Enum(k)),
 			Constructor::Copyability(c) if arguments.is_empty() =>
 				(StaticTerm::Copyability(c), StaticValue::CopyabilityType),
 			Constructor::CopyMax => {
@@ -322,56 +323,45 @@ pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, Stati
 						motive_value.evaluate_with([scrutinee_value]),
 					)
 				}
-				StaticValue::Bool => {
-					assert!(cases.len() == 2);
+				StaticValue::Enum(card) => {
+					assert!(cases.len() == card as _);
 					let motive_term = verify_static(
-						&context.clone().bind_static(motive_parameter, false, StaticValue::Bool),
+						&context.clone().bind_static(motive_parameter, false, StaticValue::Enum(card)),
 						*motive,
 						StaticValue::Universe,
 					);
 					let motive_value =
 						Closure::new(context.environment.clone(), [motive_parameter], motive_term.clone());
 					// TODO: Avoid cloning.
-					let case_false = cases[cases
-						.iter()
-						.position(|(pattern, _)| {
-							if let Pattern::Construction(Constructor::BoolValue(false), args) = pattern {
-								args.is_empty()
-							} else {
-								false
-							}
+					let cases = (0..card)
+						.map(|v| {
+							let v = v as u8;
+							let case = cases[cases
+								.iter()
+								.position(|(pattern, _)| {
+									if let Pattern::Construction(Constructor::EnumValue(target_card, target_v), args) =
+										pattern
+									{
+										*target_card == card && *target_v == v && args.is_empty()
+									} else {
+										false
+									}
+								})
+								.unwrap()]
+							.1
+							.clone();
+							verify_static(
+								context,
+								case,
+								motive_value.evaluate_with([StaticValue::EnumValue(card, v)]),
+							)
 						})
-						.unwrap()]
-					.1
-					.clone();
-					let case_true = cases[cases
-						.iter()
-						.position(|(pattern, _)| {
-							if let Pattern::Construction(Constructor::BoolValue(true), args) = pattern {
-								args.is_empty()
-							} else {
-								false
-							}
-						})
-						.unwrap()]
-					.1
-					.clone();
-					let case_false = verify_static(
-						context,
-						case_false,
-						motive_value.evaluate_with([StaticValue::BoolValue(false)]),
-					);
-					let case_true = verify_static(
-						context,
-						case_true,
-						motive_value.evaluate_with([StaticValue::BoolValue(true)]),
-					);
+						.collect();
 					(
-						StaticTerm::CaseBool {
+						StaticTerm::CaseEnum {
 							scrutinee: bx!(scrutinee),
 							motive: bind([motive_parameter], bx!(motive_term)),
-							case_false: bx!(case_false),
-							case_true: bx!(case_true),
+							cases,
 						},
 						motive_value.evaluate_with([scrutinee_value]),
 					)
@@ -606,8 +596,9 @@ pub fn synthesize_dynamic(
 				StaticValue::Copyability(Copyability::Nontrivial),
 				StaticValue::ReprAtom(ReprAtom::Class),
 			),
-			Former::Bool if arguments.is_empty() => (
-				DynamicTerm::Bool,
+			// TODO: Optimize if subsingleton.
+			Former::Enum(card) if arguments.is_empty() => (
+				DynamicTerm::Enum(card),
 				DynamicValue::Universe {
 					copyability: rc!(StaticValue::Copyability(Copyability::Trivial)),
 					representation: rc!(StaticValue::ReprAtom(ReprAtom::Byte)),
@@ -693,9 +684,9 @@ pub fn synthesize_dynamic(
 					)
 				}
 			}
-			Constructor::BoolValue(b) if arguments.is_empty() => (
-				DynamicTerm::BoolValue(b),
-				DynamicValue::Bool,
+			Constructor::EnumValue(k, v) if arguments.is_empty() => (
+				DynamicTerm::EnumValue(k, v),
+				DynamicValue::Enum(k),
 				StaticValue::Copyability(Copyability::Trivial),
 				StaticValue::ReprAtom(ReprAtom::Byte),
 			),
@@ -886,13 +877,13 @@ pub fn synthesize_dynamic(
 						fiber_repr,
 					)
 				}
-				DynamicValue::Bool => {
-					assert!(cases.len() == 2);
+				DynamicValue::Enum(card) => {
+					assert!(cases.len() == card as _);
 					let (motive_term, fiber_copy, fiber_repr) = elaborate_dynamic_type(
 						&context.clone().bind_dynamic(
 							motive_parameter,
 							false,
-							DynamicValue::Bool,
+							DynamicValue::Enum(2),
 							StaticValue::Copyability(Copyability::Trivial),
 							StaticValue::ReprAtom(ReprAtom::Byte),
 						),
@@ -901,39 +892,30 @@ pub fn synthesize_dynamic(
 					let motive =
 						Closure::new(context.environment.clone(), [motive_parameter], motive_term.clone());
 					// TODO: Avoid cloning.
-					let case_false = cases[cases
-						.iter()
-						.position(|(pattern, _)| {
-							if let Pattern::Construction(Constructor::BoolValue(false), args) = pattern {
-								args.is_empty()
-							} else {
-								false
-							}
+					let cases = (0..card)
+						.map(|v| {
+							let v = v as u8;
+							let case = cases[cases
+								.iter()
+								.position(|(pattern, _)| {
+									if let Pattern::Construction(Constructor::EnumValue(target_card, target_v), args) =
+										pattern
+									{
+										*target_card == card && *target_v == v && args.is_empty()
+									} else {
+										false
+									}
+								})
+								.unwrap()]
+							.1
+							.clone();
+							verify_dynamic(context, case, motive.evaluate_with([DynamicValue::EnumValue(card, v)]))
 						})
-						.unwrap()]
-					.1
-					.clone();
-					let case_true = cases[cases
-						.iter()
-						.position(|(pattern, _)| {
-							if let Pattern::Construction(Constructor::BoolValue(true), args) = pattern {
-								args.is_empty()
-							} else {
-								false
-							}
-						})
-						.unwrap()]
-					.1
-					.clone();
-					let case_false =
-						verify_dynamic(context, case_false, motive.evaluate_with([DynamicValue::BoolValue(false)]));
-					let case_true =
-						verify_dynamic(context, case_true, motive.evaluate_with([DynamicValue::BoolValue(true)]));
+						.collect();
 					(
-						DynamicTerm::CaseBool {
+						DynamicTerm::CaseEnum {
 							scrutinee: bx!(scrutinee),
-							case_false: bx!(case_false),
-							case_true: bx!(case_true),
+							cases,
 							fiber_copyability: fiber_copy.reify_in(context.len()).into(),
 							fiber_representation: fiber_repr.reify_in(context.len()).into(),
 							motive: bind(

@@ -62,10 +62,10 @@ impl Closer {
 
 			// 0-recursive cases.
 			ob::Term::Nat => Term::Nat,
-			ob::Term::Bool => Term::Bool,
+			ob::Term::Enum(k) => Term::Enum(k),
 			ob::Term::Universe(k) => Term::Universe(k),
 			ob::Term::Num(n) => Term::Num(n),
-			ob::Term::BoolValue(b) => Term::BoolValue(b),
+			ob::Term::EnumValue(k, v) => Term::EnumValue(k, v),
 
 			// 1-recursive cases.
 			ob::Term::Project(t, p, u) => Term::Project(self.close((*t).clone(), is_occurrent).into(), p, u),
@@ -103,14 +103,16 @@ impl Closer {
 						.then(|| self.close_with(motive, [ob::Term::Nat], is_occurrent)),
 				}
 			}
-			ob::Term::CaseBool { scrutinee, case_false, case_true, fiber_universe, motive } => Term::CaseBool {
-				scrutinee: self.close((*scrutinee).clone(), is_occurrent).into(),
-				case_false: self.close((*case_false).clone(), is_occurrent).into(),
-				case_true: self.close((*case_true).clone(), is_occurrent).into(),
-				fiber_representation: fiber_universe.1,
-				motive: (fiber_universe.0 == Copyability::Nontrivial)
-					.then(|| self.close_with(motive, [ob::Term::Bool], is_occurrent)),
-			},
+			ob::Term::CaseEnum { scrutinee, cases, fiber_universe, motive } => {
+				let cardinality: u16 = cases.len().try_into().unwrap();
+				Term::CaseEnum {
+					scrutinee: self.close((*scrutinee).clone(), is_occurrent).into(),
+					cases: cases.into_iter().map(|case| self.close(case, is_occurrent)).collect(),
+					fiber_representation: fiber_universe.1,
+					motive: (fiber_universe.0 == Copyability::Nontrivial)
+						.then(|| self.close_with(motive, [ob::Term::Enum(cardinality)], is_occurrent)),
+				}
+			}
 		}
 	}
 

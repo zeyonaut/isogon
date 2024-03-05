@@ -110,12 +110,11 @@ impl Unstage for Term {
 				fiber_representation: StaticTerm::from(fiber_universe.1.as_ref()).into(),
 				motive: motive.unstage_in(level),
 			},
-			Bool => DynamicTerm::Bool,
-			BoolValue(b) => DynamicTerm::BoolValue(*b),
-			CaseBool { scrutinee, case_false, case_true, fiber_universe, motive } => DynamicTerm::CaseBool {
+			Enum(k) => DynamicTerm::Enum(*k),
+			EnumValue(k, v) => DynamicTerm::EnumValue(*k, *v),
+			CaseEnum { scrutinee, cases, fiber_universe, motive } => DynamicTerm::CaseEnum {
 				scrutinee: bx!(scrutinee.unstage_in(level)),
-				case_false: bx!(case_false.unstage_in(level)),
-				case_true: bx!(case_true.unstage_in(level)),
+				cases: cases.into_iter().map(|case| case.unstage_in(level)).collect(),
 				fiber_copyability: StaticTerm::Copyability(fiber_universe.0).into(),
 				fiber_representation: StaticTerm::from(fiber_universe.1.as_ref()).into(),
 				motive: motive.unstage_in(level),

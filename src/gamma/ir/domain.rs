@@ -21,11 +21,10 @@ pub enum StaticNeutral {
 		case_suc: Rc<Closure<Environment, StaticTerm, 2>>,
 	},
 	Suc(Rc<Self>),
-	CaseBool {
+	CaseEnum {
 		scrutinee: Rc<Self>,
 		motive: Rc<Closure<Environment, StaticTerm>>,
-		case_false: Rc<StaticValue>,
-		case_true: Rc<StaticValue>,
+		cases: Vec<StaticValue>,
 	},
 	MaxCopyability(Rc<Self>, Rc<Self>),
 	ReprUniv(Rc<Self>),
@@ -51,8 +50,8 @@ pub enum StaticValue {
 	Pair(/* basepoint */ Rc<Self>, /* fiberpoint */ Rc<Self>),
 	Nat,
 	Num(usize),
-	Bool,
-	BoolValue(bool),
+	Enum(u16),
+	EnumValue(u16, u8),
 }
 
 impl From<&Repr> for StaticValue {
@@ -103,10 +102,9 @@ pub enum DynamicNeutral {
 		motive: Rc<Closure<Environment, DynamicTerm>>,
 	},
 	Suc(Rc<Self>),
-	CaseBool {
+	CaseEnum {
 		scrutinee: Rc<Self>,
-		case_false: Rc<DynamicValue>,
-		case_true: Rc<DynamicValue>,
+		cases: Vec<DynamicValue>,
 		fiber_copyability: Rc<StaticValue>,
 		fiber_representation: Rc<StaticValue>,
 		motive: Rc<Closure<Environment, DynamicTerm>>,
@@ -154,8 +152,8 @@ pub enum DynamicValue {
 	Pair(/* basepoint */ Rc<Self>, /* fiberpoint */ Rc<Self>),
 	Nat,
 	Num(usize),
-	Bool,
-	BoolValue(bool),
+	Enum(u16),
+	EnumValue(u16, u8),
 	WrapType {
 		inner: Rc<Self>,
 		copyability: Rc<StaticValue>,
@@ -264,10 +262,10 @@ impl Conversion<StaticValue> for Level {
 		match (left, right) {
 			(Universe, Universe)
 			| (Nat, Nat)
-			| (Bool, Bool)
 			| (CopyabilityType, CopyabilityType)
 			| (ReprType, ReprType)
 			| (ReprNone, ReprNone) => true,
+			(Enum(left), Enum(right)) => left == right,
 			(ReprAtom(left), ReprAtom(right)) => left == right,
 			(ReprPair(left0, left1), ReprPair(right0, right1)) =>
 				self.can_convert(&**left0, right0) && self.can_convert(&**left1, right1),
@@ -293,7 +291,7 @@ impl Conversion<StaticValue> for Level {
 				self.can_convert(&**left_base, right_base)
 					&& (self + 1).can_convert(&left_family.autolyze(self), &right_family.autolyze(self)),
 			(Num(left), Num(right)) => left == right,
-			(BoolValue(left), BoolValue(right)) => left == right,
+			(EnumValue(_, left), EnumValue(_, right)) => left == right,
 			(Copyability(left), Copyability(right)) => left == right,
 			_ => false,
 		}
@@ -321,13 +319,14 @@ impl Conversion<StaticNeutral> for Level {
 					&& self.can_convert(&**l_case_nil, r_case_nil)
 					&& (self + 2).can_convert(&l_case_suc.autolyze(self), &r_case_suc.autolyze(self)),
 			(
-				CaseBool { scrutinee: l_scrutinee, motive: l_motive, case_false: l_case_f, case_true: l_case_t },
-				CaseBool { scrutinee: r_scrutinee, motive: r_motive, case_false: r_case_f, case_true: r_case_t },
+				CaseEnum { scrutinee: l_scrutinee, cases: l_cases, .. },
+				CaseEnum { scrutinee: r_scrutinee, cases: r_cases, .. },
 			) =>
 				self.can_convert(&**l_scrutinee, r_scrutinee)
-					&& (self + 1).can_convert(&l_motive.autolyze(self), &r_motive.autolyze(self))
-					&& self.can_convert(&**l_case_f, r_case_f)
-					&& self.can_convert(&**l_case_t, r_case_t),
+					&& l_cases
+						.iter()
+						.zip(r_cases.iter())
+						.fold(true, |acc, (left, right)| acc && self.can_convert(left, right)),
 			_ => false,
 		}
 	}
@@ -423,9 +422,10 @@ impl Conversion<DynamicValue> for Level {
 			) =>
 				self.can_convert(&**left_base, &right_base)
 					&& (self + 1).can_convert(&left_family.autolyze(self), &right_family.autolyze(self)),
-			(Nat, Nat) | (Bool, Bool) => true,
+			(Nat, Nat) => true,
+			(Enum(left), Enum(right)) => left == right,
 			(Num(left), Num(right)) => left == right,
-			(BoolValue(left), BoolValue(right)) => left == right,
+			(EnumValue(_, left), EnumValue(_, right)) => left == right,
 			_ => false,
 		}
 	}
@@ -456,12 +456,14 @@ impl Conversion<DynamicNeutral> for Level {
 					&& self.can_convert(&**l_case_nil, r_case_nil)
 					&& (self + 2).can_convert(&l_case_suc.autolyze(self), &r_case_suc.autolyze(self)),
 			(
-				CaseBool { scrutinee: l_scrutinee, case_false: l_case_f, case_true: l_case_t, .. },
-				CaseBool { scrutinee: r_scrutinee, case_false: r_case_f, case_true: r_case_t, .. },
+				CaseEnum { scrutinee: l_scrutinee, cases: l_cases, .. },
+				CaseEnum { scrutinee: r_scrutinee, cases: r_cases, .. },
 			) =>
 				self.can_convert(&**l_scrutinee, r_scrutinee)
-					&& self.can_convert(&**l_case_f, r_case_f)
-					&& self.can_convert(&**l_case_t, r_case_t),
+					&& l_cases
+						.iter()
+						.zip(r_cases.iter())
+						.fold(true, |acc, (left, right)| acc && self.can_convert(left, right)),
 			_ => false,
 		}
 	}

@@ -77,11 +77,11 @@ impl Stage for StaticTerm {
 					case_suc.clone().stage_with(environment, [Metavalue::Num(i), previous])
 				})
 			}
-			StaticTerm::Bool => Metavalue::Type,
-			StaticTerm::BoolValue(b) => Metavalue::BoolValue(b),
-			StaticTerm::CaseBool { scrutinee, motive: _, case_false, case_true } => {
-				let Metavalue::BoolValue(b) = scrutinee.stage_in(environment) else { panic!() };
-				if b { case_true } else { case_false }.stage_in(environment)
+			StaticTerm::Enum(_) => Metavalue::Type,
+			StaticTerm::EnumValue(_, v) => Metavalue::EnumValue(v),
+			StaticTerm::CaseEnum { scrutinee, motive: _, cases } => {
+				let Metavalue::EnumValue(v) = scrutinee.stage_in(environment) else { panic!() };
+				cases.into_iter().nth(v as _).unwrap().stage_in(environment)
 			}
 			StaticTerm::ReprType => Metavalue::Type,
 			StaticTerm::ReprAtom(r) => Metavalue::Repr(r.map(Repr::Atom)),
@@ -227,20 +227,14 @@ impl Stage for DynamicTerm {
 					),
 					motive: motive.stage_in(environment),
 				},
-			Bool => Term::Bool,
-			BoolValue(b) => Term::BoolValue(b),
-			CaseBool { scrutinee, case_false, case_true, fiber_copyability, fiber_representation, motive } =>
-				Term::CaseBool {
-					scrutinee: rc!(scrutinee.stage_in(environment)),
-					case_false: rc!(case_false.stage_in(environment)),
-					case_true: rc!(case_true.stage_in(environment)),
-					fiber_universe: stage_as_dynamic_universe(
-						*fiber_copyability,
-						*fiber_representation,
-						environment,
-					),
-					motive: motive.stage_in(environment),
-				},
+			Enum(k) => Term::Enum(k),
+			EnumValue(k, v) => Term::EnumValue(k, v),
+			CaseEnum { scrutinee, cases, fiber_copyability, fiber_representation, motive } => Term::CaseEnum {
+				scrutinee: rc!(scrutinee.stage_in(environment)),
+				cases: cases.into_iter().map(|case| case.stage_in(environment)).collect(),
+				fiber_universe: stage_as_dynamic_universe(*fiber_copyability, *fiber_representation, environment),
+				motive: motive.stage_in(environment),
+			},
 			WrapType { inner, copyability, representation } => Term::WrapType(
 				inner.stage_in(environment).into(),
 				stage_as_dynamic_universe(*copyability, *representation, environment),

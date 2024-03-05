@@ -28,7 +28,7 @@ pub enum Former {
 	Rc,
 	Wrap,
 	Nat,
-	Bool,
+	Enum(u16),
 	Copy,
 	Repr,
 	Universe,
@@ -43,7 +43,7 @@ pub enum Constructor {
 	Num(usize),
 	Suc,
 
-	BoolValue(bool),
+	EnumValue(u16, u8),
 
 	Copyability(Copyability),
 	CopyMax,

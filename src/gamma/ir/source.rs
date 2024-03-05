@@ -9,8 +9,10 @@ pub enum Token {
 	Identifier,
 	Number,
 	Project(Field),
+	LowDash,
 	Amp,
 	Bang,
+	Hash,
 	Pipe,
 	Colon,
 	TwoColon,
@@ -181,9 +183,11 @@ impl LexedSource {
 						None => return Err(LexError(scanner.position(), UnexpectedEnd(&EXPECTED))),
 					}
 				}
+				'_' => LowDash,
 				'&' => Amp,
 				'@' => At,
 				'!' => Bang,
+				'#' => Hash,
 				'|' => Pipe,
 				':' =>
 					if let Some(':') = scanner.peek() {

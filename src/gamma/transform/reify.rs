@@ -54,11 +54,10 @@ impl Reify for StaticNeutral {
 				case_nil: bx!(case_nil.reify_in(level)),
 				case_suc: case_suc.reify_in(level),
 			},
-			CaseBool { scrutinee, motive, case_false, case_true } => StaticTerm::CaseBool {
+			CaseEnum { scrutinee, motive, cases } => StaticTerm::CaseEnum {
 				scrutinee: bx!(scrutinee.reify_in(level)),
 				motive: motive.reify_in(level),
-				case_false: bx!(case_false.reify_in(level)),
-				case_true: bx!(case_true.reify_in(level)),
+				cases: cases.into_iter().map(|case| case.reify_in(level)).collect(),
 			},
 		}
 	}
@@ -86,8 +85,8 @@ impl Reify for StaticValue {
 			Quote(quotee) => StaticTerm::Quote(bx!(quotee.reify_in(level))),
 			Nat => StaticTerm::Nat,
 			Num(n) => StaticTerm::Num(*n),
-			Bool => StaticTerm::Bool,
-			BoolValue(b) => StaticTerm::BoolValue(*b),
+			Enum(k) => StaticTerm::Enum(*k),
+			EnumValue(k, v) => StaticTerm::EnumValue(*k, *v),
 			CopyabilityType => StaticTerm::CopyabilityType,
 			Copyability(c) => StaticTerm::Copyability(*c),
 			ReprType => StaticTerm::ReprType,
@@ -131,11 +130,10 @@ impl Reify for DynamicNeutral {
 					fiber_representation: bx!(fiber_representation.reify_in(level)),
 					motive: motive.reify_in(level),
 				},
-			CaseBool { scrutinee, case_false, case_true, fiber_copyability, fiber_representation, motive } =>
-				DynamicTerm::CaseBool {
+			CaseEnum { scrutinee, cases, fiber_copyability, fiber_representation, motive } =>
+				DynamicTerm::CaseEnum {
 					scrutinee: bx!(scrutinee.reify_in(level)),
-					case_false: bx!(case_false.reify_in(level)),
-					case_true: bx!(case_true.reify_in(level)),
+					cases: cases.into_iter().map(|case| case.reify_in(level)).collect(),
 					fiber_copyability: bx!(fiber_copyability.reify_in(level)),
 					fiber_representation: bx!(fiber_representation.reify_in(level)),
 					motive: motive.reify_in(level),
@@ -205,8 +203,8 @@ impl Reify for DynamicValue {
 			},
 			Nat => DynamicTerm::Nat,
 			Num(n) => DynamicTerm::Num(*n),
-			Bool => DynamicTerm::Bool,
-			BoolValue(b) => DynamicTerm::BoolValue(*b),
+			Enum(k) => DynamicTerm::Enum(*k),
+			EnumValue(k, v) => DynamicTerm::EnumValue(*k, *v),
 			WrapType { inner, copyability, representation } => DynamicTerm::WrapType {
 				inner: inner.reify_in(level).into(),
 				copyability: copyability.reify_in(level).into(),

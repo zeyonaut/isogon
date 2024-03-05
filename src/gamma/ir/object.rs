@@ -10,7 +10,7 @@ pub enum Metavalue {
 	Function(Closure<Environment, StaticTerm>),
 	Pair(Rc<Self>, Rc<Self>),
 	Num(usize),
-	BoolValue(bool),
+	EnumValue(u8),
 	Copyability(Copyability),
 	Repr(Option<Repr>),
 }
@@ -123,12 +123,11 @@ pub enum Term {
 		fiber_universe: UniverseKind,
 		motive: Binder<Rc<Self>>,
 	},
-	Bool,
-	BoolValue(bool),
-	CaseBool {
+	Enum(u16),
+	EnumValue(u16, u8),
+	CaseEnum {
 		scrutinee: Rc<Self>,
-		case_false: Rc<Self>,
-		case_true: Rc<Self>,
+		cases: Vec<Self>,
 		fiber_universe: UniverseKind,
 		motive: Binder<Rc<Self>>,
 	},
@@ -173,16 +172,17 @@ impl Term {
 					// TODO: Shouldn't occurrents not be marked if the fiber universe is trivial?
 					mark_occurrents(&motive.body, is_occurrent);
 				}
-				Term::CaseBool { scrutinee, case_false, case_true, fiber_universe: _, motive } => {
+				Term::CaseEnum { scrutinee, cases, fiber_universe: _, motive } => {
 					mark_occurrents(scrutinee, is_occurrent);
-					mark_occurrents(case_false, is_occurrent);
-					mark_occurrents(case_true, is_occurrent);
+					for case in cases {
+						mark_occurrents(case, is_occurrent);
+					}
 					// TODO: Shouldn't occurrents not be marked if the fiber universe is trivial?
 					mark_occurrents(&motive.body, is_occurrent);
 				}
 
 				// 0-recursive cases.
-				Term::Universe(_) | Term::Bool | Term::BoolValue(_) | Term::Nat | Term::Num(_) => (),
+				Term::Universe(_) | Term::Enum(_) | Term::EnumValue(_, _) | Term::Nat | Term::Num(_) => (),
 
 				// 1-recursive cases.
 				Term::Project(a, _, _)

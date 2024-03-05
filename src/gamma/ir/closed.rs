@@ -57,12 +57,11 @@ pub enum Term {
 		fiber_representation: Option<Repr>,
 		motive: Option<Binder<Box<Self>>>,
 	},
-	Bool,
-	BoolValue(bool),
-	CaseBool {
+	Enum(u16),
+	EnumValue(u16, u8),
+	CaseEnum {
 		scrutinee: Box<Self>,
-		case_false: Box<Self>,
-		case_true: Box<Self>,
+		cases: Vec<Self>,
 		fiber_representation: Option<Repr>,
 		motive: Option<Binder<Box<Self>>>,
 	},
@@ -112,15 +111,16 @@ impl Substitute for Term {
 				case_suc.substitute(substitution, minimum_level);
 				motive.as_mut().map(|x| x.substitute(substitution, minimum_level));
 			}
-			Term::CaseBool { scrutinee, case_false, case_true, fiber_representation: _, motive } => {
+			Term::CaseEnum { scrutinee, cases, fiber_representation: _, motive } => {
 				scrutinee.substitute(substitution, minimum_level);
-				case_false.substitute(substitution, minimum_level);
-				case_true.substitute(substitution, minimum_level);
+				for case in cases {
+					case.substitute(substitution, minimum_level);
+				}
 				motive.as_mut().map(|x| x.substitute(substitution, minimum_level));
 			}
 
 			// 0-recursive cases.
-			Term::Num(_) | Term::Universe(_) | Term::Nat | Term::Bool | Term::BoolValue(_) => (),
+			Term::Num(_) | Term::Universe(_) | Term::Nat | Term::Enum(_) | Term::EnumValue(_, _) => (),
 
 			// 1-recursive cases.
 			Term::Project(t, _, _)

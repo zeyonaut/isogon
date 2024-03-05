@@ -125,15 +125,14 @@ impl Evaluate for StaticTerm {
 				}
 				_ => panic!(),
 			},
-			Bool => StaticValue::Bool,
-			BoolValue(b) => StaticValue::BoolValue(b),
-			CaseBool { scrutinee, motive, case_false, case_true } => match scrutinee.evaluate_in(environment) {
-				StaticValue::BoolValue(b) => if b { case_true } else { case_false }.evaluate_in(environment),
-				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::CaseBool {
+			Enum(card) => StaticValue::Enum(card),
+			EnumValue(k, v) => StaticValue::EnumValue(k, v),
+			CaseEnum { scrutinee, motive, cases } => match scrutinee.evaluate_in(environment) {
+				StaticValue::EnumValue(_, v) => cases.into_iter().nth(v.into()).unwrap().evaluate_in(environment),
+				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::CaseEnum {
 					scrutinee: rc!(neutral),
 					motive: rc!(motive.evaluate_in(environment)),
-					case_false: rc!(case_false.evaluate_in(environment)),
-					case_true: rc!(case_true.evaluate_in(environment)),
+					cases: cases.into_iter().map(|case| case.evaluate_in(environment)).collect(),
 				}),
 				_ => panic!(),
 			},
@@ -257,15 +256,15 @@ impl Evaluate for DynamicTerm {
 					}
 					_ => panic!(),
 				},
-			Bool => DynamicValue::Bool,
-			BoolValue(b) => DynamicValue::BoolValue(b),
-			CaseBool { scrutinee, case_false, case_true, fiber_copyability, fiber_representation, motive } =>
+			Enum(k) => DynamicValue::Enum(k),
+			EnumValue(k, v) => DynamicValue::EnumValue(k, v),
+			CaseEnum { scrutinee, cases, fiber_copyability, fiber_representation, motive } =>
 				match scrutinee.evaluate_in(environment) {
-					DynamicValue::BoolValue(b) => if b { case_true } else { case_false }.evaluate_in(environment),
-					DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::CaseBool {
+					DynamicValue::EnumValue(_, v) =>
+						cases.into_iter().nth(v.into()).unwrap().evaluate_in(environment),
+					DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::CaseEnum {
 						scrutinee: rc!(neutral),
-						case_false: rc!(case_false.evaluate_in(environment)),
-						case_true: rc!(case_true.evaluate_in(environment)),
+						cases: cases.into_iter().map(|case| case.evaluate_in(environment)).collect(),
 						fiber_copyability: fiber_copyability.evaluate_in(environment).into(),
 						fiber_representation: fiber_representation.evaluate_in(environment).into(),
 						motive: rc!(motive.evaluate_in(environment)),

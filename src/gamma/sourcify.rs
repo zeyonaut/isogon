@@ -15,7 +15,7 @@ fn write_static_spine(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -
 		| Project { .. }
 		| Suc(..)
 		| CaseNat { .. }
-		| CaseBool { .. }
+		| CaseEnum { .. }
 		| MaxCopyability(..)
 		| ReprPair(..)
 		| ReprMax(..)
@@ -33,8 +33,8 @@ fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) ->
 		| Quote(_)
 		| Nat
 		| Num(..)
-		| Bool
-		| BoolValue(..)
+		| Enum(..)
+		| EnumValue(..)
 		| Copyability(..)
 		| CopyabilityType
 		| ReprType
@@ -48,7 +48,7 @@ fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) ->
 		| Sigma { .. }
 		| Suc(..)
 		| CaseNat { .. }
-		| CaseBool { .. }
+		| CaseEnum { .. }
 		| MaxCopyability(..)
 		| ReprPair(_, _)
 		| ReprMax(_, _)
@@ -159,16 +159,19 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			write_static(&case_suc.body, f, interner)?;
 			write!(f, "}}")
 		}
-		Bool => write!(f, "bool"),
-		BoolValue(b) => write!(f, "{}", if *b { "true" } else { "false" }),
-		CaseBool { scrutinee, motive, case_false, case_true } => {
+		Enum(k) => write!(f, "#{k}"),
+		EnumValue(k, v) => write!(f, "{v}_{k}"),
+		CaseEnum { scrutinee, motive, cases } => {
 			write_static_spine(scrutinee, f, interner)?;
 			write!(f, " :: |{}| ", interner.resolve(&motive.parameter()))?;
 			write_static(&motive.body, f, interner)?;
-			write!(f, " {{false -> ")?;
-			write_static(case_false, f, interner)?;
-			write!(f, " | true -> ")?;
-			write_static(case_true, f, interner)?;
+			for (i, case) in cases.iter().enumerate() {
+				if i > 0 {
+					write!(f, " | ")?;
+				}
+				write!(f, "{i} -> ")?;
+				write_static(case, f, interner)?;
+			}
 			write!(f, "}}")
 		}
 		ReprType => write!(f, "repr"),
@@ -210,7 +213,7 @@ fn write_dynamic_spine(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo)
 		| Project { .. }
 		| Suc(..)
 		| CaseNat { .. }
-		| CaseBool { .. }
+		| CaseEnum { .. }
 		| WrapType { .. }
 		| WrapNew(_)
 		| RcType { .. }
@@ -224,7 +227,7 @@ fn write_dynamic_spine(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo)
 fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use DynamicTerm::*;
 	match term {
-		Variable(..) | Universe { .. } | Splice(_) | Nat | Num(..) | Bool | BoolValue(..) =>
+		Variable(..) | Universe { .. } | Splice(_) | Nat | Num(..) | Enum(..) | EnumValue(..) =>
 			write_dynamic(term, f, interner),
 		Let { .. }
 		| Lambda { .. }
@@ -237,7 +240,7 @@ fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) 
 		| Sigma { .. }
 		| Suc(..)
 		| CaseNat { .. }
-		| CaseBool { .. }
+		| CaseEnum { .. }
 		| WrapType { .. }
 		| WrapNew(_)
 		| RcType { .. }
@@ -338,16 +341,20 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write_dynamic(&case_suc.body, f, interner)?;
 			write!(f, "}}")
 		}
-		Bool => write!(f, "bool"),
-		BoolValue(b) => write!(f, "{}", if *b { "true" } else { "false" }),
-		CaseBool { scrutinee, motive, case_false, case_true, .. } => {
+		Enum(k) => write!(f, "#{k}"),
+		EnumValue(k, v) => write!(f, "{v}_{k}"),
+		CaseEnum { scrutinee, motive, cases, .. } => {
 			write_dynamic_spine(scrutinee, f, interner)?;
 			write!(f, " :: bool |{}| ", interner.resolve(&motive.parameter()))?;
 			write_dynamic(&motive.body, f, interner)?;
-			write!(f, " {{false -> ")?;
-			write_dynamic(case_false, f, interner)?;
-			write!(f, " | true -> ")?;
-			write_dynamic(case_true, f, interner)?;
+			write!(f, " {{")?;
+			for (i, case) in cases.iter().enumerate() {
+				if i > 0 {
+					write!(f, " | ")?;
+				}
+				write!(f, "{i} -> ")?;
+				write_dynamic(case, f, interner)?;
+			}
 			write!(f, "}}")
 		}
 		WrapType { inner: x, .. } => {

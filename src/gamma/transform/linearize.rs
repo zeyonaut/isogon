@@ -75,7 +75,7 @@ impl RegisterType {
 
 	const NAT: Self = Self::new(Some(Class::Nat), Some(Repr::Atom(ReprAtom::Nat)));
 	const CLASS: Self = Self::new(Some(Class::Class), Some(Repr::Atom(ReprAtom::Class)));
-	const BOOL: Self = Self::new(None, Some(Repr::Atom(ReprAtom::Byte)));
+	const BYTE: Self = Self::new(None, Some(Repr::Atom(ReprAtom::Byte)));
 	const NONE: Self = Self::new(None, None);
 	const PI: Self = Self::new(Some(Class::Pi), Some(Repr::Atom(ReprAtom::Fun)));
 
@@ -242,7 +242,7 @@ impl ProcedureBuilder {
 			Term::Apply { callee, argument, fiber_representation, family } => {
 				todo!()
 			}
-			Term::CaseBool { scrutinee, case_false, case_true, fiber_representation, motive } => {
+			Term::CaseEnum { scrutinee, cases, fiber_representation, motive } => {
 				todo!()
 			}
 
@@ -258,10 +258,10 @@ impl ProcedureBuilder {
 				Copyability::Nontrivial => Operand::Literal(Literal::Class),
 				Copyability::Trivial => Operand::Literal(Literal::None),
 			},
-			Term::Bool => Operand::Literal(Literal::None),
 			Term::Nat => Operand::Literal(Literal::Nat),
 			Term::Num(n) => Operand::Literal(Literal::Num(n)),
-			Term::BoolValue(b) => Operand::Literal(Literal::BoolValue(b)),
+			Term::Enum(_) => Operand::Literal(Literal::None),
+			Term::EnumValue(k, v) => Operand::Literal(Literal::EnumValue(k, v)),
 
 			// Modifiers
 			Term::Project(value, projection, universe) =>
@@ -337,7 +337,7 @@ impl ProcedureBuilder {
 					Some(Repr::Atom(ReprAtom::Pointer)),
 				)
 			}
-			Operation::IsPositive(_) => RegisterType::BOOL,
+			Operation::IsPositive(_) => RegisterType::BYTE,
 			Operation::Pred(_) | Operation::Suc(_) => RegisterType::NAT,
 
 			Operation::WrapClass(_) |
@@ -358,7 +358,7 @@ impl ProcedureBuilder {
 				Literal::Pi => RegisterType::CLASS,
 				Literal::Class => RegisterType::CLASS,
 				Literal::Num(_) => RegisterType::NAT,
-				Literal::BoolValue(_) => RegisterType::BOOL,
+				Literal::EnumValue(..) => RegisterType::BYTE,
 			},
 			Operand::Load(load) => {
 				let ty = self.register_context.get(load.register);

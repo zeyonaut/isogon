@@ -133,12 +133,16 @@ peg::parser! {
 		rule number() -> usize
 			= _ pos:position!() [Token::Number] {parser.number(pos).unwrap()}
 
+		rule only_number() -> usize
+			= pos:position!() [Token::Number] {parser.number(pos).unwrap()}
+
 		rule former() -> Former
 			= _ a:([Token::Tick] {Former::Lift}
 			/ [Token::Keyword(Keyword::RcType)] {Former::Rc}
 			/ [Token::Keyword(Keyword::WrapType)] {Former::Wrap}
 			/ [Token::Keyword(Keyword::Nat)] {Former::Nat}
-			/ [Token::Keyword(Keyword::Bool)] {Former::Bool}
+			/ [Token::Keyword(Keyword::Bool)] {Former::Enum(2)}
+			/ [Token::Hash] card:only_number() { assert!(card <= 256); Former::Enum(card as u16)}
 			/ [Token::Keyword(Keyword::Copy)] {Former::Copy}
 			/ [Token::Keyword(Keyword::Repr)] {Former::Repr}
 			/ [Token::Ast] {Former::Universe}) {a}
@@ -146,10 +150,11 @@ peg::parser! {
 		rule constructor() -> Constructor
 			= _ a:([Token::Keyword(Keyword::RcNew)] {Constructor::Rc}
 			/ [Token::Keyword(Keyword::WrapNew)] {Constructor::Wrap}
+			/ number:number() [Token::LowDash] card:only_number() {assert!(card <= 256 && number < card); Constructor::EnumValue(card as _, number as _)}
 			/ number:number() {Constructor::Num(number)}
 			/ [Token::Keyword(Keyword::Suc)] {Constructor::Suc}
-			/ [Token::Keyword(Keyword::False)] {Constructor::BoolValue(false)}
-			/ [Token::Keyword(Keyword::True)] {Constructor::BoolValue(true)}
+			/ [Token::Keyword(Keyword::False)] {Constructor::EnumValue(2, 0)}
+			/ [Token::Keyword(Keyword::True)] {Constructor::EnumValue(2, 1)}
 			/ [Token::Keyword(Keyword::C0)] {Constructor::Copyability(Copyability::Trivial)}
 			/ [Token::Keyword(Keyword::C1)] {Constructor::Copyability(Copyability::Nontrivial)}
 			/ [Token::Keyword(Keyword::CMax)] {Constructor::CopyMax}

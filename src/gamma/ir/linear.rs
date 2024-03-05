@@ -108,7 +108,7 @@ pub enum Literal {
 	Class,
 	Pi,
 	Num(usize),
-	BoolValue(bool),
+	EnumValue(u16, u8),
 }
 
 #[derive(Clone)]
@@ -318,7 +318,7 @@ impl Operand {
 				Literal::Class => print!("class"),
 				Literal::Pi => print!("pi"),
 				Literal::Num(n) => print!("{n}"),
-				Literal::BoolValue(b) => print!("{b}"),
+				Literal::EnumValue(k, v) => print!("{v}_{k}"),
 			},
 			Operand::Load(m) => {
 				match m.register {
