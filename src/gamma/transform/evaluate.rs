@@ -2,7 +2,7 @@ use crate::{
 	gamma::{
 		common::{Binder, Closure, Field, Level},
 		ir::{
-			domain::{DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue, Value},
+			semantics::{DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue, Value},
 			syntax::{DynamicTerm, StaticTerm},
 		},
 	},

@@ -2,15 +2,17 @@ use crate::{
 	gamma::{
 		common::{bind, Closure, Copyability, Field, Index, Level, Name, ReprAtom},
 		ir::{
-			domain::{Conversion, DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue, Value},
 			presyntax::{Constructor, Expression, Former, Pattern, Preterm, Projector},
+			semantics::{
+				Conversion, DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue, Value,
+			},
 			source::LexedSource,
 			syntax::{DynamicTerm, StaticTerm},
 		},
 		transform::{
 			evaluate::{Autolyze, Evaluate, EvaluateWith},
 			parse::report_line_error,
-			reify::Unevaluate,
+			unevaluate::Unevaluate,
 		},
 	},
 	utility::{bx, rc},

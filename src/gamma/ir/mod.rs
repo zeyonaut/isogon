@@ -1,6 +1,6 @@
 pub mod closed;
-pub mod domain;
 pub mod explicit;
+pub mod semantics;
 // Temporarily supress warnings.
 // FIXME: Remove this.
 #[allow(unused)]

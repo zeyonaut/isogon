@@ -8,8 +8,8 @@ pub mod explicitize;
 pub mod linearize;
 pub mod lower;
 pub mod parse;
-pub mod reify;
 pub mod stage;
+pub mod unevaluate;
 pub mod unstage;
 
 pub use close::close;

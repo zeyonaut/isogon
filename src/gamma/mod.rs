@@ -9,7 +9,7 @@ use transform::{
 };
 
 use self::{ir::syntax::DynamicTerm, sourcify::write_dynamic};
-use crate::gamma::transform::reify::Unevaluate;
+use crate::gamma::transform::unevaluate::Unevaluate;
 
 pub fn run(source: &str) {
 	// Parsing.
