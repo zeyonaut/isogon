@@ -9,7 +9,7 @@ use transform::{
 };
 
 use self::{ir::syntax::DynamicTerm, sourcify::write_dynamic};
-use crate::gamma::transform::reify::Reify;
+use crate::gamma::transform::reify::Unevaluate;
 
 pub fn run(source: &str) {
 	// Parsing.
@@ -22,7 +22,7 @@ pub fn run(source: &str) {
 	let (term, ty) = elaborate(source, &lexed_source, preterm);
 	println!("Elaboration complete.");
 	println!("Elaborated term: {}", pretty_print(&term, &interner));
-	println!("Synthesized type: {}", pretty_print(&ty.reify(), &interner));
+	println!("Synthesized type: {}", pretty_print(&ty.unevaluate(), &interner));
 
 	println!();
 
@@ -31,7 +31,7 @@ pub fn run(source: &str) {
 	println!("Staging complete.");
 	let unstaged_term = staged_term.clone().unstage();
 	println!("Staged term: {}", pretty_print(&unstaged_term, &interner));
-	println!("Evaluation: {}", pretty_print(&unstaged_term.evaluate().reify(), &interner));
+	println!("Evaluation: {}", pretty_print(&unstaged_term.evaluate().unevaluate(), &interner));
 
 	println!();
 
