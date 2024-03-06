@@ -13,13 +13,13 @@ use crate::gamma::transform::reify::Reify;
 
 pub fn run(source: &str) {
 	// Parsing.
-	let (preterm, interner) = parse(source);
+	let (lexed_source, preterm, interner) = parse(source);
 	println!("Parsing complete.");
 
 	println!();
 
 	// Elaboration.
-	let (term, ty) = elaborate(preterm);
+	let (term, ty) = elaborate(source, &lexed_source, preterm);
 	println!("Elaboration complete.");
 	println!("Elaborated term: {}", pretty_print(&term, &interner));
 	println!("Synthesized type: {}", pretty_print(&ty.reify(), &interner));

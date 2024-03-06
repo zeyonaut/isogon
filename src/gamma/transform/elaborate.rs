@@ -3,11 +3,13 @@ use crate::{
 		common::{bind, Closure, Copyability, Field, Index, Level, Name, ReprAtom},
 		ir::{
 			domain::{Conversion, DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue, Value},
-			presyntax::{Constructor, Former, Pattern, Preterm, Projector},
+			presyntax::{Constructor, Expression, Former, Pattern, Preterm, Projector},
+			source::LexedSource,
 			syntax::{DynamicTerm, StaticTerm},
 		},
 		transform::{
 			evaluate::{Autolyze, Evaluate, EvaluateWith},
+			parse::report_line_error,
 			reify::Reify,
 		},
 	},
@@ -15,9 +17,60 @@ use crate::{
 };
 
 /// Elaborates a dynamic preterm to a dynamic term and synthesizes its type.
-pub fn elaborate(term: Preterm) -> (DynamicTerm, DynamicValue) {
-	let (term, ty, ..) = synthesize_dynamic(&Context::empty(), term);
-	(term, ty)
+pub fn elaborate(source: &str, lexed_source: &LexedSource, term: Expression) -> (DynamicTerm, DynamicValue) {
+	match synthesize_dynamic(&Context::empty(), term) {
+		Ok((term, ty, ..)) => (term, ty),
+		Err(error) => {
+			report_line_error(
+				source,
+				lexed_source.ranges.get(error.range.0).copied().unwrap_or((source.len(), source.len() + 1)),
+				&format!("elaboration error: {:#?}", error.kind),
+			);
+			panic!();
+		}
+	}
+}
+
+#[derive(Debug, Clone)]
+struct ElaborationError {
+	range: (usize, usize),
+	kind: ElaborationErrorKind,
+}
+
+#[derive(Debug, Clone)]
+enum ExpectedFormer {
+	DynamicUniverse,
+	Sigma,
+	Pi,
+	Lift,
+	Rc,
+	Wrap,
+}
+
+#[derive(Debug, Clone)]
+enum ElaborationErrorKind {
+	ExpectedStaticFoundDynamicVariable,
+	ExpectedDynamicFoundStaticVariable,
+	UsedNonCrispLockedVariable,
+	SynthesizedLambdaOrPair,
+	InvalidFormer,
+	InvalidConstructor,
+	InvalidProjector,
+	ExpectedFormer(ExpectedFormer),
+	SynthesizedFormer(ExpectedFormer),
+	StaticBidirectionalMismatch { synthesized: StaticTerm, expected: StaticTerm },
+	DynamicBidirectionalMismatch { synthesized: DynamicTerm, expected: DynamicTerm },
+	InvalidCaseSplit,
+	InvalidCaseSplitScrutineeType,
+	CouldNotSynthesizeStatic,
+	CouldNotSynthesizeDynamic,
+	NotInScope,
+}
+
+impl ElaborationErrorKind {
+	fn at(self, range: (usize, usize)) -> ElaborationError {
+		ElaborationError { range, kind: self }
+	}
 }
 
 #[derive(Clone, Debug)]
@@ -113,32 +166,29 @@ impl Context {
 	}
 }
 
-pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, StaticValue) {
-	match term {
-		Preterm::Variable(name) => context
-			.tys
-			.iter()
-			.rev()
-			.enumerate()
-			.find_map(|(i, (name_1, entry))| {
+fn synthesize_static(
+	context: &Context,
+	expr: Expression,
+) -> Result<(StaticTerm, StaticValue), ElaborationError> {
+	Ok(match expr.preterm {
+		Preterm::Variable(name) => 'var: loop {
+			for (i, (name_1, entry)) in context.tys.iter().rev().enumerate() {
 				if &Some(name) == name_1 {
 					if context.len().0 - 1 - i >= context.lock || entry.is_crisp {
 						if let ContextType::Static(ty) = &entry.ty {
-							Some((StaticTerm::Variable(Some(name), Index(i)), ty.clone()))
+							break 'var (StaticTerm::Variable(Some(name), Index(i)), ty.clone());
 						} else {
-							panic!("expected static variable; found dynamic variable");
+							return Err(ElaborationErrorKind::ExpectedStaticFoundDynamicVariable.at(expr.range));
 						}
 					} else {
-						panic!("attempted to access non-crisp locked variable");
+						return Err(ElaborationErrorKind::UsedNonCrispLockedVariable.at(expr.range));
 					}
-				} else {
-					None
 				}
-			})
-			.unwrap(),
-
+			}
+			return Err(ElaborationErrorKind::NotInScope.at(expr.range));
+		},
 		Preterm::Quote(quotee) => {
-			let (quotee, quotee_ty, copy, repr) = synthesize_dynamic(context, *quotee);
+			let (quotee, quotee_ty, copy, repr) = synthesize_dynamic(context, *quotee)?;
 			(
 				StaticTerm::Quote(bx!(quotee)),
 				StaticValue::Lift { ty: quotee_ty.into(), copy: copy.into(), repr: repr.into() },
@@ -147,15 +197,15 @@ pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, Stati
 
 		Preterm::Let { assignee, is_crisp, ty, argument, tail } => {
 			let arg_context = if is_crisp { Some(context.clone().lock()) } else { None };
-			let ty = verify_static(arg_context.as_ref().unwrap_or(context), *ty, StaticValue::Universe);
+			let ty = verify_static(arg_context.as_ref().unwrap_or(context), *ty, StaticValue::Universe)?;
 			let ty_value = ty.clone().evaluate_in(&context.environment);
-			let argument = verify_static(arg_context.as_ref().unwrap_or(context), *argument, ty_value.clone());
+			let argument = verify_static(arg_context.as_ref().unwrap_or(context), *argument, ty_value.clone())?;
 			// NOTE: Isn't this a problem, performance-wise? Does laziness help here? Testing necessary. (Having the value available in the environment is wanted for evaluation.)
 			let argument_value = argument.clone().evaluate_in(&context.environment);
 			let (tail, tail_ty) = synthesize_static(
 				&context.clone().extend_static(assignee, is_crisp, ty_value, argument_value),
 				*tail,
-			);
+			)?;
 			(
 				StaticTerm::Let { ty: bx!(ty), argument: bx!(argument), tail: bind([assignee], bx!(tail)) },
 				tail_ty,
@@ -163,31 +213,32 @@ pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, Stati
 		}
 
 		Preterm::Pi { parameter, base, family } => {
-			let base = verify_static(context, *base, StaticValue::Universe);
+			let base = verify_static(context, *base, StaticValue::Universe)?;
 			let base_value = base.clone().evaluate_in(&context.environment);
 			let family = verify_static(
 				&context.clone().bind_static(parameter, false, base_value),
 				*family,
 				StaticValue::Universe,
-			);
+			)?;
 			(StaticTerm::Pi(bx!(base), bind([parameter], bx!(family))), StaticValue::Universe)
 		}
 		Preterm::Sigma { parameter, base, family } => {
-			let base = verify_static(context, *base, StaticValue::Universe);
+			let base = verify_static(context, *base, StaticValue::Universe)?;
 			let base_value = base.clone().evaluate_in(&context.environment);
 			let family = verify_static(
 				&context.clone().bind_static(parameter, false, base_value),
 				*family,
 				StaticValue::Universe,
-			);
+			)?;
 			(StaticTerm::Sigma(bx!(base), bind([parameter], bx!(family))), StaticValue::Universe)
 		}
-		Preterm::Lambda { .. } | Preterm::Pair { .. } => panic!(),
+		Preterm::Lambda { .. } | Preterm::Pair { .. } =>
+			return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
 
 		Preterm::Former(former, arguments) => match former {
 			Former::Lift => {
 				let [liftee] = arguments.try_into().unwrap();
-				let (liftee, copy, repr) = elaborate_dynamic_type(context, liftee);
+				let (liftee, copy, repr) = elaborate_dynamic_type(context, liftee)?;
 				(
 					StaticTerm::Lift {
 						liftee: liftee.into(),
@@ -202,13 +253,13 @@ pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, Stati
 			Former::Copy if arguments.is_empty() => (StaticTerm::CopyabilityType, StaticValue::Universe),
 			Former::Repr if arguments.is_empty() => (StaticTerm::ReprType, StaticValue::Universe),
 			Former::Universe if arguments.is_empty() => (StaticTerm::Universe, StaticValue::Universe),
-			_ => panic!(),
+			_ => return Err(ElaborationErrorKind::InvalidFormer.at(expr.range)),
 		},
 		Preterm::Constructor(constructor, arguments) => match constructor {
 			Constructor::Num(n) if arguments.is_empty() => (StaticTerm::Num(n), StaticValue::Nat),
 			Constructor::Suc => {
 				let [prev] = arguments.try_into().unwrap();
-				let prev = verify_static(context, prev, StaticValue::Nat);
+				let prev = verify_static(context, prev, StaticValue::Nat)?;
 				if let StaticTerm::Num(p) = prev {
 					(StaticTerm::Num(p + 1), StaticValue::Nat)
 				} else {
@@ -221,35 +272,37 @@ pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, Stati
 				(StaticTerm::Copyability(c), StaticValue::CopyabilityType),
 			Constructor::CopyMax => {
 				let [a, b] = arguments.try_into().unwrap();
-				let a = verify_static(context, a, StaticValue::CopyabilityType);
-				let b = verify_static(context, b, StaticValue::CopyabilityType);
+				let a = verify_static(context, a, StaticValue::CopyabilityType)?;
+				let b = verify_static(context, b, StaticValue::CopyabilityType)?;
 				(StaticTerm::MaxCopyability(bx!(a), bx!(b)), StaticValue::CopyabilityType)
 			}
 			Constructor::ReprAtom(r) if arguments.is_empty() => (StaticTerm::ReprAtom(r), StaticValue::ReprType),
 			Constructor::ReprPair => {
 				let [r0, r1] = arguments.try_into().unwrap();
-				let r0 = verify_static(context, r0, StaticValue::ReprType);
-				let r1 = verify_static(context, r1, StaticValue::ReprType);
+				let r0 = verify_static(context, r0, StaticValue::ReprType)?;
+				let r1 = verify_static(context, r1, StaticValue::ReprType)?;
 				(StaticTerm::ReprPair(bx!(r0), bx!(r1)), StaticValue::ReprType)
 			}
 			Constructor::ReprMax => {
 				let [r0, r1] = arguments.try_into().unwrap();
-				let r0 = verify_static(context, r0, StaticValue::ReprType);
-				let r1 = verify_static(context, r1, StaticValue::ReprType);
+				let r0 = verify_static(context, r0, StaticValue::ReprType)?;
+				let r1 = verify_static(context, r1, StaticValue::ReprType)?;
 				(StaticTerm::ReprMax(bx!(r0), bx!(r1)), StaticValue::ReprType)
 			}
 			Constructor::ReprUniv => {
 				let [c] = arguments.try_into().unwrap();
-				let c = verify_static(context, c, StaticValue::CopyabilityType);
+				let c = verify_static(context, c, StaticValue::CopyabilityType)?;
 				(StaticTerm::ReprUniv(bx!(c)), StaticValue::ReprType)
 			}
-			_ => panic!(),
+			_ => return Err(ElaborationErrorKind::InvalidConstructor.at(expr.range)),
 		},
 
 		Preterm::Project(scrutinee, projector) => match projector {
 			Projector::Field(field) => {
-				let (scrutinee, scrutinee_ty) = synthesize_static(context, *scrutinee);
-				let StaticValue::IndexedSum(base, family) = scrutinee_ty else { panic!() };
+				let (scrutinee, scrutinee_ty) = synthesize_static(context, *scrutinee)?;
+				let StaticValue::IndexedSum(base, family) = scrutinee_ty else {
+					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
+				};
 				match field {
 					Field::Base => (StaticTerm::Project(bx!(scrutinee), field), base.as_ref().clone()),
 					Field::Fiber => {
@@ -259,29 +312,33 @@ pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, Stati
 					}
 				}
 			}
-			_ => panic!(),
+			_ => return Err(ElaborationErrorKind::InvalidProjector.at(expr.range)),
 		},
 
 		Preterm::Call { callee, argument } => {
-			let (callee, scrutinee_ty) = synthesize_static(context, *callee);
-			let StaticValue::IndexedProduct(base, family) = scrutinee_ty else { panic!() };
-			let argument = verify_static(context, *argument, (*base).clone());
+			let (callee, scrutinee_ty) = synthesize_static(context, *callee)?;
+			let StaticValue::IndexedProduct(base, family) = scrutinee_ty else {
+				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
+			};
+			let argument = verify_static(context, *argument, (*base).clone())?;
 			(
 				StaticTerm::Apply { scrutinee: bx!(callee), argument: bx!(argument.clone()) },
 				family.evaluate_with([argument.evaluate_in(&context.environment)]),
 			)
 		}
 		Preterm::Split { scrutinee, motive_parameter, motive, cases } => {
-			let (scrutinee, scrutinee_ty) = synthesize_static(context, *scrutinee);
+			let (scrutinee, scrutinee_ty) = synthesize_static(context, *scrutinee)?;
 			let scrutinee_value = scrutinee.clone().evaluate_in(&context.environment);
 			match scrutinee_ty {
 				StaticValue::Nat => {
-					assert!(cases.len() == 2);
+					(cases.len() == 2)
+						.then_some(())
+						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
 					let motive = verify_static(
 						&context.clone().bind_static(motive_parameter, false, StaticValue::Nat),
 						*motive,
 						StaticValue::Universe,
-					);
+					)?;
 					let motive_value =
 						Closure::new(context.environment.clone(), [motive_parameter], motive.clone());
 					// Avoid cloning.
@@ -299,15 +356,17 @@ pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, Stati
 					let (index, witness) = {
 						let Pattern::Construction(Constructor::Suc, args) = cases[1 - case_nil_position].0.clone()
 						else {
-							panic!()
+							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
 						};
 						let [arg] = args.try_into().unwrap();
-						let Pattern::Witness { index, witness } = arg else { panic!() };
+						let Pattern::Witness { index, witness } = arg else {
+							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+						};
 						(index, witness)
 					};
 					let case_suc = cases[1 - case_nil_position].1.clone();
 					let case_nil =
-						verify_static(context, case_nil, motive_value.evaluate_with([StaticValue::Num(0)]));
+						verify_static(context, case_nil, motive_value.evaluate_with([StaticValue::Num(0)]))?;
 					let case_suc = verify_static(
 						&context.clone().bind_static(Some(index), false, StaticValue::Nat).bind_static(
 							Some(witness),
@@ -318,7 +377,7 @@ pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, Stati
 						motive_value.evaluate_with([StaticValue::Neutral(StaticNeutral::Suc(rc!(
 							StaticNeutral::Variable(Some(index), context.len())
 						)))]),
-					);
+					)?;
 					(
 						StaticTerm::CaseNat {
 							scrutinee: bx!(scrutinee),
@@ -330,143 +389,150 @@ pub fn synthesize_static(context: &Context, term: Preterm) -> (StaticTerm, Stati
 					)
 				}
 				StaticValue::Enum(card) => {
-					assert!(cases.len() == card as _);
+					(cases.len() == card as _)
+						.then_some(())
+						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
 					let motive_term = verify_static(
 						&context.clone().bind_static(motive_parameter, false, StaticValue::Enum(card)),
 						*motive,
 						StaticValue::Universe,
-					);
+					)?;
 					let motive_value =
 						Closure::new(context.environment.clone(), [motive_parameter], motive_term.clone());
 					// TODO: Avoid cloning.
-					let cases = (0..card)
-						.map(|v| {
-							let v = v as u8;
-							let case = cases[cases
-								.iter()
-								.position(|(pattern, _)| {
-									if let Pattern::Construction(Constructor::EnumValue(target_card, target_v), args) =
-										pattern
-									{
-										*target_card == card && *target_v == v && args.is_empty()
-									} else {
-										false
-									}
-								})
-								.unwrap()]
-							.1
-							.clone();
-							verify_static(
-								context,
-								case,
-								motive_value.evaluate_with([StaticValue::EnumValue(card, v)]),
-							)
-						})
-						.collect();
+					let mut new_cases = Vec::new();
+					for v in 0..card {
+						let v = v as u8;
+						let case = cases[cases
+							.iter()
+							.position(|(pattern, _)| {
+								if let Pattern::Construction(Constructor::EnumValue(target_card, target_v), args) =
+									pattern
+								{
+									*target_card == card && *target_v == v && args.is_empty()
+								} else {
+									false
+								}
+							})
+							.unwrap()]
+						.1
+						.clone();
+						new_cases.push(verify_static(
+							context,
+							case,
+							motive_value.evaluate_with([StaticValue::EnumValue(card, v)]),
+						)?)
+					}
+
 					(
 						StaticTerm::CaseEnum {
 							scrutinee: bx!(scrutinee),
 							motive: bind([motive_parameter], bx!(motive_term)),
-							cases,
+							cases: new_cases,
 						},
 						motive_value.evaluate_with([scrutinee_value]),
 					)
 				}
-				_ => panic!(),
+				_ => return Err(ElaborationErrorKind::InvalidCaseSplitScrutineeType.at(expr.range)),
 			}
 		}
-		_ => panic!(),
-	}
+		_ => return Err(ElaborationErrorKind::CouldNotSynthesizeStatic.at(expr.range)),
+	})
 }
 
-pub fn verify_static(context: &Context, term: Preterm, ty: StaticValue) -> StaticTerm {
-	match (term, ty) {
+fn verify_static(
+	context: &Context,
+	expr: Expression,
+	ty: StaticValue,
+) -> Result<StaticTerm, ElaborationError> {
+	Ok(match (expr.preterm, ty) {
 		(Preterm::Lambda { parameter, body }, StaticValue::IndexedProduct(base, family)) => {
 			let body = verify_static(
 				&context.clone().bind_static(parameter, false, base.as_ref().clone()),
 				*body,
 				family.autolyze(context.len()),
-			);
+			)?;
 			StaticTerm::Lambda(bind([parameter], bx!(body)))
 		}
 		(Preterm::Pair { basepoint, fiberpoint }, StaticValue::IndexedSum(base, family)) => {
-			let basepoint = verify_static(context, *basepoint, base.as_ref().clone());
+			let basepoint = verify_static(context, *basepoint, base.as_ref().clone())?;
 			let basepoint_value = basepoint.clone().evaluate_in(&context.environment);
-			let fiberpoint = verify_static(context, *fiberpoint, family.evaluate_with([basepoint_value]));
+			let fiberpoint = verify_static(context, *fiberpoint, family.evaluate_with([basepoint_value]))?;
 			StaticTerm::Pair { basepoint: bx!(basepoint), fiberpoint: bx!(fiberpoint) }
 		}
 		(Preterm::Let { assignee, is_crisp, ty, argument, tail }, _) => {
 			let arg_context = if is_crisp { Some(context.clone().lock()) } else { None };
-			let ty = verify_static(arg_context.as_ref().unwrap_or(context), *ty, StaticValue::Universe);
+			let ty = verify_static(arg_context.as_ref().unwrap_or(context), *ty, StaticValue::Universe)?;
 			let ty_value = ty.clone().evaluate_in(&context.environment);
 			let argument =
-				verify_static(arg_context.as_ref().unwrap_or(context), *argument.clone(), ty_value.clone());
+				verify_static(arg_context.as_ref().unwrap_or(context), *argument.clone(), ty_value.clone())?;
 			let argument_value = argument.clone().evaluate_in(&context.environment);
 			let tail = verify_static(
 				&context.clone().extend_static(assignee, is_crisp, ty_value.clone(), argument_value),
 				*tail,
 				ty_value,
-			);
+			)?;
 			StaticTerm::Let { ty: bx!(ty), argument: bx!(argument), tail: bind([assignee], bx!(tail)) }
 		}
-		(Preterm::Quote(quotee), StaticValue::Lift { ty: liftee, .. }) => {
-			let quotee = verify_dynamic(context, *quotee, liftee);
+		(Preterm::Quote(quotee), ty) => {
+			let StaticValue::Lift { ty: liftee, .. } = ty else {
+				return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Lift).at(expr.range));
+			};
+			let quotee = verify_dynamic(context, *quotee, liftee)?;
 			StaticTerm::Quote(bx!(quotee))
 		}
 		(term, ty) => {
-			let (term, synthesized_ty) = synthesize_static(context, term);
+			let (term, synthesized_ty) = synthesize_static(context, term.at(expr.range))?;
 			if context.len().can_convert(&synthesized_ty, &ty) {
 				term
 			} else {
 				println!("{:#?}", term);
-				panic!(
-					"synthesized type {:#?} did not match expected type {:#?}",
-					synthesized_ty.reify_in(context.len()),
-					ty.reify_in(context.len()),
+				// TODO: Incorporate types.
+				return Err(
+					ElaborationErrorKind::StaticBidirectionalMismatch {
+						synthesized: synthesized_ty.reify_in(context.len()),
+						expected: ty.reify_in(context.len()),
+					}
+					.at(expr.range),
 				);
 			}
 		}
-	}
+	})
 }
 
 // TODO: Refactor to centralize assigning copy/repr to each type to prevent potential mistakes.
 // Term, type, copyability, representation
-pub fn synthesize_dynamic(
+fn synthesize_dynamic(
 	context: &Context,
-	term: Preterm,
-) -> (DynamicTerm, DynamicValue, StaticValue, StaticValue) {
-	match term {
-		Preterm::Variable(name) => context
-			.tys
-			.iter()
-			.rev()
-			.enumerate()
-			.find_map(|(i, (name_1, entry))| {
+	expr: Expression,
+) -> Result<(DynamicTerm, DynamicValue, StaticValue, StaticValue), ElaborationError> {
+	Ok(match expr.preterm {
+		Preterm::Variable(name) => 'var: loop {
+			for (i, (name_1, entry)) in context.tys.iter().rev().enumerate() {
 				if &Some(name) == name_1 {
 					if context.len().0 - 1 - i >= context.lock || entry.is_crisp {
 						if let ContextType::Dynamic(ty, copy, repr) = &entry.ty {
-							Some((
+							break 'var (
 								DynamicTerm::Variable(Some(name), Index(i)),
 								ty.clone(),
 								copy.clone(),
 								repr.clone(),
-							))
+							);
 						} else {
-							panic!("expected dynamic variable; found static variable");
+							return Err(ElaborationErrorKind::ExpectedDynamicFoundStaticVariable.at(expr.range));
 						}
 					} else {
-						panic!("attempted to access non-crisp locked variable");
+						return Err(ElaborationErrorKind::UsedNonCrispLockedVariable.at(expr.range));
 					}
-				} else {
-					None
 				}
-			})
-			.unwrap(),
+			}
+			return Err(ElaborationErrorKind::NotInScope.at(expr.range));
+		},
 
 		Preterm::Splice(splicee) => {
-			let (splicee, StaticValue::Lift { ty: liftee, copy, repr }) = synthesize_static(context, *splicee)
+			let (splicee, StaticValue::Lift { ty: liftee, copy, repr }) = synthesize_static(context, *splicee)?
 			else {
-				panic!()
+				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Lift).at(expr.range));
 			};
 			(DynamicTerm::Splice(bx!(splicee)), liftee, (*copy).clone(), (*repr).clone())
 		}
@@ -474,9 +540,9 @@ pub fn synthesize_dynamic(
 		Preterm::Let { assignee, is_crisp, ty, argument, tail } => {
 			let arg_context = if is_crisp { Some(context.clone().lock()) } else { None };
 			let (ty, base_copy, base_repr) =
-				elaborate_dynamic_type(arg_context.as_ref().unwrap_or(context), *ty);
+				elaborate_dynamic_type(arg_context.as_ref().unwrap_or(context), *ty)?;
 			let ty_value = ty.clone().evaluate_in(&context.environment);
-			let argument = verify_dynamic(arg_context.as_ref().unwrap_or(context), *argument, ty_value.clone());
+			let argument = verify_dynamic(arg_context.as_ref().unwrap_or(context), *argument, ty_value.clone())?;
 			// NOTE: Isn't this a problem, performance-wise? Does laziness help here? Testing necessary. (Having the value available in the environment is wanted for evaluation.)
 			let argument_value = argument.clone().evaluate_in(&context.environment);
 			let (tail, tail_ty, tail_copy, tail_repr) = synthesize_dynamic(
@@ -489,7 +555,7 @@ pub fn synthesize_dynamic(
 					argument_value,
 				),
 				*tail,
-			);
+			)?;
 			(
 				DynamicTerm::Let { ty: bx!(ty), argument: bx!(argument), tail: bind([assignee], bx!(tail)) },
 				tail_ty,
@@ -499,7 +565,7 @@ pub fn synthesize_dynamic(
 		}
 
 		Preterm::Pi { parameter, base, family } => {
-			let (base, base_copyability, base_representation) = elaborate_dynamic_type(context, *base);
+			let (base, base_copyability, base_representation) = elaborate_dynamic_type(context, *base)?;
 			let base_value = base.clone().evaluate_in(&context.environment);
 			let (family, family_copyability, family_representation) = elaborate_dynamic_type(
 				&context.clone().bind_dynamic(
@@ -510,7 +576,7 @@ pub fn synthesize_dynamic(
 					base_representation.clone(),
 				),
 				*family,
-			);
+			)?;
 			(
 				DynamicTerm::Pi {
 					base_copyability: base_copyability.reify_in(context.len()).into(),
@@ -529,7 +595,7 @@ pub fn synthesize_dynamic(
 			)
 		}
 		Preterm::Sigma { parameter, base, family } => {
-			let (base, base_copyability, base_representation) = elaborate_dynamic_type(context, *base);
+			let (base, base_copyability, base_representation) = elaborate_dynamic_type(context, *base)?;
 			let base_value = base.clone().evaluate_in(&context.environment);
 			let (family, family_copyability, family_representation) = elaborate_dynamic_type(
 				&context.clone().bind_dynamic(
@@ -540,7 +606,7 @@ pub fn synthesize_dynamic(
 					base_representation.clone(),
 				),
 				*family,
-			);
+			)?;
 			let copyability = StaticValue::max_copyability(base_copyability.clone(), family_copyability.clone());
 			let representation =
 				StaticValue::pair_representation(base_representation.clone(), family_representation.clone());
@@ -561,12 +627,13 @@ pub fn synthesize_dynamic(
 				StaticValue::univ_representation(copyability),
 			)
 		}
-		Preterm::Lambda { .. } | Preterm::Pair { .. } => panic!(),
+		Preterm::Lambda { .. } | Preterm::Pair { .. } =>
+			return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
 
 		Preterm::Former(former, arguments) => match former {
 			Former::Wrap => {
 				let [ty] = arguments.try_into().unwrap();
-				let (ty, copy, rep) = elaborate_dynamic_type(context, ty);
+				let (ty, copy, rep) = elaborate_dynamic_type(context, ty)?;
 				(
 					DynamicTerm::WrapType {
 						inner: ty.into(),
@@ -583,7 +650,7 @@ pub fn synthesize_dynamic(
 			}
 			Former::Rc => {
 				let [ty] = arguments.try_into().unwrap();
-				let (ty, copy, repr) = elaborate_dynamic_type(context, ty);
+				let (ty, copy, repr) = elaborate_dynamic_type(context, ty)?;
 				(
 					DynamicTerm::RcType {
 						inner: bx!(ty),
@@ -619,10 +686,10 @@ pub fn synthesize_dynamic(
 			),
 			Former::Universe => {
 				let [copyability, representation] = arguments.try_into().unwrap();
-				let copyability = verify_static(context, copyability, StaticValue::CopyabilityType);
+				let copyability = verify_static(context, copyability, StaticValue::CopyabilityType)?;
 				let copyability_value = copyability.clone().evaluate_in(&context.environment);
 
-				let representation = verify_static(context, representation, StaticValue::ReprType);
+				let representation = verify_static(context, representation, StaticValue::ReprType)?;
 
 				let universe_representation = StaticValue::univ_representation(copyability_value.clone());
 
@@ -639,12 +706,12 @@ pub fn synthesize_dynamic(
 					universe_representation,
 				)
 			}
-			_ => panic!(),
+			_ => return Err(ElaborationErrorKind::InvalidFormer.at(expr.range)),
 		},
 		Preterm::Constructor(constructor, arguments) => match constructor {
 			Constructor::Rc => {
 				let [tm] = arguments.try_into().unwrap();
-				let (tm, ty, copy, repr) = synthesize_dynamic(context, tm);
+				let (tm, ty, copy, repr) = synthesize_dynamic(context, tm)?;
 				(
 					DynamicTerm::RcNew(bx!(tm)),
 					DynamicValue::RcType {
@@ -658,7 +725,7 @@ pub fn synthesize_dynamic(
 			}
 			Constructor::Wrap => {
 				let [tm] = arguments.try_into().unwrap();
-				let (tm, ty, copy, repr) = synthesize_dynamic(context, tm);
+				let (tm, ty, copy, repr) = synthesize_dynamic(context, tm)?;
 				(
 					DynamicTerm::WrapNew(bx!(tm)),
 					DynamicValue::WrapType {
@@ -678,7 +745,7 @@ pub fn synthesize_dynamic(
 			),
 			Constructor::Suc => {
 				let [prev] = arguments.try_into().unwrap();
-				let prev = verify_dynamic(context, prev, DynamicValue::Nat);
+				let prev = verify_dynamic(context, prev, DynamicValue::Nat)?;
 				if let DynamicTerm::Num(p) = prev {
 					(
 						DynamicTerm::Num(p + 1),
@@ -701,15 +768,15 @@ pub fn synthesize_dynamic(
 				StaticValue::Copyability(Copyability::Trivial),
 				StaticValue::ReprAtom(ReprAtom::Byte),
 			),
-			_ => panic!(),
+			_ => return Err(ElaborationErrorKind::InvalidConstructor.at(expr.range)),
 		},
 
 		Preterm::Project(scrutinee, projector) => match projector {
 			Projector::Rc => {
 				let (tm, DynamicValue::RcType { inner: ty, copyability, representation }, _, _) =
-					synthesize_dynamic(context, *scrutinee)
+					synthesize_dynamic(context, *scrutinee)?
 				else {
-					panic!()
+					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Rc).at(expr.range));
 				};
 				(
 					DynamicTerm::UnRc {
@@ -724,9 +791,9 @@ pub fn synthesize_dynamic(
 			}
 			Projector::Wrap => {
 				let (tm, DynamicValue::WrapType { inner: ty, copyability, representation }, _, _) =
-					synthesize_dynamic(context, *scrutinee)
+					synthesize_dynamic(context, *scrutinee)?
 				else {
-					panic!()
+					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Wrap).at(expr.range));
 				};
 				(
 					DynamicTerm::Unwrap {
@@ -740,7 +807,7 @@ pub fn synthesize_dynamic(
 				)
 			}
 			Projector::Field(field) => {
-				let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *scrutinee);
+				let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *scrutinee)?;
 				let DynamicValue::IndexedSum {
 					base_copyability,
 					base_representation,
@@ -750,7 +817,7 @@ pub fn synthesize_dynamic(
 					family,
 				} = scrutinee_ty
 				else {
-					panic!()
+					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
 				};
 				let basepoint = DynamicTerm::Project {
 					scrutinee: scrutinee.clone().into(),
@@ -783,13 +850,13 @@ pub fn synthesize_dynamic(
 			}
 		},
 		Preterm::Call { callee, argument } => {
-			let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *callee);
+			let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *callee)?;
 			let DynamicValue::IndexedProduct { base, family_copyability, family_representation, family, .. } =
 				scrutinee_ty
 			else {
-				panic!()
+				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
 			};
-			let argument = verify_dynamic(context, *argument, (*base).clone());
+			let argument = verify_dynamic(context, *argument, (*base).clone())?;
 			let argument_value = argument.clone().evaluate_in(&context.environment);
 			(
 				DynamicTerm::Apply {
@@ -809,11 +876,13 @@ pub fn synthesize_dynamic(
 			)
 		}
 		Preterm::Split { scrutinee, motive_parameter, motive, cases } => {
-			let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *scrutinee);
+			let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *scrutinee)?;
 			let scrutinee_value = scrutinee.clone().evaluate_in(&context.environment);
 			match scrutinee_ty {
 				DynamicValue::Nat => {
-					assert!(cases.len() == 2);
+					(cases.len() == 2)
+						.then_some(())
+						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
 					let (motive, fiber_copy, fiber_repr) = elaborate_dynamic_type(
 						&context.clone().bind_dynamic(
 							motive_parameter,
@@ -823,7 +892,7 @@ pub fn synthesize_dynamic(
 							StaticValue::ReprAtom(ReprAtom::Nat),
 						),
 						*motive,
-					);
+					)?;
 					let motive = Closure::new(context.environment.clone(), [motive_parameter], motive.clone());
 					// Avoid cloning.
 					let case_nil_position = cases
@@ -840,14 +909,17 @@ pub fn synthesize_dynamic(
 					let (index, witness) = {
 						let Pattern::Construction(Constructor::Suc, args) = cases[1 - case_nil_position].0.clone()
 						else {
-							panic!()
+							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
 						};
 						let [arg] = args.try_into().unwrap();
-						let Pattern::Witness { index, witness } = arg else { panic!() };
+						let Pattern::Witness { index, witness } = arg else {
+							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+						};
 						(index, witness)
 					};
 					let case_suc = cases[1 - case_nil_position].1.clone();
-					let case_nil = verify_dynamic(context, case_nil, motive.evaluate_with([DynamicValue::Num(0)]));
+					let case_nil =
+						verify_dynamic(context, case_nil, motive.evaluate_with([DynamicValue::Num(0)]))?;
 					// NOTE: I'm not entirely sure this is 'right', as motive is is formed in a smaller context, but I believe this should be 'safe' because of de Bruijn levels.
 					let case_suc = verify_dynamic(
 						&context
@@ -870,7 +942,7 @@ pub fn synthesize_dynamic(
 						motive.evaluate_with([DynamicValue::Neutral(DynamicNeutral::Suc(rc!(
 							DynamicNeutral::Variable(Some(index), context.len())
 						)))]),
-					);
+					)?;
 					(
 						DynamicTerm::CaseNat {
 							scrutinee: bx!(scrutinee),
@@ -889,7 +961,9 @@ pub fn synthesize_dynamic(
 					)
 				}
 				DynamicValue::Enum(card) => {
-					assert!(cases.len() == card as _);
+					(cases.len() == card as _)
+						.then_some(())
+						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
 					let (motive_term, fiber_copy, fiber_repr) = elaborate_dynamic_type(
 						&context.clone().bind_dynamic(
 							motive_parameter,
@@ -899,34 +973,37 @@ pub fn synthesize_dynamic(
 							StaticValue::ReprAtom(ReprAtom::Byte),
 						),
 						*motive,
-					);
+					)?;
 					let motive =
 						Closure::new(context.environment.clone(), [motive_parameter], motive_term.clone());
 					// TODO: Avoid cloning.
-					let cases = (0..card)
-						.map(|v| {
-							let v = v as u8;
-							let case = cases[cases
-								.iter()
-								.position(|(pattern, _)| {
-									if let Pattern::Construction(Constructor::EnumValue(target_card, target_v), args) =
-										pattern
-									{
-										*target_card == card && *target_v == v && args.is_empty()
-									} else {
-										false
-									}
-								})
-								.unwrap()]
-							.1
-							.clone();
-							verify_dynamic(context, case, motive.evaluate_with([DynamicValue::EnumValue(card, v)]))
-						})
-						.collect();
+					let mut new_cases = Vec::new();
+					for v in 0..card {
+						let v = v as u8;
+						let case = cases[cases
+							.iter()
+							.position(|(pattern, _)| {
+								if let Pattern::Construction(Constructor::EnumValue(target_card, target_v), args) =
+									pattern
+								{
+									*target_card == card && *target_v == v && args.is_empty()
+								} else {
+									false
+								}
+							})
+							.unwrap()]
+						.1
+						.clone();
+						new_cases.push(verify_dynamic(
+							context,
+							case,
+							motive.evaluate_with([DynamicValue::EnumValue(card, v)]),
+						)?)
+					}
 					(
 						DynamicTerm::CaseEnum {
 							scrutinee: bx!(scrutinee),
-							cases,
+							cases: new_cases,
 							fiber_copyability: fiber_copy.reify_in(context.len()).into(),
 							fiber_representation: fiber_repr.reify_in(context.len()).into(),
 							motive: bind(
@@ -939,15 +1016,19 @@ pub fn synthesize_dynamic(
 						fiber_repr,
 					)
 				}
-				_ => panic!(),
+				_ => return Err(ElaborationErrorKind::InvalidCaseSplitScrutineeType.at(expr.range)),
 			}
 		}
-		_ => panic!(),
-	}
+		_ => return Err(ElaborationErrorKind::CouldNotSynthesizeDynamic.at(expr.range)),
+	})
 }
 
-pub fn verify_dynamic(context: &Context, term: Preterm, ty: DynamicValue) -> DynamicTerm {
-	match (term, ty) {
+fn verify_dynamic(
+	context: &Context,
+	expr: Expression,
+	ty: DynamicValue,
+) -> Result<DynamicTerm, ElaborationError> {
+	Ok(match (expr.preterm, ty) {
 		(
 			Preterm::Lambda { parameter, body },
 			DynamicValue::IndexedProduct { base, base_copyability, base_representation, family, .. },
@@ -965,7 +1046,7 @@ pub fn verify_dynamic(context: &Context, term: Preterm, ty: DynamicValue) -> Dyn
 				),
 				*body,
 				fiber,
-			);
+			)?;
 			DynamicTerm::Lambda {
 				base: base.reify_in(context.len()).into(),
 				family,
@@ -973,17 +1054,17 @@ pub fn verify_dynamic(context: &Context, term: Preterm, ty: DynamicValue) -> Dyn
 			}
 		}
 		(Preterm::Pair { basepoint, fiberpoint }, DynamicValue::IndexedSum { base, family, .. }) => {
-			let basepoint = verify_dynamic(context, *basepoint, base.as_ref().clone());
+			let basepoint = verify_dynamic(context, *basepoint, base.as_ref().clone())?;
 			let basepoint_value = basepoint.clone().evaluate_in(&context.environment);
-			let fiberpoint = verify_dynamic(context, *fiberpoint, family.evaluate_with([basepoint_value]));
+			let fiberpoint = verify_dynamic(context, *fiberpoint, family.evaluate_with([basepoint_value]))?;
 			DynamicTerm::Pair { basepoint: bx!(basepoint), fiberpoint: bx!(fiberpoint) }
 		}
 		(Preterm::Let { assignee, is_crisp, ty, argument, tail }, _) => {
 			let arg_context = if is_crisp { Some(context.clone().lock()) } else { None };
 			let (ty, assig_copy, assig_repr) =
-				elaborate_dynamic_type(arg_context.as_ref().unwrap_or(context), *ty);
+				elaborate_dynamic_type(arg_context.as_ref().unwrap_or(context), *ty)?;
 			let ty_value = ty.clone().evaluate_in(&context.environment);
-			let argument = verify_dynamic(arg_context.as_ref().unwrap_or(context), *argument, ty_value.clone());
+			let argument = verify_dynamic(arg_context.as_ref().unwrap_or(context), *argument, ty_value.clone())?;
 			let argument_value = argument.clone().evaluate_in(&context.environment);
 			let tail = verify_dynamic(
 				&context.clone().extend_dynamic(
@@ -996,43 +1077,52 @@ pub fn verify_dynamic(context: &Context, term: Preterm, ty: DynamicValue) -> Dyn
 				),
 				*tail,
 				ty_value,
-			);
+			)?;
 			DynamicTerm::Let { ty: bx!(ty), argument: bx!(argument), tail: bind([assignee], bx!(tail)) }
 		}
-		(Preterm::Constructor(Constructor::Wrap, tms), DynamicValue::WrapType { inner: ty, .. }) => {
+		(Preterm::Constructor(Constructor::Wrap, tms), ty) => {
+			let DynamicValue::WrapType { inner: ty, .. } = ty else {
+				return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Wrap).at(expr.range));
+			};
 			let [tm] = tms.try_into().unwrap();
-			let tm = verify_dynamic(context, tm, ty.as_ref().clone());
+			let tm = verify_dynamic(context, tm, ty.as_ref().clone())?;
 			DynamicTerm::WrapNew(bx!(tm))
 		}
-		(Preterm::Constructor(Constructor::Rc, tms), DynamicValue::RcType { inner: ty, .. }) => {
+		(Preterm::Constructor(Constructor::Rc, tms), ty) => {
+			let DynamicValue::RcType { inner: ty, .. } = ty else {
+				return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Rc).at(expr.range));
+			};
 			let [tm] = tms.try_into().unwrap();
-			let tm = verify_dynamic(context, tm, ty.as_ref().clone());
+			let tm = verify_dynamic(context, tm, ty.as_ref().clone())?;
 			DynamicTerm::RcNew(bx!(tm))
 		}
 		(term, ty) => {
-			let (term, synthesized_ty, _, _) = synthesize_dynamic(context, term);
+			let (term, synthesized_ty, _, _) = synthesize_dynamic(context, term.at(expr.range))?;
 			if context.len().can_convert(&synthesized_ty, &ty) {
 				term
 			} else {
-				println!("{:#?}", term);
-				panic!(
-					"synthesized type {:#?} did not match expected type {:#?}",
-					synthesized_ty.reify_in(context.len()),
-					ty.reify_in(context.len()),
+				return Err(
+					ElaborationErrorKind::DynamicBidirectionalMismatch {
+						synthesized: synthesized_ty.reify_in(context.len()),
+						expected: ty.reify_in(context.len()),
+					}
+					.at(expr.range),
 				);
 			}
 		}
-	}
+	})
 }
 
-pub fn elaborate_dynamic_type(
+fn elaborate_dynamic_type(
 	context: &Context,
-	term: Preterm,
-) -> (DynamicTerm, /* copyability */ StaticValue, /* representation */ StaticValue) {
+	expr: Expression,
+) -> Result<(DynamicTerm, /* copyability */ StaticValue, /* representation */ StaticValue), ElaborationError>
+{
+	let expr_range = expr.range;
 	let (term, DynamicValue::Universe { copyability, representation }, _, _) =
-		synthesize_dynamic(context, term)
+		synthesize_dynamic(context, expr)?
 	else {
-		panic!("tried to elaborate a non-type dynamic term as a type");
+		return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::DynamicUniverse).at(expr_range));
 	};
-	(term, copyability.as_ref().clone(), representation.as_ref().clone())
+	Ok((term, copyability.as_ref().clone(), representation.as_ref().clone()))
 }

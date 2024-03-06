@@ -1,52 +1,58 @@
 use crate::gamma::common::{Copyability, Field, Name, ReprAtom};
 
 #[derive(Debug, Clone)]
+pub struct Expression {
+	pub range: (usize, usize),
+	pub preterm: Preterm,
+}
+
+#[derive(Debug, Clone)]
 pub enum Preterm {
 	Variable(Name),
 
-	Quote(Box<Self>),
-	Splice(Box<Self>),
+	Quote(Box<Expression>),
+	Splice(Box<Expression>),
 
 	Let {
 		assignee: Option<Name>,
 		is_crisp: bool,
-		ty: Box<Self>,
-		argument: Box<Self>,
-		tail: Box<Self>,
+		ty: Box<Expression>,
+		argument: Box<Expression>,
+		tail: Box<Expression>,
 	},
 
 	Pi {
 		parameter: Option<Name>,
-		base: Box<Self>,
-		family: Box<Self>,
+		base: Box<Expression>,
+		family: Box<Expression>,
 	},
 	Sigma {
 		parameter: Option<Name>,
-		base: Box<Self>,
-		family: Box<Self>,
+		base: Box<Expression>,
+		family: Box<Expression>,
 	},
 	Lambda {
 		parameter: Option<Name>,
-		body: Box<Self>,
+		body: Box<Expression>,
 	},
 	Pair {
-		basepoint: Box<Self>,
-		fiberpoint: Box<Self>,
+		basepoint: Box<Expression>,
+		fiberpoint: Box<Expression>,
 	},
 
-	Former(Former, Vec<Self>),
-	Constructor(Constructor, Vec<Self>),
+	Former(Former, Vec<Expression>),
+	Constructor(Constructor, Vec<Expression>),
 
-	Project(Box<Self>, Projector),
+	Project(Box<Expression>, Projector),
 	Call {
-		callee: Box<Self>,
-		argument: Box<Self>,
+		callee: Box<Expression>,
+		argument: Box<Expression>,
 	},
 	Split {
-		scrutinee: Box<Self>,
+		scrutinee: Box<Expression>,
 		motive_parameter: Option<Name>,
-		motive: Box<Self>,
-		cases: Vec<(Pattern, Self)>,
+		motive: Box<Expression>,
+		cases: Vec<(Pattern, Expression)>,
 	},
 }
 
@@ -95,4 +101,10 @@ pub enum Pattern {
 	// Inductive hypothesis witness.
 	Witness { index: Name, witness: Name },
 	Construction(Constructor, Vec<Pattern>),
+}
+
+impl Preterm {
+	pub fn at(self, range: (usize, usize)) -> Expression {
+		Expression { range, preterm: self }
+	}
 }

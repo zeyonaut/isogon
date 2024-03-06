@@ -1,15 +1,12 @@
-let! unit : * c1 rfun
-	= |A : * c0 rnone| -> A -> A;
-
 let! list : nat -> * c1 rpointer
 	= |n| n :: |_| * c1 rpointer {
-		| 0        -> RC unit
+		| 0        -> RC #1
 		| suc @n.T -> RC (T & nat)
 	};
 
 let! make_list : |n : nat| -> list n
 	= |n| n :: |n| list n {
-		| 0        -> rc (|A| |a| a)
+		| 0        -> rc 0_1
 		| suc @n.k -> rc (k, n)
 	};
 
