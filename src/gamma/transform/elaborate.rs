@@ -67,6 +67,7 @@ enum ElaborationErrorKind {
 	CouldNotSynthesizeStatic,
 	CouldNotSynthesizeDynamic,
 	NotInScope,
+	FiberAxesDependentOnBasepoint,
 }
 
 impl ElaborationErrorKind {
@@ -244,8 +245,8 @@ fn synthesize_static(
 				(
 					StaticTerm::Lift {
 						liftee: liftee.into(),
-						copy: copy.unevaluate_in(context.len()).into(),
-						repr: repr.unevaluate_in(context.len()).into(),
+						copy: copy.unevaluate_in(context.len()).unwrap().into(),
+						repr: repr.unevaluate_in(context.len()).unwrap().into(),
 					},
 					StaticValue::Universe,
 				)
@@ -492,8 +493,8 @@ fn verify_static(
 				// TODO: Incorporate types.
 				return Err(
 					ElaborationErrorKind::StaticBidirectionalMismatch {
-						synthesized: synthesized_ty.unevaluate_in(context.len()),
-						expected: ty.unevaluate_in(context.len()),
+						synthesized: synthesized_ty.unevaluate_in(context.len()).unwrap(),
+						expected: ty.unevaluate_in(context.len()).unwrap(),
 					}
 					.at(expr.range),
 				);
@@ -579,14 +580,23 @@ fn synthesize_dynamic(
 				),
 				*family,
 			)?;
+
+			// Ensure that the inferred fiber axes are independent of the basepoint, or error otherwise.
+			let (Ok(family_copyability), Ok(family_representation)) = (
+				family_copyability.unevaluate_in(context.len()).into(),
+				family_representation.unevaluate_in(context.len()).into(),
+			) else {
+				return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
+			};
+
 			(
 				DynamicTerm::Pi {
-					base_copyability: base_copyability.unevaluate_in(context.len()).into(),
-					base_representation: base_representation.unevaluate_in(context.len()).into(),
-					base: bx!(base),
-					family_copyability: family_copyability.unevaluate_in(context.len()).into(),
-					family_representation: family_representation.unevaluate_in(context.len()).into(),
-					family: bind([parameter], bx!(family)),
+					base_copyability: base_copyability.unevaluate_in(context.len()).unwrap().into(),
+					base_representation: base_representation.unevaluate_in(context.len()).unwrap().into(),
+					base: base.into(),
+					family_copyability: family_copyability.into(),
+					family_representation: family_representation.into(),
+					family: bind([parameter], family.into()),
 				},
 				DynamicValue::Universe {
 					copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)),
@@ -612,14 +622,23 @@ fn synthesize_dynamic(
 			let copyability = StaticValue::max_copyability(base_copyability.clone(), family_copyability.clone());
 			let representation =
 				StaticValue::pair_representation(base_representation.clone(), family_representation.clone());
+
+			// Ensure that the inferred fiber axes are independent of the basepoint, or error otherwise.
+			let (Ok(family_copyability), Ok(family_representation)) = (
+				family_copyability.unevaluate_in(context.len()).into(),
+				family_representation.unevaluate_in(context.len()).into(),
+			) else {
+				return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
+			};
+
 			(
 				DynamicTerm::Sigma {
-					base_copyability: base_copyability.unevaluate_in(context.len()).into(),
-					base_representation: base_representation.unevaluate_in(context.len()).into(),
-					base: bx!(base),
-					family_copyability: family_copyability.unevaluate_in(context.len()).into(),
-					family_representation: family_representation.unevaluate_in(context.len()).into(),
-					family: bind([parameter], bx!(family)),
+					base_copyability: base_copyability.unevaluate_in(context.len()).unwrap().into(),
+					base_representation: base_representation.unevaluate_in(context.len()).unwrap().into(),
+					base: base.into(),
+					family_copyability: family_copyability.into(),
+					family_representation: family_representation.into(),
+					family: bind([parameter], family.into()),
 				},
 				DynamicValue::Universe {
 					copyability: copyability.clone().into(),
@@ -639,8 +658,8 @@ fn synthesize_dynamic(
 				(
 					DynamicTerm::WrapType {
 						inner: ty.into(),
-						copyability: copy.unevaluate_in(context.len()).into(),
-						representation: rep.unevaluate_in(context.len()).into(),
+						copyability: copy.unevaluate_in(context.len()).unwrap().into(),
+						representation: rep.unevaluate_in(context.len()).unwrap().into(),
 					},
 					DynamicValue::Universe {
 						copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial).clone()),
@@ -655,9 +674,9 @@ fn synthesize_dynamic(
 				let (ty, copy, repr) = elaborate_dynamic_type(context, ty)?;
 				(
 					DynamicTerm::RcType {
-						inner: bx!(ty),
-						copyability: copy.unevaluate_in(context.len()).into(),
-						representation: repr.unevaluate_in(context.len()).into(),
+						inner: ty.into(),
+						copyability: copy.unevaluate_in(context.len()).unwrap().into(),
+						representation: repr.unevaluate_in(context.len()).unwrap().into(),
 					},
 					DynamicValue::Universe {
 						copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)),
@@ -783,8 +802,8 @@ fn synthesize_dynamic(
 				(
 					DynamicTerm::UnRc {
 						scrutinee: tm.into(),
-						copyability: copyability.unevaluate_in(context.len()).into(),
-						representation: representation.unevaluate_in(context.len()).into(),
+						copyability: copyability.unevaluate_in(context.len()).unwrap().into(),
+						representation: representation.unevaluate_in(context.len()).unwrap().into(),
 					},
 					ty.as_ref().clone(),
 					(*copyability).clone(),
@@ -800,8 +819,8 @@ fn synthesize_dynamic(
 				(
 					DynamicTerm::Unwrap {
 						scrutinee: bx!(tm),
-						copyability: copyability.unevaluate_in(context.len()).into(),
-						representation: representation.unevaluate_in(context.len()).into(),
+						copyability: copyability.unevaluate_in(context.len()).unwrap().into(),
+						representation: representation.unevaluate_in(context.len()).unwrap().into(),
 					},
 					ty.as_ref().clone(),
 					(*copyability).clone(),
@@ -824,8 +843,8 @@ fn synthesize_dynamic(
 				let basepoint = DynamicTerm::Project {
 					scrutinee: scrutinee.clone().into(),
 					projection: Field::Base,
-					projection_copyability: base_copyability.unevaluate_in(context.len()).into(),
-					projection_representation: base_representation.unevaluate_in(context.len()).into(),
+					projection_copyability: base_copyability.unevaluate_in(context.len()).unwrap().into(),
+					projection_representation: base_representation.unevaluate_in(context.len()).unwrap().into(),
 				};
 				match field {
 					Field::Base => (
@@ -840,8 +859,14 @@ fn synthesize_dynamic(
 							DynamicTerm::Project {
 								scrutinee: scrutinee.into(),
 								projection: field,
-								projection_copyability: family_copyability.unevaluate_in(context.len()).into(),
-								projection_representation: family_representation.unevaluate_in(context.len()).into(),
+								projection_copyability: family_copyability
+									.unevaluate_in(context.len())
+									.unwrap()
+									.into(),
+								projection_representation: family_representation
+									.unevaluate_in(context.len())
+									.unwrap()
+									.into(),
 							},
 							family.evaluate_with([basepoint]),
 							(*family_copyability).clone(),
@@ -862,14 +887,14 @@ fn synthesize_dynamic(
 			let argument_value = argument.clone().evaluate_in(&context.environment);
 			(
 				DynamicTerm::Apply {
-					scrutinee: bx!(scrutinee),
-					argument: bx!(argument),
-					fiber_copyability: family_copyability.unevaluate_in(context.len()).into(),
-					fiber_representation: family_representation.unevaluate_in(context.len()).into(),
-					base: base.unevaluate_in(context.len()).into(),
+					scrutinee: scrutinee.into(),
+					argument: argument.into(),
+					fiber_copyability: family_copyability.unevaluate_in(context.len()).unwrap().into(),
+					fiber_representation: family_representation.unevaluate_in(context.len()).unwrap().into(),
+					base: base.unevaluate_in(context.len()).unwrap().into(),
 					family: bind(
 						family.parameters,
-						bx!(family.autolyze(context.len()).unevaluate_in(context.len() + 1)),
+						family.autolyze(context.len()).unevaluate_in(context.len() + 1).unwrap().into(),
 					),
 				},
 				family.evaluate_with([argument_value]),
@@ -950,11 +975,11 @@ fn synthesize_dynamic(
 							scrutinee: bx!(scrutinee),
 							case_nil: bx!(case_nil),
 							case_suc: bind([Some(index), Some(witness)], bx!(case_suc)),
-							fiber_copyability: fiber_copy.unevaluate_in(context.len()).into(),
-							fiber_representation: fiber_repr.unevaluate_in(context.len()).into(),
+							fiber_copyability: fiber_copy.unevaluate_in(context.len()).unwrap().into(),
+							fiber_representation: fiber_repr.unevaluate_in(context.len()).unwrap().into(),
 							motive: bind(
 								motive.parameters,
-								bx!(motive.autolyze(context.len()).unevaluate_in(context.len() + 1)),
+								motive.autolyze(context.len()).unevaluate_in(context.len() + 1).unwrap().into(),
 							),
 						},
 						motive.evaluate_with([scrutinee_value]),
@@ -1006,11 +1031,11 @@ fn synthesize_dynamic(
 						DynamicTerm::CaseEnum {
 							scrutinee: bx!(scrutinee),
 							cases: new_cases,
-							fiber_copyability: fiber_copy.unevaluate_in(context.len()).into(),
-							fiber_representation: fiber_repr.unevaluate_in(context.len()).into(),
+							fiber_copyability: fiber_copy.unevaluate_in(context.len()).unwrap().into(),
+							fiber_representation: fiber_repr.unevaluate_in(context.len()).unwrap().into(),
 							motive: bind(
 								motive.parameters,
-								bx!(motive.autolyze(context.len()).unevaluate_in(context.len() + 1)),
+								motive.autolyze(context.len()).unevaluate_in(context.len() + 1).unwrap().into(),
 							),
 						},
 						motive.evaluate_with([scrutinee_value]),
@@ -1037,7 +1062,7 @@ fn verify_dynamic(
 		) => {
 			let fiber = family.autolyze(context.len());
 			// TODO: Is this necessary?
-			let family = bind([parameter], fiber.unevaluate_in(context.len() + 1).into());
+			let family = bind([parameter], fiber.unevaluate_in(context.len() + 1).unwrap().into());
 			let body = verify_dynamic(
 				&context.clone().bind_dynamic(
 					parameter,
@@ -1050,7 +1075,7 @@ fn verify_dynamic(
 				fiber,
 			)?;
 			DynamicTerm::Lambda {
-				base: base.unevaluate_in(context.len()).into(),
+				base: base.unevaluate_in(context.len()).unwrap().into(),
 				family,
 				body: bind([parameter], body.into()),
 			}
@@ -1105,8 +1130,8 @@ fn verify_dynamic(
 			} else {
 				return Err(
 					ElaborationErrorKind::DynamicBidirectionalMismatch {
-						synthesized: synthesized_ty.unevaluate_in(context.len()),
-						expected: ty.unevaluate_in(context.len()),
+						synthesized: synthesized_ty.unevaluate_in(context.len()).unwrap(),
+						expected: ty.unevaluate_in(context.len()).unwrap(),
 					}
 					.at(expr.range),
 				);
