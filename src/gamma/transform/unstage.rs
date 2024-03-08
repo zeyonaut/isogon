@@ -119,6 +119,19 @@ impl Unstage for Term {
 				fiber_representation: StaticTerm::from(fiber_universe.1.as_ref()).into(),
 				motive: motive.unstage_in(level),
 			},
+			Id { kind, space, left, right } => DynamicTerm::Id {
+				copy: StaticTerm::Copyability(kind.0).into(),
+				repr: StaticTerm::from(kind.1.as_ref()).into(),
+				space: space.unstage_in(level).into(),
+				left: left.unstage_in(level).into(),
+				right: right.unstage_in(level).into(),
+			},
+			Refl(ty, x) => DynamicTerm::Refl(ty.unstage_in(level).into(), x.unstage_in(level).into()),
+			CasePath { scrutinee, motive, case_refl } => DynamicTerm::CasePath {
+				scrutinee: scrutinee.unstage_in(level).into(),
+				motive: motive.unstage_in(level),
+				case_refl: case_refl.unstage_in(level),
+			},
 			WrapType(inner, universe) => DynamicTerm::WrapType {
 				inner: inner.unstage_in(level).into(),
 				copyability: StaticTerm::Copyability(universe.0).into(),

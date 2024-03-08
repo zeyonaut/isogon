@@ -63,6 +63,8 @@ pub enum Keyword {
 	RNone,
 	RUniv,
 	Repr,
+	Id,
+	Refl,
 }
 
 pub struct LexError(pub usize, pub LexErrorKind);
@@ -143,6 +145,8 @@ impl LexedSource {
 			"rmax" => Keyword(RMax),
 			"runiv" => Keyword(RUniv),
 			"repr" => Keyword(Repr),
+			"Id" => Keyword(Id),
+			"refl" => Keyword(Refl),
 			_ => Identifier,
 		}
 	}

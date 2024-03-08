@@ -131,6 +131,18 @@ pub enum Term {
 		fiber_universe: UniverseKind,
 		motive: Binder<Rc<Self>>,
 	},
+	Id {
+		kind: UniverseKind,
+		space: Rc<Self>,
+		left: Rc<Self>,
+		right: Rc<Self>,
+	},
+	Refl(Rc<Self>, Rc<Self>),
+	CasePath {
+		scrutinee: Rc<Self>,
+		motive: Binder<Rc<Self>, 3>,
+		case_refl: Binder<Rc<Self>>,
+	},
 	WrapType(Rc<Self>, UniverseKind),
 	WrapNew(Rc<Self>),
 	Unwrap(Rc<Self>, UniverseKind),
@@ -140,6 +152,7 @@ pub enum Term {
 }
 
 impl Term {
+	// FIXME: I don't think this properly collects occurrences in inferred types (e.g. in Rc or in a scrutinee)?
 	// Yields the characteristic of the subset of all levels < level that occur as a variable in a value.
 	pub fn occurences(&self, Level(level): Level) -> Vec<bool> {
 		fn mark_occurrents(value: &Term, is_occurrent: &mut Vec<bool>) {
@@ -180,6 +193,12 @@ impl Term {
 					// TODO: Shouldn't occurrents not be marked if the fiber universe is trivial?
 					mark_occurrents(&motive.body, is_occurrent);
 				}
+				Term::CasePath { scrutinee, motive, case_refl } => {
+					mark_occurrents(scrutinee, is_occurrent);
+					mark_occurrents(&case_refl.body, is_occurrent);
+					// TODO: Shouldn't occurrents not be marked if the fiber universe is trivial?
+					mark_occurrents(&motive.body, is_occurrent);
+				}
 
 				// 0-recursive cases.
 				Term::Universe(_) | Term::Enum(_) | Term::EnumValue(_, _) | Term::Nat | Term::Num(_) => (),
@@ -195,9 +214,16 @@ impl Term {
 				| Term::UnRc(a, _) => mark_occurrents(a, is_occurrent),
 
 				// n-recursive cases.
-				Term::Pair { basepoint: a, fiberpoint: b } => {
+				Term::Pair { basepoint: a, fiberpoint: b } | Term::Refl(a, b) => {
 					mark_occurrents(a, is_occurrent);
 					mark_occurrents(b, is_occurrent);
+				}
+
+				Term::Id { kind, space: a, left: b, right: c } => {
+					// TODO: How much of this is actually necessary? None?
+					mark_occurrents(a, is_occurrent);
+					mark_occurrents(b, is_occurrent);
+					mark_occurrents(c, is_occurrent);
 				}
 
 				Term::Apply { scrutinee: a, argument: b, fiber_universe: _, base, family } => {

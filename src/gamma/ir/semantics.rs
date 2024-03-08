@@ -109,6 +109,11 @@ pub enum DynamicNeutral {
 		fiber_representation: Rc<StaticValue>,
 		motive: Rc<Closure<Environment, DynamicTerm>>,
 	},
+	CasePath {
+		scrutinee: Box<Self>,
+		motive: Rc<Closure<Environment, DynamicTerm, 3>>,
+		case_refl: Rc<Closure<Environment, DynamicTerm>>,
+	},
 	Unwrap {
 		scrutinee: Rc<Self>,
 		copyability: Rc<StaticValue>,
@@ -154,6 +159,14 @@ pub enum DynamicValue {
 	Num(usize),
 	Enum(u16),
 	EnumValue(u16, u8),
+	Id {
+		copy: Rc<StaticValue>,
+		repr: Rc<StaticValue>,
+		space: Rc<Self>,
+		left: Rc<Self>,
+		right: Rc<Self>,
+	},
+	Refl(Rc<Self>, Rc<Self>),
 	WrapType {
 		inner: Rc<Self>,
 		copyability: Rc<StaticValue>,
@@ -424,8 +437,11 @@ impl Conversion<DynamicValue> for Level {
 					&& (self + 1).can_convert(&left_family.autolyze(self), &right_family.autolyze(self)),
 			(Nat, Nat) => true,
 			(Enum(left), Enum(right)) => left == right,
+			(Id { left: left_l, right: right_l, .. }, Id { left: left_r, right: right_r, .. }) =>
+				self.can_convert(&**left_l, left_r) && self.can_convert(&**right_l, right_r),
 			(Num(left), Num(right)) => left == right,
 			(EnumValue(_, left), EnumValue(_, right)) => left == right,
+			(Refl(_, point_l), Refl(_, point_r)) => self.can_convert(&**point_l, point_r),
 			_ => false,
 		}
 	}
@@ -464,6 +480,12 @@ impl Conversion<DynamicNeutral> for Level {
 						.iter()
 						.zip(r_cases.iter())
 						.fold(true, |acc, (left, right)| acc && self.can_convert(left, right)),
+			(
+				CasePath { scrutinee: scrutinee_l, case_refl: case_l, .. },
+				CasePath { scrutinee: scrutinee_r, case_refl: case_r, .. },
+			) =>
+				self.can_convert(&**scrutinee_l, scrutinee_r)
+					&& (self + 1).can_convert(&case_l.autolyze(self), &case_r.autolyze(self)),
 			_ => false,
 		}
 	}

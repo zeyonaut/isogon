@@ -1,0 +1,21 @@
+def! sym
+: |c : copy| -> |r : repr| -> '(
+	|A : * c r| -> |x : A| -> |y : A| -> Id A x y -> Id A y x
+) = |_| |_| <
+	|A| |_| |_| |p| p :: |u.v.w| Id A v u {
+		| refl @a -> refl a
+	}
+>;
+
+def! trans
+: |c : copy| -> |r : repr| -> '(
+	|A : * c r| -> |x : A| -> |y : A| -> Id A x y -> |z : A| -> Id A y z -> Id A x z
+) = |_| |_| <
+	|A| |x| |y| |p| p :: |u.v.w| |z : A| -> Id A v z -> Id A u z {
+		| refl @a -> |z| |q| q :: |f.g.h| Id A f g {
+			| refl @b -> refl b
+		}
+	}
+>;
+
+[trans c0 rbyte] #2

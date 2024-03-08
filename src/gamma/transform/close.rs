@@ -82,6 +82,9 @@ impl Closer {
 				basepoint: self.close((*basepoint).clone(), is_occurrent).into(),
 				fiberpoint: self.close((*fiberpoint).clone(), is_occurrent).into(),
 			},
+			ob::Term::Refl(t, x) => todo!(),
+
+			ob::Term::Id { kind, space, left, right } => todo!(),
 
 			// Other cases
 			ob::Term::Apply { scrutinee, argument, fiber_universe, base, family } => Term::Apply {
@@ -113,6 +116,7 @@ impl Closer {
 						.then(|| self.close_with(motive, [ob::Term::Enum(cardinality)], is_occurrent)),
 				}
 			}
+			ob::Term::CasePath { scrutinee, motive, case_refl } => todo!(),
 		}
 	}
 

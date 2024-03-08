@@ -168,4 +168,17 @@ pub enum DynamicTerm {
 		fiber_representation: Box<StaticTerm>,
 		motive: Binder<Box<Self>>,
 	},
+	Id {
+		copy: Box<StaticTerm>,
+		repr: Box<StaticTerm>,
+		space: Box<Self>,
+		left: Box<Self>,
+		right: Box<Self>,
+	},
+	Refl(Box<Self>, Box<Self>),
+	CasePath {
+		scrutinee: Box<Self>,
+		motive: Binder<Box<Self>, 3>,
+		case_refl: Binder<Box<Self>>,
+	},
 }

@@ -235,6 +235,18 @@ impl Stage for DynamicTerm {
 				fiber_universe: stage_as_dynamic_universe(*fiber_copyability, *fiber_representation, environment),
 				motive: motive.stage_in(environment),
 			},
+			Id { copy, repr, space, left, right } => Term::Id {
+				kind: stage_as_dynamic_universe(*copy, *repr, environment),
+				space: space.stage_in(environment).into(),
+				left: left.stage_in(environment).into(),
+				right: right.stage_in(environment).into(),
+			},
+			Refl(ty, x) => Term::Refl(ty.stage_in(environment).into(), x.stage_in(environment).into()),
+			CasePath { scrutinee, motive, case_refl } => Term::CasePath {
+				scrutinee: scrutinee.stage_in(environment).into(),
+				motive: motive.stage_in(environment),
+				case_refl: case_refl.stage_in(environment),
+			},
 			WrapType { inner, copyability, representation } => Term::WrapType(
 				inner.stage_in(environment).into(),
 				stage_as_dynamic_universe(*copyability, *representation, environment),

@@ -50,7 +50,7 @@ pub enum Preterm {
 	},
 	Split {
 		scrutinee: Box<Expression>,
-		motive_parameter: Option<Name>,
+		motive_parameter: Vec<Option<Name>>,
 		motive: Box<Expression>,
 		cases: Vec<(Pattern, Expression)>,
 	},
@@ -63,6 +63,7 @@ pub enum Former {
 	Wrap,
 	Nat,
 	Enum(u16),
+	Id,
 	Copy,
 	Repr,
 	Universe,
@@ -78,6 +79,8 @@ pub enum Constructor {
 	Suc,
 
 	EnumValue(u16, u8),
+
+	Refl,
 
 	Copyability(Copyability),
 	CopyMax,

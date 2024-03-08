@@ -5,6 +5,7 @@ use crate::{
 			semantics::{DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue, Value},
 			syntax::{DynamicTerm, StaticTerm},
 		},
+		transform::evaluate,
 	},
 	utility::rc,
 };
@@ -271,6 +272,24 @@ impl Evaluate for DynamicTerm {
 					}),
 					_ => panic!(),
 				},
+			Id { copy, repr, space, left, right } => DynamicValue::Id {
+				copy: copy.evaluate_in(environment).into(),
+				repr: repr.evaluate_in(environment).into(),
+				space: space.evaluate_in(environment).into(),
+				left: left.evaluate_in(environment).into(),
+				right: right.evaluate_in(environment).into(),
+			},
+			Refl(ty, x) =>
+				DynamicValue::Refl(ty.evaluate_in(environment).into(), x.evaluate_in(environment).into()),
+			CasePath { scrutinee, motive, case_refl } => match scrutinee.evaluate_in(environment) {
+				DynamicValue::Refl(_, x) => case_refl.evaluate_at(environment, [(*x).clone()]),
+				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::CasePath {
+					scrutinee: neutral.into(),
+					motive: motive.evaluate_in(environment).into(),
+					case_refl: case_refl.evaluate_in(environment).into(),
+				}),
+				_ => panic!(),
+			},
 			WrapType { inner, copyability, representation } => DynamicValue::WrapType {
 				inner: inner.evaluate_in(environment).into(),
 				copyability: copyability.evaluate_in(environment).into(),

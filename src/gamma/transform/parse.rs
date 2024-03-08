@@ -134,6 +134,9 @@ peg::parser! {
 		rule number() -> usize
 			= pos:position!() [Token::Number] {parser.number(pos).unwrap()}
 
+		rule optional_parameter() -> Option<Name>
+			= name:identifier() {Some(name)} / [Token::LowDash] {None}
+
 		rule former() -> Former
 			= [Token::Tick] {Former::Lift}
 			/ [Token::Keyword(Keyword::RcType)] {Former::Rc}
@@ -141,6 +144,7 @@ peg::parser! {
 			/ [Token::Keyword(Keyword::Nat)] {Former::Nat}
 			/ [Token::Keyword(Keyword::Bool)] {Former::Enum(2)}
 			/ [Token::Hash] card:number() { assert!(card <= 256); Former::Enum(card as u16)}
+			/ [Token::Keyword(Keyword::Id)] {Former::Id}
 			/ [Token::Keyword(Keyword::Copy)] {Former::Copy}
 			/ [Token::Keyword(Keyword::Repr)] {Former::Repr}
 			/ [Token::Ast] {Former::Universe}
@@ -153,6 +157,7 @@ peg::parser! {
 			/ [Token::Keyword(Keyword::Suc)] {Constructor::Suc}
 			/ [Token::Keyword(Keyword::False)] {Constructor::EnumValue(2, 0)}
 			/ [Token::Keyword(Keyword::True)] {Constructor::EnumValue(2, 1)}
+			/ [Token::Keyword(Keyword::Refl)] {Constructor::Refl}
 			/ [Token::Keyword(Keyword::C0)] {Constructor::Copyability(Copyability::Trivial)}
 			/ [Token::Keyword(Keyword::C1)] {Constructor::Copyability(Copyability::Nontrivial)}
 			/ [Token::Keyword(Keyword::CMax)] {Constructor::CopyMax}
@@ -181,8 +186,8 @@ peg::parser! {
 				/ constructor:constructor() {Preterm::Constructor(constructor, vec![])}
 			) fini:position!() {preterm.at((init, fini))}
 
-		rule bound_spine_headed() -> (Option<Name>, Expression)
-			= [Token::Pipe] _ variable:(name:identifier() {Some(name)} / [Token::LowDash] {None}) _ [Token::Pipe] _ body:spine_headed() {(variable, body)}
+		rule bound_spine_headed() -> (Vec<Option<Name>>, Expression)
+			= [Token::Pipe] _ variables:(variable:optional_parameter())**[Token::Period] _ [Token::Pipe] _ body:spine_headed() {(variables, body)}
 
 		// Case arms.
 		rule atomic_pattern() -> Pattern
@@ -214,7 +219,7 @@ peg::parser! {
 		rule spine_headed() -> Expression
 			// TODO: Refactor to avoid caching?
 			= init:position!() preterm:(
-				  [Token::Pipe] _ parameter:(name:identifier() {Some(name)} / [Token::LowDash] {None}) _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { parameter, body: body.into() }}
+				  [Token::Pipe] _ parameter:optional_parameter() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { parameter, body: body.into() }}
 				/ [Token::Pipe] _ parameter:identifier() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { parameter: Some(parameter), base: base.into(), family: right.into() }}
 				/ [Token::Pipe] _ parameter:identifier() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Amp] _ right:spine_headed() {Preterm::Sigma { parameter: Some(parameter), base: base.into(), family: right.into() }}
 				/ left:spine() _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { parameter: None, base: left.into(), family: right.into() }}
@@ -225,10 +230,10 @@ peg::parser! {
 
 		rule preterm() -> Expression
 			= init:position!() preterm:(
-				  [Token::Keyword(Keyword::Let)] is_crisp:([Token::Bang] {()})? _ name:(name:identifier() {Some(name)} / [Token::LowDash] {None}) _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
+				  [Token::Keyword(Keyword::Let)] is_crisp:([Token::Bang] {()})? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
 				{ Preterm::Let { assignee: name, is_crisp: is_crisp.is_some(), ty: ty.into(), argument: argument.into(), tail: tail.into() }}
 			) fini:position!() {preterm.at((init, fini))}
-			/ init:position!() [Token::Keyword(Keyword::Def)] is_crisp:([Token::Bang] {()})? _ name:(name:identifier() {Some(name)} / [Token::LowDash] {None}) _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() fini:position!()
+			/ init:position!() [Token::Keyword(Keyword::Def)] is_crisp:([Token::Bang] {()})? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() fini:position!()
 			{
 				let tail_range = tail.range;
 				Preterm::Splice(Preterm::Let { assignee: name, is_crisp: is_crisp.is_some(), ty: ty.into(), argument: argument.into(), tail: Preterm::Quote(tail.into()).at((tail_range.0, tail_range.1)).into() }.at((init, fini)).into()).at((init, fini))

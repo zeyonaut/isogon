@@ -249,6 +249,9 @@ fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) 
 		| Suc(..)
 		| CaseNat { .. }
 		| CaseEnum { .. }
+		| Id { .. }
+		| Refl(..)
+		| CasePath { .. }
 		| WrapType { .. }
 		| WrapNew(_)
 		| RcType { .. }
@@ -363,6 +366,34 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 				write!(f, "{i} -> ")?;
 				write_dynamic(case, f, interner)?;
 			}
+			write!(f, "}}")
+		}
+		Id { copy, repr, space, left, right } => {
+			write!(f, "Id ")?;
+			write_dynamic_atom(space, f, interner)?;
+			write!(f, " ")?;
+			write_dynamic_atom(left, f, interner)?;
+			write!(f, " ")?;
+			write_dynamic_atom(right, f, interner)
+		}
+		Refl(ty, x) => {
+			write!(f, "refl ")?;
+			write_dynamic_atom(ty, f, interner)?;
+			write!(f, " ")?;
+			write_dynamic_atom(x, f, interner)
+		}
+		CasePath { scrutinee, motive, case_refl } => {
+			write_dynamic_spine(scrutinee, f, interner)?;
+			write!(
+				f,
+				" :: |{}.{}.{}| ",
+				resolve(interner, &motive.parameters[0]),
+				resolve(interner, &motive.parameters[1]),
+				resolve(interner, &motive.parameters[2])
+			)?;
+			write_dynamic(&motive.body, f, interner)?;
+			write!(f, " {{refl {} -> ", resolve(interner, &case_refl.parameters[0]))?;
+			write_dynamic(&case_refl.body, f, interner)?;
 			write!(f, "}}")
 		}
 		WrapType { inner: x, .. } => {

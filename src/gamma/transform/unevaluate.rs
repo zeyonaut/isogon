@@ -144,6 +144,11 @@ impl Unevaluate for DynamicNeutral {
 					fiber_representation: fiber_representation.unevaluate_in(level)?.into(),
 					motive: motive.unevaluate_in(level)?,
 				},
+			CasePath { scrutinee, motive, case_refl } => DynamicTerm::CasePath {
+				scrutinee: scrutinee.unevaluate_in(level)?.into(),
+				motive: motive.unevaluate_in(level)?,
+				case_refl: case_refl.unevaluate_in(level)?,
+			},
 			Unwrap { scrutinee, copyability, representation } => DynamicTerm::Unwrap {
 				scrutinee: scrutinee.unevaluate_in(level)?.into(),
 				copyability: copyability.unevaluate_in(level)?.into(),
@@ -211,6 +216,14 @@ impl Unevaluate for DynamicValue {
 			Num(n) => DynamicTerm::Num(*n),
 			Enum(k) => DynamicTerm::Enum(*k),
 			EnumValue(k, v) => DynamicTerm::EnumValue(*k, *v),
+			Id { copy, repr, space, left, right } => DynamicTerm::Id {
+				copy: copy.unevaluate_in(level)?.into(),
+				repr: repr.unevaluate_in(level)?.into(),
+				space: space.unevaluate_in(level)?.into(),
+				left: left.unevaluate_in(level)?.into(),
+				right: right.unevaluate_in(level)?.into(),
+			},
+			Refl(ty, x) => DynamicTerm::Refl(ty.unevaluate_in(level)?.into(), x.unevaluate_in(level)?.into()),
 			WrapType { inner, copyability, representation } => DynamicTerm::WrapType {
 				inner: inner.unevaluate_in(level)?.into(),
 				copyability: copyability.unevaluate_in(level)?.into(),
