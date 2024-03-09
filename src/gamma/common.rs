@@ -42,8 +42,8 @@ impl<T, const N: usize> Binder<T, N> {
 	}
 }
 
-pub fn bind<T, const N: usize>(parameters: [Option<Name>; N], body: T) -> Binder<T, N> {
-	Binder::new(parameters, body)
+pub fn bind<T, const N: usize>(parameters: [Option<Name>; N], body: impl Into<T>) -> Binder<T, N> {
+	Binder::new(parameters, body.into())
 }
 
 impl<T> Binder<T, 1> {
@@ -61,6 +61,16 @@ impl<A, const N: usize> Binder<A, N> {
 	pub fn mapv<B, C: From<B>>(self, f: impl FnOnce([Option<Name>; N], A) -> B) -> Binder<C, N> {
 		Binder { parameters: self.parameters, body: f(self.parameters, self.body).into() }
 	}
+}
+
+#[derive(Clone, Debug)]
+pub struct AnyBinder<T> {
+	pub parameters: Box<[Option<Name>]>,
+	pub body: T,
+}
+
+pub fn any_bind<T>(parameters: impl Into<Box<[Option<Name>]>>, body: impl Into<T>) -> AnyBinder<T> {
+	AnyBinder { parameters: parameters.into(), body: body.into() }
 }
 
 #[derive(Clone, Debug)]

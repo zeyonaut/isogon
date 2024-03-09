@@ -1,7 +1,7 @@
 use lasso::Rodeo;
 
 use crate::gamma::{
-	common::{Copyability, Name, ReprAtom},
+	common::{any_bind, bind, AnyBinder, Copyability, Name, ReprAtom},
 	ir::{
 		presyntax::{Constructor, Expression, Former, Pattern, Preterm, Projector},
 		source::{Keyword, LexError, LexErrorKind, LexedSource, Token},
@@ -186,8 +186,8 @@ peg::parser! {
 				/ constructor:constructor() {Preterm::Constructor(constructor, vec![])}
 			) fini:position!() {preterm.at((init, fini))}
 
-		rule bound_spine_headed() -> (Vec<Option<Name>>, Expression)
-			= [Token::Pipe] _ variables:(variable:optional_parameter())**[Token::Period] _ [Token::Pipe] _ body:spine_headed() {(variables, body)}
+		rule bound_spine_headed() -> AnyBinder<Box<Expression>>
+			= [Token::Pipe] _ variables:(variable:optional_parameter())**[Token::Period] _ [Token::Pipe] _ body:spine_headed() {any_bind(variables, body)}
 
 		// Case arms.
 		rule atomic_pattern() -> Pattern
@@ -210,7 +210,7 @@ peg::parser! {
 				/ callee:spine() _ argument:atom()
 					{ Preterm::Call { callee: callee.into(), argument: argument.into() } }
 				/ scrutinee:spine() _ [Token::TwoColon] _ motive:bound_spine_headed() _ [Token::CurlyL] (_ [Token::Pipe])? _ cases:case()**(_ [Token::Pipe] _) _ [Token::CurlyR]
-					{ Preterm::Split { scrutinee: scrutinee.into(), motive_parameter: motive.0, motive: motive.1.into(), cases} }
+					{ Preterm::Split { scrutinee: scrutinee.into(), motive, cases} }
 				/ spine:spine() _ projector:projector() { Preterm::Project(spine.into(), projector) }
 			) fini:position!() {preterm.at((init, fini))}
 			/ atom()
@@ -219,11 +219,11 @@ peg::parser! {
 		rule spine_headed() -> Expression
 			// TODO: Refactor to avoid caching?
 			= init:position!() preterm:(
-				  [Token::Pipe] _ parameter:optional_parameter() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { parameter, body: body.into() }}
-				/ [Token::Pipe] _ parameter:identifier() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { parameter: Some(parameter), base: base.into(), family: right.into() }}
-				/ [Token::Pipe] _ parameter:identifier() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Amp] _ right:spine_headed() {Preterm::Sigma { parameter: Some(parameter), base: base.into(), family: right.into() }}
-				/ left:spine() _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { parameter: None, base: left.into(), family: right.into() }}
-				/ left:spine() _ [Token::Amp] _ right:spine_headed() {Preterm::Sigma { parameter: None, base: left.into(), family: right.into() }}
+				  [Token::Pipe] _ parameter:optional_parameter() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { body: bind([parameter], body) }}
+				/ [Token::Pipe] _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { base: base.into(), family: bind([parameter], right) }}
+				/ [Token::Pipe] _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Amp] _ right:spine_headed() {Preterm::Sigma { base: base.into(), family: bind([parameter], right) }}
+				/ left:spine() _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { base: left.into(), family: bind([None], right) }}
+				/ left:spine() _ [Token::Amp] _ right:spine_headed() {Preterm::Sigma { base: left.into(), family: bind([None], right) }}
 				/ left:spine() _ [Token::Comma] _ right:spine_headed() {Preterm::Pair { basepoint: left.into(), fiberpoint: right.into() }}
 			) fini:position!() {preterm.at((init, fini))}
 			/ spine()
@@ -231,12 +231,12 @@ peg::parser! {
 		rule preterm() -> Expression
 			= init:position!() preterm:(
 				  [Token::Keyword(Keyword::Let)] is_crisp:([Token::Bang] {()})? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
-				{ Preterm::Let { assignee: name, is_crisp: is_crisp.is_some(), ty: ty.into(), argument: argument.into(), tail: tail.into() }}
+				{ Preterm::Let { is_crisp: is_crisp.is_some(), ty: ty.into(), argument: argument.into(), tail: bind([name], tail) }}
 			) fini:position!() {preterm.at((init, fini))}
 			/ init:position!() [Token::Keyword(Keyword::Def)] is_crisp:([Token::Bang] {()})? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() fini:position!()
 			{
 				let tail_range = tail.range;
-				Preterm::Splice(Preterm::Let { assignee: name, is_crisp: is_crisp.is_some(), ty: ty.into(), argument: argument.into(), tail: Preterm::Quote(tail.into()).at((tail_range.0, tail_range.1)).into() }.at((init, fini)).into()).at((init, fini))
+				Preterm::Splice(Preterm::Let { is_crisp: is_crisp.is_some(), ty: ty.into(), argument: argument.into(), tail: bind([name], Preterm::Quote(tail.into()).at((tail_range.0, tail_range.1))) }.at((init, fini)).into()).at((init, fini))
 			}
 			/ spine_headed()
 

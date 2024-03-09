@@ -1,4 +1,4 @@
-use crate::gamma::common::{Copyability, Field, Name, ReprAtom};
+use crate::gamma::common::{AnyBinder, Binder, Copyability, Field, Name, ReprAtom};
 
 #[derive(Debug, Clone)]
 pub struct Expression {
@@ -13,47 +13,19 @@ pub enum Preterm {
 	Quote(Box<Expression>),
 	Splice(Box<Expression>),
 
-	Let {
-		assignee: Option<Name>,
-		is_crisp: bool,
-		ty: Box<Expression>,
-		argument: Box<Expression>,
-		tail: Box<Expression>,
-	},
+	Let { is_crisp: bool, ty: Box<Expression>, argument: Box<Expression>, tail: Binder<Box<Expression>> },
 
-	Pi {
-		parameter: Option<Name>,
-		base: Box<Expression>,
-		family: Box<Expression>,
-	},
-	Sigma {
-		parameter: Option<Name>,
-		base: Box<Expression>,
-		family: Box<Expression>,
-	},
-	Lambda {
-		parameter: Option<Name>,
-		body: Box<Expression>,
-	},
-	Pair {
-		basepoint: Box<Expression>,
-		fiberpoint: Box<Expression>,
-	},
+	Pi { base: Box<Expression>, family: Binder<Box<Expression>> },
+	Sigma { base: Box<Expression>, family: Binder<Box<Expression>> },
+	Lambda { body: Binder<Box<Expression>> },
+	Pair { basepoint: Box<Expression>, fiberpoint: Box<Expression> },
 
 	Former(Former, Vec<Expression>),
 	Constructor(Constructor, Vec<Expression>),
 
 	Project(Box<Expression>, Projector),
-	Call {
-		callee: Box<Expression>,
-		argument: Box<Expression>,
-	},
-	Split {
-		scrutinee: Box<Expression>,
-		motive_parameter: Vec<Option<Name>>,
-		motive: Box<Expression>,
-		cases: Vec<(Pattern, Expression)>,
-	},
+	Call { callee: Box<Expression>, argument: Box<Expression> },
+	Split { scrutinee: Box<Expression>, motive: AnyBinder<Box<Expression>>, cases: Vec<(Pattern, Expression)> },
 }
 
 #[derive(Debug, Clone)]

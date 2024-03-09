@@ -21,14 +21,14 @@ pub trait Unevaluate {
 impl<const N: usize> Unevaluate for Closure<Environment, StaticTerm, N> {
 	type Term = Binder<Box<StaticTerm>, N>;
 	fn unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
-		Ok(bind(self.parameters, self.autolyze(level).unevaluate_in(level + N)?.into()))
+		Ok(bind(self.parameters, self.autolyze(level).unevaluate_in(level + N)?))
 	}
 }
 
 impl<const N: usize> Unevaluate for Closure<Environment, DynamicTerm, N> {
 	type Term = Binder<Box<DynamicTerm>, N>;
 	fn unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
-		Ok(bind(self.parameters, self.autolyze(level).unevaluate_in(level + N)?.into()))
+		Ok(bind(self.parameters, self.autolyze(level).unevaluate_in(level + N)?))
 	}
 }
 
