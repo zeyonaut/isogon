@@ -4,7 +4,7 @@ use super::syntax::{DynamicTerm, StaticTerm};
 use crate::{
 	gamma::{
 		common::{Closure, Copyability, Field, Index, Level, Name, Repr, ReprAtom},
-		transform::evaluate::Autolyze,
+		transform::autolyze::Autolyze,
 	},
 	utility::rc,
 };
@@ -110,9 +110,9 @@ pub enum DynamicNeutral {
 		motive: Rc<Closure<Environment, DynamicTerm>>,
 	},
 	CasePath {
-		scrutinee: Box<Self>,
-		motive: Rc<Closure<Environment, DynamicTerm, 3>>,
-		case_refl: Rc<Closure<Environment, DynamicTerm>>,
+		scrutinee: Rc<Self>,
+		motive: Rc<Closure<Environment, DynamicTerm, 2>>,
+		case_refl: Rc<DynamicValue>,
 	},
 	Unwrap {
 		scrutinee: Rc<Self>,
@@ -166,7 +166,7 @@ pub enum DynamicValue {
 		left: Rc<Self>,
 		right: Rc<Self>,
 	},
-	Refl(Rc<Self>, Rc<Self>),
+	Refl,
 	WrapType {
 		inner: Rc<Self>,
 		copyability: Rc<StaticValue>,
@@ -441,7 +441,7 @@ impl Conversion<DynamicValue> for Level {
 				self.can_convert(&**left_l, left_r) && self.can_convert(&**right_l, right_r),
 			(Num(left), Num(right)) => left == right,
 			(EnumValue(_, left), EnumValue(_, right)) => left == right,
-			(Refl(_, point_l), Refl(_, point_r)) => self.can_convert(&**point_l, point_r),
+			(Refl, Refl) => true,
 			_ => false,
 		}
 	}
@@ -483,9 +483,7 @@ impl Conversion<DynamicNeutral> for Level {
 			(
 				CasePath { scrutinee: scrutinee_l, case_refl: case_l, .. },
 				CasePath { scrutinee: scrutinee_r, case_refl: case_r, .. },
-			) =>
-				self.can_convert(&**scrutinee_l, scrutinee_r)
-					&& (self + 1).can_convert(&case_l.autolyze(self), &case_r.autolyze(self)),
+			) => self.can_convert(&**scrutinee_l, scrutinee_r) && self.can_convert(&**case_l, &case_r),
 			_ => false,
 		}
 	}

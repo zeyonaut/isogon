@@ -1,10 +1,11 @@
 use std::rc::Rc;
 
+use super::autolyze::Autolyze;
 use crate::{
 	gamma::{
-		common::{Binder, Index, Level, Repr, UniverseKind},
+		common::{bind, Binder, Closure, Index, Level, Repr, UniverseKind},
 		ir::{
-			object::Term,
+			object::{DynamicValue, Environment},
 			syntax::{DynamicTerm, StaticTerm},
 		},
 	},
@@ -24,10 +25,10 @@ pub trait Unstage {
 	fn unstage_in(&self, context_len: Level) -> Self::CoreTerm;
 }
 
-impl<const N: usize> Unstage for Binder<Rc<Term>, N> {
+impl<const N: usize> Unstage for Closure<Environment, DynamicTerm, N> {
 	type CoreTerm = Binder<Box<DynamicTerm>, N>;
-	fn unstage_in(&self, context_len: Level) -> Self::CoreTerm {
-		self.map_ref(|body| bx!(body.unstage_in(context_len + N)))
+	fn unstage_in(&self, level: Level) -> Self::CoreTerm {
+		bind(self.parameters, self.autolyze(level).unstage_in(level + N))
 	}
 }
 
@@ -42,12 +43,12 @@ impl Unstage for Repr {
 	}
 }
 
-impl Unstage for Term {
+impl Unstage for DynamicValue {
 	type CoreTerm = DynamicTerm;
 	fn unstage_in(&self, level @ Level(context_len): Level) -> Self::CoreTerm {
-		use Term::*;
+		use DynamicValue::*;
 		match self {
-			Variable(name, Level(variable)) => DynamicTerm::Variable(*name, Index(context_len - 1 - variable)),
+			Variable(name, v) => DynamicTerm::Variable(*name, Index(context_len - (v.0 + 1))),
 			Function { base, family, body } => DynamicTerm::Lambda {
 				base: base.unstage_in(level).into(),
 				family: family.unstage_in(level),
@@ -126,11 +127,11 @@ impl Unstage for Term {
 				left: left.unstage_in(level).into(),
 				right: right.unstage_in(level).into(),
 			},
-			Refl(ty, x) => DynamicTerm::Refl(ty.unstage_in(level).into(), x.unstage_in(level).into()),
+			Refl => DynamicTerm::Refl,
 			CasePath { scrutinee, motive, case_refl } => DynamicTerm::CasePath {
 				scrutinee: scrutinee.unstage_in(level).into(),
 				motive: motive.unstage_in(level),
-				case_refl: case_refl.unstage_in(level),
+				case_refl: case_refl.unstage_in(level).into(),
 			},
 			WrapType(inner, universe) => DynamicTerm::WrapType {
 				inner: inner.unstage_in(level).into(),

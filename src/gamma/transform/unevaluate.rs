@@ -1,4 +1,4 @@
-use super::evaluate::Autolyze;
+use super::autolyze::Autolyze;
 use crate::gamma::{
 	common::{bind, Binder, Closure, Index, Level},
 	ir::{
@@ -147,7 +147,7 @@ impl Unevaluate for DynamicNeutral {
 			CasePath { scrutinee, motive, case_refl } => DynamicTerm::CasePath {
 				scrutinee: scrutinee.unevaluate_in(level)?.into(),
 				motive: motive.unevaluate_in(level)?,
-				case_refl: case_refl.unevaluate_in(level)?,
+				case_refl: case_refl.unevaluate_in(level)?.into(),
 			},
 			Unwrap { scrutinee, copyability, representation } => DynamicTerm::Unwrap {
 				scrutinee: scrutinee.unevaluate_in(level)?.into(),
@@ -223,7 +223,7 @@ impl Unevaluate for DynamicValue {
 				left: left.unevaluate_in(level)?.into(),
 				right: right.unevaluate_in(level)?.into(),
 			},
-			Refl(ty, x) => DynamicTerm::Refl(ty.unevaluate_in(level)?.into(), x.unevaluate_in(level)?.into()),
+			Refl => DynamicTerm::Refl,
 			WrapType { inner, copyability, representation } => DynamicTerm::WrapType {
 				inner: inner.unevaluate_in(level)?.into(),
 				copyability: copyability.unevaluate_in(level)?.into(),

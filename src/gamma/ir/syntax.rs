@@ -175,10 +175,10 @@ pub enum DynamicTerm {
 		left: Box<Self>,
 		right: Box<Self>,
 	},
-	Refl(Box<Self>, Box<Self>),
+	Refl,
 	CasePath {
 		scrutinee: Box<Self>,
-		motive: Binder<Box<Self>, 3>,
-		case_refl: Binder<Box<Self>>,
+		motive: Binder<Box<Self>, 2>,
+		case_refl: Box<Self>,
 	},
 }

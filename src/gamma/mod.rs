@@ -3,7 +3,7 @@ mod ir;
 mod sourcify;
 mod transform;
 
-use lasso::Rodeo;
+use lasso::{Key, Rodeo};
 use transform::{
 	close, elaborate, evaluate::Evaluate, linearize, parse::parse, stage::Stage, unstage::Unstage,
 };
@@ -23,6 +23,7 @@ pub fn run(source: &str) {
 	println!("Elaboration complete.");
 	println!("Elaborated term: {}", pretty_print(&term, &interner));
 	println!("Synthesized type: {}", pretty_print(&ty.unevaluate(), &interner));
+	println!("Evaluation: {}", pretty_print(&term.clone().evaluate().unevaluate(), &interner));
 
 	println!();
 
@@ -36,7 +37,7 @@ pub fn run(source: &str) {
 	println!();
 
 	// Closure conversion.
-	let flat_program = close(staged_term);
+	let flat_program = todo!(); //close(staged_term);
 	println!("Closure conversion complete.");
 
 	println!();

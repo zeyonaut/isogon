@@ -1,12 +1,12 @@
 use std::{fmt::Debug, rc::Rc};
 
-use super::syntax::StaticTerm;
-use crate::gamma::common::{Binder, Closure, Copyability, Field, Index, Level, Name, Repr, UniverseKind};
+use super::syntax::{DynamicTerm, StaticTerm};
+use crate::gamma::common::{Closure, Copyability, Field, Index, Level, Name, Repr, UniverseKind};
 
 #[derive(Clone)]
-pub enum Metavalue {
+pub enum StaticValue {
 	Type,
-	Quote(Rc<Term>),
+	Quote(Rc<DynamicValue>),
 	Function(Closure<Environment, StaticTerm>),
 	Pair(Rc<Self>, Rc<Self>),
 	Num(usize),
@@ -15,7 +15,7 @@ pub enum Metavalue {
 	Repr(Option<Repr>),
 }
 
-impl Debug for Metavalue {
+impl Debug for StaticValue {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
 			Self::Type => write!(f, "Type"),
@@ -28,38 +28,27 @@ impl Debug for Metavalue {
 
 #[derive(Clone, Debug)]
 pub enum Value {
-	Static(Metavalue),
-	Dynamic(Option<Name>, Level),
+	Static(StaticValue),
+	Dynamic(DynamicValue),
 }
 
 #[derive(Clone, Debug)]
 pub struct Environment {
 	values: Vec<Value>,
-	dynamic_context_length: Level,
 }
 
 impl Environment {
 	pub fn new() -> Self {
-		Self { values: Vec::new(), dynamic_context_length: Level(0) }
+		Self { values: Vec::new() }
 	}
 
-	pub fn lookup_static(&self, Index(i): Index) -> Metavalue {
+	pub fn lookup_static(&self, Index(i): Index) -> StaticValue {
 		let Some(Value::Static(value)) = self.values.get(self.values.len() - 1 - i) else { panic!() };
 		value.clone()
 	}
-	pub fn lookup_dynamic(&self, Index(i): Index) -> Term {
-		let Some(Value::Dynamic(name, level)) = self.values.get(self.values.len() - 1 - i) else { panic!() };
-		Term::Variable(*name, *level)
-	}
-
-	#[must_use]
-	pub fn bind<const N: usize>(&self, names: [Option<Name>; N]) -> Self {
-		let mut environment = self.clone();
-		for name in names {
-			environment.values.push(Value::Dynamic(name, environment.dynamic_context_length));
-			environment.dynamic_context_length += 1;
-		}
-		environment
+	pub fn lookup_dynamic(&self, Index(i): Index) -> DynamicValue {
+		let Some(Value::Dynamic(value)) = self.values.get(self.values.len() - 1 - i) else { panic!() };
+		value.clone()
 	}
 
 	#[must_use]
@@ -71,19 +60,19 @@ impl Environment {
 }
 
 #[derive(Clone, Debug)]
-pub enum Term {
+pub enum DynamicValue {
 	Variable(Option<Name>, Level),
 	Let {
 		ty: Rc<Self>,
 		argument: Rc<Self>,
-		tail: Binder<Rc<Self>>,
+		tail: Closure<Environment, DynamicTerm>,
 	},
 	Universe(UniverseKind),
 	Pi {
 		base_universe: UniverseKind,
 		base: Rc<Self>,
 		family_universe: UniverseKind,
-		family: Binder<Rc<Self>>,
+		family: Closure<Environment, DynamicTerm>,
 	},
 	Function {
 		// TODO: This is kind of redundant, since binders store parameter names and arity,
@@ -91,21 +80,21 @@ pub enum Term {
 		// associated with the base. Is it possible to have a more generic binder type that
 		// can accommodate this extra data, but without significantly affecting existing binder code?
 		base: Rc<Self>,
-		family: Binder<Rc<Self>>,
-		body: Binder<Rc<Self>>,
+		family: Closure<Environment, DynamicTerm>,
+		body: Closure<Environment, DynamicTerm>,
 	},
 	Apply {
 		scrutinee: Rc<Self>,
 		argument: Rc<Self>,
 		fiber_universe: UniverseKind,
 		base: Rc<Self>,
-		family: Binder<Rc<Self>>,
+		family: Closure<Environment, DynamicTerm>,
 	},
 	Sigma {
 		base_universe: UniverseKind,
 		base: Rc<Self>,
 		family_universe: UniverseKind,
-		family: Binder<Rc<Self>>,
+		family: Closure<Environment, DynamicTerm>,
 	},
 	Pair {
 		basepoint: Rc<Self>,
@@ -119,9 +108,9 @@ pub enum Term {
 	CaseNat {
 		scrutinee: Rc<Self>,
 		case_nil: Rc<Self>,
-		case_suc: Binder<Rc<Self>, 2>,
+		case_suc: Closure<Environment, DynamicTerm, 2>,
 		fiber_universe: UniverseKind,
-		motive: Binder<Rc<Self>>,
+		motive: Closure<Environment, DynamicTerm>,
 	},
 	Enum(u16),
 	EnumValue(u16, u8),
@@ -129,7 +118,7 @@ pub enum Term {
 		scrutinee: Rc<Self>,
 		cases: Vec<Self>,
 		fiber_universe: UniverseKind,
-		motive: Binder<Rc<Self>>,
+		motive: Closure<Environment, DynamicTerm>,
 	},
 	Id {
 		kind: UniverseKind,
@@ -137,11 +126,11 @@ pub enum Term {
 		left: Rc<Self>,
 		right: Rc<Self>,
 	},
-	Refl(Rc<Self>, Rc<Self>),
+	Refl,
 	CasePath {
 		scrutinee: Rc<Self>,
-		motive: Binder<Rc<Self>, 3>,
-		case_refl: Binder<Rc<Self>>,
+		motive: Closure<Environment, DynamicTerm, 2>,
+		case_refl: Rc<Self>,
 	},
 	WrapType(Rc<Self>, UniverseKind),
 	WrapNew(Rc<Self>),
@@ -151,10 +140,13 @@ pub enum Term {
 	UnRc(Rc<Self>, UniverseKind),
 }
 
-impl Term {
+impl DynamicValue {
 	// FIXME: I don't think this properly collects occurrences in inferred types (e.g. in Rc or in a scrutinee)?
 	// Yields the characteristic of the subset of all levels < level that occur as a variable in a value.
 	pub fn occurences(&self, Level(level): Level) -> Vec<bool> {
+		// FIXME: Move to terms with levels.
+		todo!()
+		/*
 		fn mark_occurrents(value: &Term, is_occurrent: &mut Vec<bool>) {
 			match value {
 				Term::Variable(_, Level(l)) =>
@@ -195,13 +187,18 @@ impl Term {
 				}
 				Term::CasePath { scrutinee, motive, case_refl } => {
 					mark_occurrents(scrutinee, is_occurrent);
-					mark_occurrents(&case_refl.body, is_occurrent);
+					mark_occurrents(case_refl, is_occurrent);
 					// TODO: Shouldn't occurrents not be marked if the fiber universe is trivial?
 					mark_occurrents(&motive.body, is_occurrent);
 				}
 
 				// 0-recursive cases.
-				Term::Universe(_) | Term::Enum(_) | Term::EnumValue(_, _) | Term::Nat | Term::Num(_) => (),
+				Term::Universe(_)
+				| Term::Enum(_)
+				| Term::EnumValue(_, _)
+				| Term::Nat
+				| Term::Num(_)
+				| Term::Refl => (),
 
 				// 1-recursive cases.
 				Term::Project(a, _, _)
@@ -214,7 +211,7 @@ impl Term {
 				| Term::UnRc(a, _) => mark_occurrents(a, is_occurrent),
 
 				// n-recursive cases.
-				Term::Pair { basepoint: a, fiberpoint: b } | Term::Refl(a, b) => {
+				Term::Pair { basepoint: a, fiberpoint: b } => {
 					mark_occurrents(a, is_occurrent);
 					mark_occurrents(b, is_occurrent);
 				}
@@ -239,5 +236,6 @@ impl Term {
 		let mut is_occurrent = vec![false; level];
 		mark_occurrents(self, &mut is_occurrent);
 		is_occurrent
+		*/
 	}
 }

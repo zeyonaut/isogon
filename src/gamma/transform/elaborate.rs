@@ -4,14 +4,14 @@ use crate::{
 		ir::{
 			presyntax::{Constructor, Expression, Former, Pattern, Preterm, Projector},
 			semantics::{
-				Conversion, DynamicNeutral, DynamicValue, Environment, StaticNeutral,
-				StaticValue, Value,
+				Conversion, DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue, Value,
 			},
 			source::LexedSource,
 			syntax::{DynamicTerm, StaticTerm},
 		},
 		transform::{
-			evaluate::{Autolyze, Evaluate, EvaluateWith},
+			autolyze::Autolyze,
+			evaluate::{Evaluate, EvaluateWith},
 			parse::report_line_error,
 			unevaluate::Unevaluate,
 		},
@@ -48,6 +48,7 @@ enum ExpectedFormer {
 	Lift,
 	Rc,
 	Wrap,
+	Id,
 }
 
 #[derive(Debug, Clone)]
@@ -843,25 +844,6 @@ fn synthesize_dynamic(
 				StaticValue::Copyability(Copyability::Trivial),
 				StaticValue::ReprAtom(ReprAtom::Byte),
 			),
-			Constructor::Refl => {
-				let [x] = arguments.try_into().unwrap();
-				let (x, ty_value, copy, repr) = synthesize_dynamic(context, x)?;
-
-				let ty = ty_value.unevaluate_in(context.len()).unwrap();
-				let x_value = x.clone().evaluate_in(&context.environment);
-				(
-					DynamicTerm::Refl(ty.into(), x.into()),
-					DynamicValue::Id {
-						copy: copy.into(),
-						repr: repr.into(),
-						space: ty_value.into(),
-						left: x_value.clone().into(),
-						right: x_value.into(),
-					},
-					StaticValue::Copyability(Copyability::Trivial),
-					StaticValue::ReprNone,
-				)
-			}
 			_ => return Err(ElaborationErrorKind::InvalidConstructor.at(expr.range)),
 		},
 
@@ -954,6 +936,7 @@ fn synthesize_dynamic(
 			let DynamicValue::IndexedProduct { base, family_copyability, family_representation, family, .. } =
 				scrutinee_ty
 			else {
+				println!("{:#?}", scrutinee_ty);
 				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
 			};
 			let argument = verify_dynamic(context, *argument, (*base).clone())?;
@@ -1069,7 +1052,7 @@ fn synthesize_dynamic(
 						&context.clone().bind_dynamic(
 							motive_parameter,
 							false,
-							DynamicValue::Enum(2),
+							DynamicValue::Enum(card),
 							StaticValue::Copyability(Copyability::Trivial),
 							StaticValue::ReprAtom(ReprAtom::Byte),
 						),
@@ -1119,13 +1102,13 @@ fn synthesize_dynamic(
 					// let motive = elaborate_dynamic_motive([space, space, id(space, var(1), var(0))]);
 
 					// TODO: Handle this error.
-					let [u, v, p] = (*motive.parameters).try_into().unwrap();
+					let [v, p] = (*motive.parameters).try_into().unwrap();
 					let Ok([(Pattern::Construction(Constructor::Refl, pattern), case_refl)]) =
 						<[_; 1]>::try_from(cases)
 					else {
 						return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
 					};
-					let Ok([Pattern::Variable(refl_pattern_endpoint)]) = <[_; 1]>::try_from(pattern) else {
+					let Ok([]) = <[_; 0]>::try_from(pattern) else {
 						panic!();
 					};
 
@@ -1133,7 +1116,6 @@ fn synthesize_dynamic(
 					let (motive_term, fiber_copy, fiber_repr) = elaborate_dynamic_type(
 						&context
 							.clone()
-							.bind_dynamic(u, false, (*space).clone(), (*copy).clone(), (*repr).clone())
 							.bind_dynamic(v, false, (*space).clone(), (*copy).clone(), (*repr).clone())
 							.bind_dynamic(
 								p,
@@ -1142,7 +1124,7 @@ fn synthesize_dynamic(
 									copy: copy.clone(),
 									repr: repr.clone(),
 									space: space.clone(),
-									left: DynamicValue::Neutral(DynamicNeutral::Variable(u, context.len())).into(),
+									left: left.clone(),
 									right: DynamicValue::Neutral(DynamicNeutral::Variable(v, context.len() + 1))
 										.into(),
 								},
@@ -1151,33 +1133,21 @@ fn synthesize_dynamic(
 							),
 						*motive.body,
 					)?;
-					let motive = Closure::new(context.environment.clone(), [u, v, p], motive_term.clone());
+					let motive = Closure::new(context.environment.clone(), [v, p], motive_term.clone());
 
-					let refl_pattern_endpoint_variable =
-						DynamicValue::Neutral(DynamicNeutral::Variable(Some(refl_pattern_endpoint), context.len()));
 					let case_refl = verify_dynamic(
-						&context.clone().bind_dynamic(
-							Some(refl_pattern_endpoint),
-							false,
-							(*space).clone(),
-							(*copy).clone(),
-							(*repr).clone(),
-						),
+						&context,
 						case_refl,
-						motive.evaluate_with([
-							refl_pattern_endpoint_variable.clone(),
-							refl_pattern_endpoint_variable.clone(),
-							DynamicValue::Refl(space, refl_pattern_endpoint_variable.into()),
-						]),
+						motive.evaluate_with([(*left).clone(), DynamicValue::Refl]),
 					)?;
 
 					(
 						DynamicTerm::CasePath {
 							scrutinee: scrutinee.into(),
-							motive: bind([u, v, p], motive_term),
-							case_refl: bind([Some(refl_pattern_endpoint)], case_refl),
+							motive: bind([v, p], motive_term),
+							case_refl: case_refl.into(),
 						},
-						motive.evaluate_with([(*left).clone(), (*right).clone(), scrutinee_value]),
+						motive.evaluate_with([(*right).clone(), scrutinee_value]),
 						fiber_copy,
 						fiber_repr,
 					)
@@ -1263,6 +1233,15 @@ fn verify_dynamic(
 			let [tm] = tms.try_into().unwrap();
 			let tm = verify_dynamic(context, tm, ty.as_ref().clone())?;
 			DynamicTerm::RcNew(bx!(tm))
+		}
+		(Preterm::Constructor(Constructor::Refl, tms), ty) => {
+			let DynamicValue::Id { left, right, .. } = ty else {
+				return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Id).at(expr.range));
+			};
+			assert!(context.len().can_convert(&*left, &right));
+
+			let [] = tms.try_into().unwrap();
+			DynamicTerm::Refl
 		}
 		(term, ty) => {
 			let (term, synthesized_ty, _, _) = synthesize_dynamic(context, term.at(expr.range))?;

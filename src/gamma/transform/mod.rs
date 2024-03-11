@@ -1,3 +1,4 @@
+pub mod autolyze;
 pub mod close;
 pub mod elaborate;
 pub mod evaluate;

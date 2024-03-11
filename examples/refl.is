@@ -1,21 +1,45 @@
-def! sym
-: |c : copy| -> |r : repr| -> '(
-	|A : * c r| -> |x : A| -> |y : A| -> Id A x y -> Id A y x
-) = |_| |_| <
-	|A| |_| |_| |p| p :: |u.v.w| Id A v u {
-		| refl @a -> refl a
+def! sym : |c : copy| -> |r : repr|
+-> '(|A : * c r| -> |x : A| -> |y : A| -> Id A x y -> Id A y x)
+= |_| |_| <
+	|A| |x| |_| |p| p :: |v.w| Id A v x {
+		| refl -> refl
 	}
 >;
 
 def! trans
-: |c : copy| -> |r : repr| -> '(
-	|A : * c r| -> |x : A| -> |y : A| -> Id A x y -> |z : A| -> Id A y z -> Id A x z
-) = |_| |_| <
-	|A| |x| |y| |p| p :: |u.v.w| |z : A| -> Id A v z -> Id A u z {
-		| refl @a -> |z| |q| q :: |f.g.h| Id A f g {
-			| refl @b -> refl b
-		}
+: |c : copy| -> |r : repr|
+-> '(|A : * c r| -> |x : A| -> |y : A| -> |z : A| ->  Id A x y -> Id A y z -> Id A x z)
+= |_| |_| <
+	|A| |x| |y| |_| |p| |q| q :: |v.w| Id A x v {
+		| refl -> p
 	}
 >;
 
-[trans c0 rbyte] #2
+def! tr
+: |c_0 : copy| -> |r_0 : repr| -> |c_1 : copy| -> |r_1 : repr|
+-> '(
+	|B : * c_0 r_0| -> |F : B -> * c_1 r_1| -> |x : B| -> |y : B| -> Id B x y -> F x -> F y
+) = |_| |_| |_| |_| <
+	|_| |F| |_| |_| |p| |a| p :: |v.q| F v {
+		refl -> a
+	}
+>;
+
+def! is_prop
+: |c : copy| -> |r : repr| -> '(|T : * c r| -> * c1 rfun)
+= |c| |r| <|T| |x : T| -> |y : T| -> Id T x y>;
+
+let! one_is_prop
+: [is_prop c0 rbyte] #1
+= |x| x :: |x| |y : #1| -> Id #1 x y {
+	0_1 -> |y| y :: |y| Id #1 0_1 y {
+		0_1 -> refl
+	}
+};
+
+let! bool_family : #2 -> * c0 rbyte = |b| b :: |_| * c0 rbyte { false -> #0 | true -> #1};
+
+let! bool_no_confusion : Id #2 false true -> #0 = |p|
+	[tr c0 rbyte c0 rbyte] #2 bool_family true false ([sym c0 rbyte] #2 false true p) 0_1;
+
+bool_no_confusion

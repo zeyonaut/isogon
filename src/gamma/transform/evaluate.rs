@@ -279,10 +279,9 @@ impl Evaluate for DynamicTerm {
 				left: left.evaluate_in(environment).into(),
 				right: right.evaluate_in(environment).into(),
 			},
-			Refl(ty, x) =>
-				DynamicValue::Refl(ty.evaluate_in(environment).into(), x.evaluate_in(environment).into()),
-			CasePath { scrutinee, motive, case_refl } => match scrutinee.evaluate_in(environment) {
-				DynamicValue::Refl(_, x) => case_refl.evaluate_at(environment, [(*x).clone()]),
+			Refl => DynamicValue::Refl,
+			CasePath { scrutinee, motive, case_refl } => match scrutinee.clone().evaluate_in(environment) {
+				DynamicValue::Refl => case_refl.evaluate_in(environment),
 				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::CasePath {
 					scrutinee: neutral.into(),
 					motive: motive.evaluate_in(environment).into(),
@@ -361,35 +360,5 @@ impl<const N: usize> EvaluateAt<N> for &Binder<Box<DynamicTerm>, N> {
 	type Value = DynamicValue;
 	fn evaluate_at(self, environment: &Environment, arguments: [Self::Value; N]) -> Self::Value {
 		self.body.clone().evaluate_in(&environment.extend(arguments.map(Value::Dynamic)))
-	}
-}
-
-pub trait Autolyze {
-	type Value;
-	/// Evaluates a closure on its own parameters by postulating them and passing them in.
-	fn autolyze(&self, context_len: Level) -> Self::Value;
-}
-
-impl<const N: usize> Autolyze for Closure<Environment, StaticTerm, N> {
-	type Value = StaticValue;
-	fn autolyze(&self, context_len: Level) -> Self::Value {
-		let mut x = 0;
-		self.evaluate_with(self.parameters.map(|parameter| {
-			let y = context_len + x;
-			x += 1;
-			(parameter, y).into()
-		}))
-	}
-}
-
-impl<const N: usize> Autolyze for Closure<Environment, DynamicTerm, N> {
-	type Value = DynamicValue;
-	fn autolyze(&self, context_len: Level) -> Self::Value {
-		let mut x = 0;
-		self.evaluate_with(self.parameters.map(|parameter| {
-			let y = context_len + x;
-			x += 1;
-			(parameter, y).into()
-		}))
 	}
 }
