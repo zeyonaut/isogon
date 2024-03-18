@@ -238,7 +238,7 @@ fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) 
 		Variable(..) | Universe { .. } | Splice(_) | Nat | Num(..) | Enum(..) | EnumValue(..) =>
 			write_dynamic(term, f, interner),
 		Let { .. }
-		| Lambda { .. }
+		| Function { .. }
 		| Pair { .. }
 		| Apply { .. }
 		| Project { .. }
@@ -298,7 +298,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			}
 			write_dynamic(&family.body, f, interner)
 		}
-		Lambda { body, .. } => {
+		Function { body, .. } => {
 			write!(f, "|{}| ", resolve(interner, &body.parameter()))?;
 			write_dynamic(&body.body, f, interner)
 		}

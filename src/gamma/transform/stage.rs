@@ -121,7 +121,7 @@ impl<const N: usize> Stage for Binder<Box<DynamicTerm>, N> {
 	}
 }
 
-fn stage_as_dynamic_universe(
+pub fn stage_as_dynamic_universe(
 	copyability: StaticTerm,
 	representation: StaticTerm,
 	environment: &Environment,
@@ -137,7 +137,7 @@ impl Stage for DynamicTerm {
 		use DynamicTerm::*;
 		match self {
 			Variable(_, index) => environment.lookup_dynamic(index),
-			Lambda { base, family, body } => DynamicValue::Function {
+			Function { base, family, body } => DynamicValue::Function {
 				base: base.stage_in(environment).into(),
 				body: body.stage_in(environment).into(),
 				family: family.stage_in(environment).into(),

@@ -147,7 +147,7 @@ impl Evaluate for DynamicTerm {
 		use DynamicTerm::*;
 		match self {
 			Variable(_, index) => environment.lookup_dynamic(index),
-			Lambda { base, family, body } => DynamicValue::Function {
+			Function { base, family, body } => DynamicValue::Function {
 				base: base.evaluate_in(environment).into(),
 				family: family.evaluate_in(environment).into(),
 				body: body.evaluate_in(environment).into(),

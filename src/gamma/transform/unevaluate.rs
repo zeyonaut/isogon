@@ -188,7 +188,7 @@ impl Unevaluate for DynamicValue {
 				family_representation: base_representation.unevaluate_in(level)?.into(),
 				family: family.unevaluate_in(level)?,
 			},
-			Function { base, family, body } => DynamicTerm::Lambda {
+			Function { base, family, body } => DynamicTerm::Function {
 				base: base.unevaluate_in(level)?.into(),
 				family: family.unevaluate_in(level)?.into(),
 				body: body.unevaluate_in(level)?.into(),

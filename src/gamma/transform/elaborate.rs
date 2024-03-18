@@ -1184,7 +1184,7 @@ fn verify_dynamic(
 				*body.body,
 				fiber,
 			)?;
-			DynamicTerm::Lambda {
+			DynamicTerm::Function {
 				base: base.unevaluate_in(context.len()).unwrap().into(),
 				family,
 				body: bind(parameters, body),

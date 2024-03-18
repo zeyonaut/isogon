@@ -30,14 +30,14 @@ pub fn run(source: &str) {
 	// Staging.
 	let staged_term = term.stage();
 	println!("Staging complete.");
-	let unstaged_term = staged_term.clone().unstage();
+	let unstaged_term = staged_term.unstage();
 	println!("Staged term: {}", pretty_print(&unstaged_term, &interner));
-	println!("Evaluation: {}", pretty_print(&unstaged_term.evaluate().unevaluate(), &interner));
+	println!("Evaluation: {}", pretty_print(&unstaged_term.clone().evaluate().unevaluate(), &interner));
 
 	println!();
 
 	// Closure conversion.
-	let flat_program = todo!(); //close(staged_term);
+	let flat_program = close(unstaged_term);
 	println!("Closure conversion complete.");
 
 	println!();

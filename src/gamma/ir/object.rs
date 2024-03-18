@@ -38,7 +38,7 @@ pub struct Environment {
 }
 
 impl Environment {
-	pub fn new() -> Self {
+	pub const fn new() -> Self {
 		Self { values: Vec::new() }
 	}
 
@@ -138,104 +138,4 @@ pub enum DynamicValue {
 	RcType(Rc<Self>, UniverseKind),
 	RcNew(Rc<Self>),
 	UnRc(Rc<Self>, UniverseKind),
-}
-
-impl DynamicValue {
-	// FIXME: I don't think this properly collects occurrences in inferred types (e.g. in Rc or in a scrutinee)?
-	// Yields the characteristic of the subset of all levels < level that occur as a variable in a value.
-	pub fn occurences(&self, Level(level): Level) -> Vec<bool> {
-		// FIXME: Move to terms with levels.
-		todo!()
-		/*
-		fn mark_occurrents(value: &Term, is_occurrent: &mut Vec<bool>) {
-			match value {
-				Term::Variable(_, Level(l)) =>
-					if let Some(l_is_occurrent) = is_occurrent.get_mut(*l) {
-						*l_is_occurrent = true;
-					},
-
-				// Cases with binders.
-				Term::Function { base, family, body } => {
-					mark_occurrents(base, is_occurrent);
-					mark_occurrents(&family.body, is_occurrent);
-					mark_occurrents(&body.body, is_occurrent);
-				}
-				Term::Let { ty, argument, tail } => {
-					mark_occurrents(ty, is_occurrent);
-					mark_occurrents(argument, is_occurrent);
-					mark_occurrents(&tail.body, is_occurrent);
-				}
-				Term::Pi { base, family, base_universe: _, family_universe: _ }
-				| Term::Sigma { base, family, base_universe: _, family_universe: _ } => {
-					mark_occurrents(base, is_occurrent);
-					mark_occurrents(&family.body, is_occurrent);
-				}
-				Term::CaseNat { scrutinee, case_nil, case_suc, fiber_universe: _, motive } => {
-					mark_occurrents(scrutinee, is_occurrent);
-					mark_occurrents(case_nil, is_occurrent);
-					mark_occurrents(&case_suc.body, is_occurrent);
-					// TODO: Shouldn't occurrents not be marked if the fiber universe is trivial?
-					mark_occurrents(&motive.body, is_occurrent);
-				}
-				Term::CaseEnum { scrutinee, cases, fiber_universe: _, motive } => {
-					mark_occurrents(scrutinee, is_occurrent);
-					for case in cases {
-						mark_occurrents(case, is_occurrent);
-					}
-					// TODO: Shouldn't occurrents not be marked if the fiber universe is trivial?
-					mark_occurrents(&motive.body, is_occurrent);
-				}
-				Term::CasePath { scrutinee, motive, case_refl } => {
-					mark_occurrents(scrutinee, is_occurrent);
-					mark_occurrents(case_refl, is_occurrent);
-					// TODO: Shouldn't occurrents not be marked if the fiber universe is trivial?
-					mark_occurrents(&motive.body, is_occurrent);
-				}
-
-				// 0-recursive cases.
-				Term::Universe(_)
-				| Term::Enum(_)
-				| Term::EnumValue(_, _)
-				| Term::Nat
-				| Term::Num(_)
-				| Term::Refl => (),
-
-				// 1-recursive cases.
-				Term::Project(a, _, _)
-				| Term::Suc(a)
-				| Term::WrapType(a, _)
-				| Term::WrapNew(a)
-				| Term::Unwrap(a, _)
-				| Term::RcType(a, _)
-				| Term::RcNew(a)
-				| Term::UnRc(a, _) => mark_occurrents(a, is_occurrent),
-
-				// n-recursive cases.
-				Term::Pair { basepoint: a, fiberpoint: b } => {
-					mark_occurrents(a, is_occurrent);
-					mark_occurrents(b, is_occurrent);
-				}
-
-				Term::Id { kind, space: a, left: b, right: c } => {
-					// TODO: How much of this is actually necessary? None?
-					mark_occurrents(a, is_occurrent);
-					mark_occurrents(b, is_occurrent);
-					mark_occurrents(c, is_occurrent);
-				}
-
-				Term::Apply { scrutinee: a, argument: b, fiber_universe: _, base, family } => {
-					mark_occurrents(a, is_occurrent);
-					mark_occurrents(b, is_occurrent);
-					// TODO: Shouldn't occurrents not be marked if the fiber universe is trivial?
-					mark_occurrents(&base, is_occurrent);
-					mark_occurrents(&family.body, is_occurrent);
-				}
-			}
-		}
-
-		let mut is_occurrent = vec![false; level];
-		mark_occurrents(self, &mut is_occurrent);
-		is_occurrent
-		*/
-	}
 }

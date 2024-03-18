@@ -49,7 +49,7 @@ impl Unstage for DynamicValue {
 		use DynamicValue::*;
 		match self {
 			Variable(name, v) => DynamicTerm::Variable(*name, Index(context_len - (v.0 + 1))),
-			Function { base, family, body } => DynamicTerm::Lambda {
+			Function { base, family, body } => DynamicTerm::Function {
 				base: base.unstage_in(level).into(),
 				family: family.unstage_in(level),
 				body: body.unstage_in(level),

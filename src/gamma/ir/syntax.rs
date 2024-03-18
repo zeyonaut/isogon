@@ -117,7 +117,7 @@ pub enum DynamicTerm {
 		family_representation: Box<StaticTerm>,
 		family: Binder<Box<Self>>,
 	},
-	Lambda {
+	Function {
 		base: Box<Self>,
 		family: Binder<Box<Self>>,
 		body: Binder<Box<Self>>,
