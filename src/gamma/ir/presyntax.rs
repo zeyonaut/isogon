@@ -72,9 +72,9 @@ pub enum Projector {
 
 #[derive(Debug, Clone)]
 pub enum Pattern {
-	Variable(Name),
+	Variable(Option<Name>),
 	// Inductive hypothesis witness.
-	Witness { index: Name, witness: Name },
+	Witness { index: Option<Name>, witness: Option<Name> },
 	Construction(Constructor, Vec<Pattern>),
 }
 

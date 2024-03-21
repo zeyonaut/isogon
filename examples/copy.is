@@ -3,5 +3,5 @@ def! sigma : |x : copy| -> |xr : repr| -> |B : '(* x xr)| -> |y : copy| -> |yr :
 
 [sigma c1 rnat <nat> c1 rpointer <|n| n :: |_| * c1 rpointer {
 	| 0        -> RC bool
-	| suc @n.a -> RC (bool & bool)
+	| suc @_.a -> RC (bool & bool)
 }>]

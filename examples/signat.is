@@ -1,7 +1,7 @@
 let! list : nat -> * c1 rpointer
 	= |n| n :: |_| * c1 rpointer {
 		| 0        -> RC #1
-		| suc @n.T -> RC (T & nat)
+		| suc @_.T -> RC (T & nat)
 	};
 
 let! make_list : |n : nat| -> list n

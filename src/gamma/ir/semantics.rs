@@ -226,9 +226,21 @@ impl From<(Option<Name>, Level)> for StaticValue {
 	}
 }
 
+impl From<(Option<Name>, Level)> for StaticNeutral {
+	fn from((name, level): (Option<Name>, Level)) -> Self {
+		Self::Variable(name, level)
+	}
+}
+
 impl From<(Option<Name>, Level)> for DynamicValue {
 	fn from((name, level): (Option<Name>, Level)) -> Self {
 		Self::Neutral(DynamicNeutral::Variable(name, level))
+	}
+}
+
+impl From<(Option<Name>, Level)> for DynamicNeutral {
+	fn from((name, level): (Option<Name>, Level)) -> Self {
+		Self::Variable(name, level)
 	}
 }
 
@@ -261,6 +273,10 @@ impl Environment {
 
 	pub fn push(&mut self, value: Value) {
 		self.0.push(value);
+	}
+
+	pub fn pop(&mut self) {
+		self.0.pop();
 	}
 }
 

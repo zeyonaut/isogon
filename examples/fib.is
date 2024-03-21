@@ -1,13 +1,13 @@
 let! add : nat -> nat -> nat
 	= |a| |b| a :: |_| nat {
 		| 0        -> b
-		| suc @n.k -> suc k
+		| suc @_.k -> suc k
 	};
 
 let! fib2 : nat -> (nat & nat) -> (nat & nat)
 	= |n| |x| n :: |_| (nat & nat) {
 		| 0        -> x
-		| suc @n.x -> add (x/.) (x/!), x/.
+		| suc @_.x -> add (x/.) (x/!), x/.
 	};
 
 let fib : nat -> nat

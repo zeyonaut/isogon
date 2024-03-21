@@ -8,6 +8,12 @@ pub struct Index(pub(super) usize);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Level(pub(super) usize);
 
+impl Level {
+	pub fn index(self, index: usize) -> Self {
+		Self(self.0 - (index + 1))
+	}
+}
+
 impl std::ops::Add<usize> for Level {
 	type Output = Self;
 	fn add(self, rhs: usize) -> Self::Output {

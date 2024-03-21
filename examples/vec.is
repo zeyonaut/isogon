@@ -31,7 +31,7 @@ def! pred : nat -> nat
 def! make_bitvec : |n : nat| -> '[bitvec n]
 	= |n| n :: |n| nat & '[bitvec n] {
 		| 0        -> pred n, <rc 0_1>
-		| suc @n.v -> pred (v/.), <rc ([lower (is_even (v/.))], [v/!])>
+		| suc @_.v -> pred (v/.), <rc ([lower (is_even (v/.))], [v/!])>
 	}/!;
 
 [make_bitvec 8]

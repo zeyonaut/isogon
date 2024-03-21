@@ -192,8 +192,8 @@ peg::parser! {
 		// Case arms.
 		rule atomic_pattern() -> Pattern
 			// TODO: Refactor longest match.
-			= [Token::At] index:identifier() _ [Token::Period] witness:identifier() {Pattern::Witness {index, witness}}
-			/ [Token::At] variable:identifier() {Pattern::Variable(variable)}
+			= [Token::At] index:optional_parameter() _ [Token::Period] witness:optional_parameter() {Pattern::Witness {index, witness}}
+			/ [Token::At] variable:optional_parameter() {Pattern::Variable(variable)}
 
 		rule pattern() -> Pattern
 			= constructor:constructor() patterns:(_ p:atomic_pattern() {p})* {Pattern::Construction(constructor, patterns)}
