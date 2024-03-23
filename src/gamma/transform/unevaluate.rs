@@ -10,9 +10,7 @@ use crate::gamma::{
 pub trait Unevaluate {
 	type Term;
 	/// Transforms a value into a core term.
-	fn unevaluate(&self) -> Self::Term {
-		self.unevaluate_in(Level(0)).unwrap()
-	}
+	fn unevaluate(&self) -> Self::Term { self.unevaluate_in(Level(0)).unwrap() }
 
 	#[must_use]
 	fn unevaluate_in(&self, level: Level) -> Result<Self::Term, ()>;

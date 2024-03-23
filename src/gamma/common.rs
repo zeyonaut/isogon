@@ -9,9 +9,7 @@ pub struct Index(pub(super) usize);
 pub struct Level(pub(super) usize);
 
 impl Level {
-	pub fn index(self, index: usize) -> Self {
-		Self(self.0 - (index + 1))
-	}
+	pub fn index(self, index: usize) -> Self { Self(self.0 - (index + 1)) }
 }
 
 impl std::ops::Add<usize> for Level {
@@ -23,9 +21,7 @@ impl std::ops::Add<usize> for Level {
 }
 
 impl std::ops::AddAssign<usize> for Level {
-	fn add_assign(&mut self, rhs: usize) {
-		self.0 += rhs;
-	}
+	fn add_assign(&mut self, rhs: usize) { self.0 += rhs; }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -43,9 +39,7 @@ pub struct Binder<T, const N: usize = 1> {
 }
 
 impl<T, const N: usize> Binder<T, N> {
-	pub fn new(parameters: [Option<Name>; N], body: T) -> Self {
-		Self { parameters, body }
-	}
+	pub fn new(parameters: [Option<Name>; N], body: T) -> Self { Self { parameters, body } }
 }
 
 pub fn bind<T, const N: usize>(parameters: [Option<Name>; N], body: impl Into<T>) -> Binder<T, N> {

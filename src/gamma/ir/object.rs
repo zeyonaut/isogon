@@ -38,9 +38,7 @@ pub struct Environment {
 }
 
 impl Environment {
-	pub const fn new() -> Self {
-		Self { values: Vec::new() }
-	}
+	pub const fn new() -> Self { Self { values: Vec::new() } }
 
 	pub fn lookup_static(&self, Index(i): Index) -> StaticValue {
 		let Some(Value::Static(value)) = self.values.get(self.values.len() - 1 - i) else { panic!() };

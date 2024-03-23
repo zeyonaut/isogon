@@ -69,9 +69,7 @@ struct RegisterType {
 }
 
 impl RegisterType {
-	const fn new(class: Option<Class>, repr: Option<Repr>) -> Self {
-		Self { class, repr }
-	}
+	const fn new(class: Option<Class>, repr: Option<Repr>) -> Self { Self { class, repr } }
 
 	const NAT: Self = Self::new(Some(Class::Nat), Some(Repr::Atom(ReprAtom::Nat)));
 	const CLASS: Self = Self::new(Some(Class::Class), Some(Repr::Atom(ReprAtom::Class)));

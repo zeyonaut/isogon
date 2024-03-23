@@ -134,9 +134,7 @@ pub struct Load {
 }
 
 impl Load {
-	pub fn reg(register: Register) -> Self {
-		Self { register, modifiers: vec![] }
-	}
+	pub fn reg(register: Register) -> Self { Self { register, modifiers: vec![] } }
 	pub fn modify(mut self, modifier: Modifier) -> Self {
 		self.modifiers.push(modifier);
 		self
@@ -160,9 +158,7 @@ pub enum Register {
 pub struct SymbolGenerator(usize);
 
 impl SymbolGenerator {
-	pub fn new() -> Self {
-		Self(0)
-	}
+	pub fn new() -> Self { Self(0) }
 
 	pub fn generate(&mut self) -> Symbol {
 		let symbol = self.0;

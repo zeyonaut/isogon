@@ -46,9 +46,7 @@ pub enum RawTerm {
 	Let { assignee: Name, ty: Box<Self>, argument: Box<Self>, tail: Box<Self> },
 }
 
-pub fn parse_term_eof(input: &str) -> IResult<&str, RawTerm> {
-	terminated(parse_term, multispace0)(input)
-}
+pub fn parse_term_eof(input: &str) -> IResult<&str, RawTerm> { terminated(parse_term, multispace0)(input) }
 
 fn parse_term(input: &str) -> IResult<&str, RawTerm> {
 	alt((
@@ -247,9 +245,7 @@ pub enum Value {
 }
 
 impl Value {
-	pub fn variable(variable: Level) -> Self {
-		Self::Neutral { variable, eliminators: vec![] }
-	}
+	pub fn variable(variable: Level) -> Self { Self::Neutral { variable, eliminators: vec![] } }
 }
 
 #[derive(Clone)]
@@ -259,13 +255,9 @@ pub struct Context {
 }
 
 impl Context {
-	pub fn empty() -> Self {
-		Self { environment: Vec::new(), tys: Vec::new() }
-	}
+	pub fn empty() -> Self { Self { environment: Vec::new(), tys: Vec::new() } }
 
-	pub fn len(&self) -> Level {
-		Level(self.environment.len())
-	}
+	pub fn len(&self) -> Level { Level(self.environment.len()) }
 
 	pub fn bind(mut self, name: Name, ty: Rc<Value>) -> Self {
 		self.environment.push(rc!(Value::variable(self.len())));

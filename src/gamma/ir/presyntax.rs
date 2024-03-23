@@ -79,7 +79,5 @@ pub enum Pattern {
 }
 
 impl Preterm {
-	pub fn at(self, range: (usize, usize)) -> Expression {
-		Expression { range, preterm: self }
-	}
+	pub fn at(self, range: (usize, usize)) -> Expression { Expression { range, preterm: self } }
 }

@@ -227,9 +227,7 @@ impl From<(Option<Name>, Level)> for StaticValue {
 }
 
 impl From<(Option<Name>, Level)> for StaticNeutral {
-	fn from((name, level): (Option<Name>, Level)) -> Self {
-		Self::Variable(name, level)
-	}
+	fn from((name, level): (Option<Name>, Level)) -> Self { Self::Variable(name, level) }
 }
 
 impl From<(Option<Name>, Level)> for DynamicValue {
@@ -239,9 +237,7 @@ impl From<(Option<Name>, Level)> for DynamicValue {
 }
 
 impl From<(Option<Name>, Level)> for DynamicNeutral {
-	fn from((name, level): (Option<Name>, Level)) -> Self {
-		Self::Variable(name, level)
-	}
+	fn from((name, level): (Option<Name>, Level)) -> Self { Self::Variable(name, level) }
 }
 
 #[derive(Clone, Debug)]
@@ -271,13 +267,9 @@ impl Environment {
 		environment
 	}
 
-	pub fn push(&mut self, value: Value) {
-		self.0.push(value);
-	}
+	pub fn push(&mut self, value: Value) { self.0.push(value); }
 
-	pub fn pop(&mut self) {
-		self.0.pop();
-	}
+	pub fn pop(&mut self) { self.0.pop(); }
 }
 
 pub trait Conversion<T> {

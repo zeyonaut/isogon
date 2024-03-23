@@ -81,30 +81,20 @@ struct Scanner<'s> {
 }
 
 impl<'s> Scanner<'s> {
-	pub fn new(source: &'s str) -> Self {
-		Self { len: source.len(), chars: source.chars() }
-	}
+	pub fn new(source: &'s str) -> Self { Self { len: source.len(), chars: source.chars() } }
 
-	pub fn position(&self) -> usize {
-		self.len - self.chars.as_str().len()
-	}
+	pub fn position(&self) -> usize { self.len - self.chars.as_str().len() }
 
-	pub fn previous_position(&self) -> usize {
-		self.position() - 1
-	}
+	pub fn previous_position(&self) -> usize { self.position() - 1 }
 
 	pub fn next(&mut self) -> Option<(char, usize)> {
 		let position = self.position();
 		Some((self.chars.next()?, position))
 	}
 
-	pub fn pop(&mut self) -> Option<char> {
-		self.chars.next()
-	}
+	pub fn pop(&mut self) -> Option<char> { self.chars.next() }
 
-	pub fn peek(&mut self) -> Option<char> {
-		self.chars.clone().next()
-	}
+	pub fn peek(&mut self) -> Option<char> { self.chars.clone().next() }
 }
 
 pub struct LexedSource {
