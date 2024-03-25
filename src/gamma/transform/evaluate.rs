@@ -1,11 +1,10 @@
 use crate::{
 	gamma::{
-		common::{Binder, Closure, Field, Level},
+		common::{Binder, Closure, Field},
 		ir::{
 			semantics::{DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue, Value},
 			syntax::{DynamicTerm, StaticTerm},
 		},
-		transform::evaluate,
 	},
 	utility::rc,
 };
@@ -38,27 +37,15 @@ impl Evaluate for StaticTerm {
 			Variable(_, index) => environment.lookup_static(index),
 			CopyabilityType => StaticValue::CopyabilityType,
 			Copyability(c) => StaticValue::Copyability(c),
-			MaxCopyability(a, b) => {
-				let a = a.evaluate_in(environment);
-				let b = b.evaluate_in(environment);
-				StaticValue::max_copyability(a, b)
-			}
+			MaxCopyability(a, b) =>
+				StaticValue::max_copyability(a.evaluate_in(environment), b.evaluate_in(environment)),
 			ReprType => StaticValue::ReprType,
 			ReprAtom(r) => r.map(StaticValue::ReprAtom).unwrap_or(StaticValue::ReprNone),
-			ReprPair(r0, r1) => {
-				let r0 = r0.evaluate_in(environment);
-				let r1 = r1.evaluate_in(environment);
-				StaticValue::pair_representation(r0, r1)
-			}
-			ReprMax(r0, r1) => {
-				let r0 = r0.evaluate_in(environment);
-				let r1 = r1.evaluate_in(environment);
-				StaticValue::max_representation(r0, r1)
-			}
-			ReprUniv(c) => {
-				let c = c.evaluate_in(environment);
-				StaticValue::univ_representation(c)
-			}
+			ReprPair(r0, r1) =>
+				StaticValue::pair_representation(r0.evaluate_in(environment), r1.evaluate_in(environment)),
+			ReprMax(r0, r1) =>
+				StaticValue::max_representation(r0.evaluate_in(environment), r1.evaluate_in(environment)),
+			ReprUniv(c) => StaticValue::univ_representation(c.evaluate_in(environment)),
 			Pi(base, family) => StaticValue::IndexedProduct(
 				rc!(base.evaluate_in(environment)),
 				rc!(family.evaluate_in(environment)),
