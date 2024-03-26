@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::{
-	gamma::{
+	delta::{
 		common::{Binder, Closure, Copyability, Field, Index, Repr, ReprAtom, UniverseKind},
 		ir::{
 			object::{DynamicValue, Environment, StaticValue, Value},

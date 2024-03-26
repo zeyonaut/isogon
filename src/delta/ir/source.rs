@@ -1,6 +1,6 @@
 use std::str::Chars;
 
-use crate::gamma::common::Field;
+use crate::delta::common::Field;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Token {

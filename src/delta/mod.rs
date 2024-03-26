@@ -4,12 +4,10 @@ mod sourcify;
 mod transform;
 
 use lasso::{Key, Rodeo};
-use transform::{
-	close, elaborate, evaluate::Evaluate, linearize, parse::parse, stage::Stage, unstage::Unstage,
-};
+use transform::{elaborate, evaluate::Evaluate, parse::parse};
 
 use self::{ir::syntax::DynamicTerm, sourcify::write_dynamic};
-use crate::gamma::transform::unevaluate::Unevaluate;
+use crate::delta::transform::unevaluate::Unevaluate;
 
 pub fn run(source: &str) {
 	// Parsing.
@@ -28,27 +26,11 @@ pub fn run(source: &str) {
 	println!();
 
 	// Staging.
-	let staged_term = term.stage();
-	println!("Staging complete.");
-	let unstaged_term = staged_term.unstage();
-	println!("Staged term: {}", pretty_print(&unstaged_term, &interner));
-	println!("Evaluation: {}", pretty_print(&unstaged_term.clone().evaluate().unevaluate(), &interner));
-
-	println!();
-
-	// Closure conversion.
-	let flat_program = close(unstaged_term);
-	println!("Closure conversion complete.");
-
-	println!();
-
-	// Linearization.
-	let linear_program = linearize(flat_program);
-	println!("Linearization complete.");
-	println!("Linearized program:");
-	linear_program.pretty(&interner);
-
-	// TODO: Lower to Cranelift.
+	// let staged_term = term.stage();
+	// println!("Staging complete.");
+	// let unstaged_term = staged_term.unstage();
+	// println!("Staged term: {}", pretty_print(&unstaged_term, &interner));
+	// println!("Evaluation: {}", pretty_print(&unstaged_term.clone().evaluate().unevaluate(), &interner));
 }
 
 fn pretty_print(term: &DynamicTerm, interner: &Rodeo) -> String {

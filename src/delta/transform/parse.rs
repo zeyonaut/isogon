@@ -1,9 +1,9 @@
 use lasso::Rodeo;
 
-use crate::gamma::{
+use crate::delta::{
 	common::{any_bind, bind, AnyBinder, Copyability, Name, ReprAtom},
 	ir::{
-		presyntax::{Constructor, Expression, Former, Pattern, Preterm, Projector},
+		presyntax::{Constructor, Expression, Former, Preterm},
 		source::{Keyword, LexError, LexErrorKind, LexedSource, Token},
 	},
 };
@@ -137,28 +137,17 @@ peg::parser! {
 		rule optional_parameter() -> Option<Name>
 			= name:identifier() {Some(name)} / [Token::LowDash] {None}
 
+		rule grade() -> Option<usize>
+			= number:number() {Some(number)} / [Token::LowDash] {None}
+
 		rule former() -> Former
 			= [Token::Tick] {Former::Lift}
-			/ [Token::Keyword(Keyword::RcType)] {Former::Rc}
-			/ [Token::Keyword(Keyword::WrapType)] {Former::Wrap}
-			/ [Token::Keyword(Keyword::Nat)] {Former::Nat}
-			/ [Token::Keyword(Keyword::Bool)] {Former::Enum(2)}
-			/ [Token::Hash] card:number() { assert!(card <= 256); Former::Enum(card as u16)}
-			/ [Token::Keyword(Keyword::Id)] {Former::Id}
 			/ [Token::Keyword(Keyword::Copy)] {Former::Copy}
 			/ [Token::Keyword(Keyword::Repr)] {Former::Repr}
 			/ [Token::Ast] {Former::Universe}
 
 		rule constructor() -> Constructor
-			= [Token::Keyword(Keyword::RcNew)] {Constructor::Rc}
-			/ [Token::Keyword(Keyword::WrapNew)] {Constructor::Wrap}
-			/ number:number() [Token::LowDash] card:number() {assert!(card <= 256 && number < card); Constructor::EnumValue(card as _, number as _)}
-			/ number:number() {Constructor::Num(number)}
-			/ [Token::Keyword(Keyword::Suc)] {Constructor::Suc}
-			/ [Token::Keyword(Keyword::False)] {Constructor::EnumValue(2, 0)}
-			/ [Token::Keyword(Keyword::True)] {Constructor::EnumValue(2, 1)}
-			/ [Token::Keyword(Keyword::Refl)] {Constructor::Refl}
-			/ [Token::Keyword(Keyword::C0)] {Constructor::Copyability(Copyability::Trivial)}
+			= [Token::Keyword(Keyword::C0)] {Constructor::Copyability(Copyability::Trivial)}
 			/ [Token::Keyword(Keyword::C1)] {Constructor::Copyability(Copyability::Nontrivial)}
 			/ [Token::Keyword(Keyword::CMax)] {Constructor::CopyMax}
 			/ [Token::Keyword(Keyword::RClass)] {Constructor::ReprAtom(Some(ReprAtom::Class))}
@@ -170,11 +159,6 @@ peg::parser! {
 			/ [Token::Keyword(Keyword::RPair)] {Constructor::ReprPair}
 			/ [Token::Keyword(Keyword::RMax)] {Constructor::ReprMax}
 			/ [Token::Keyword(Keyword::RUniv)] {Constructor::ReprUniv}
-
-		rule projector() -> Projector
-			= [Token::Keyword(Keyword::UnRc)] {Projector::Rc}
-			/ [Token::Keyword(Keyword::Unwrap)] {Projector::Wrap}
-			/ [Token::Project(projection)] {Projector::Field(projection)}
 
 		rule atom() -> Expression
 			= [Token::ParenL] _ preterm:preterm() _ [Token::ParenR] {preterm}
@@ -189,18 +173,6 @@ peg::parser! {
 		rule bound_spine_headed() -> AnyBinder<Box<Expression>>
 			= [Token::Pipe] _ variables:(variable:optional_parameter())**[Token::Period] _ [Token::Pipe] _ body:spine_headed() {any_bind(variables, body)}
 
-		// Case arms.
-		rule atomic_pattern() -> Pattern
-			// TODO: Refactor longest match.
-			= [Token::At] index:optional_parameter() _ [Token::Period] witness:optional_parameter() {Pattern::Witness {index, witness}}
-			/ [Token::At] variable:optional_parameter() {Pattern::Variable(variable)}
-
-		rule pattern() -> Pattern
-			= constructor:constructor() patterns:(_ p:atomic_pattern() {p})* {Pattern::Construction(constructor, patterns)}
-
-		rule case() -> (Pattern, Expression)
-			= pattern:pattern() _ [Token::Arrow] _ preterm:preterm() {(pattern, preterm)}
-
 		// Spines: projections, calls, and case-splits.
 		#[cache_left_rec]
 		rule spine() -> Expression
@@ -209,9 +181,6 @@ peg::parser! {
 				/ constructor:constructor() arguments:(_ a:atom() {a})* {Preterm::Constructor(constructor, arguments)}
 				/ callee:spine() _ argument:atom()
 					{ Preterm::Call { callee: callee.into(), argument: argument.into() } }
-				/ scrutinee:spine() _ [Token::TwoColon] _ motive:bound_spine_headed() _ [Token::CurlyL] (_ [Token::Pipe])? _ cases:case()**(_ [Token::Pipe] _) _ [Token::CurlyR]
-					{ Preterm::Split { scrutinee: scrutinee.into(), motive, cases} }
-				/ spine:spine() _ projector:projector() { Preterm::Project(spine.into(), projector) }
 			) fini:position!() {preterm.at((init, fini))}
 			/ atom()
 
@@ -219,24 +188,21 @@ peg::parser! {
 		rule spine_headed() -> Expression
 			// TODO: Refactor to avoid caching?
 			= init:position!() preterm:(
-				  [Token::Pipe] _ parameter:optional_parameter() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { body: bind([parameter], body) }}
-				/ [Token::Pipe] _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { base: base.into(), family: bind([parameter], right) }}
-				/ [Token::Pipe] _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Amp] _ right:spine_headed() {Preterm::Sigma { base: base.into(), family: bind([parameter], right) }}
-				/ left:spine() _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { base: left.into(), family: bind([None], right) }}
-				/ left:spine() _ [Token::Amp] _ right:spine_headed() {Preterm::Sigma { base: left.into(), family: bind([None], right) }}
-				/ left:spine() _ [Token::Comma] _ right:spine_headed() {Preterm::Pair { basepoint: left.into(), fiberpoint: right.into() }}
+				  [Token::Pipe] _ parameter:optional_parameter() _ [Token::At] _ grade:grade() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { grade, body: bind([parameter], body) }}
+				/ [Token::Pipe] _ parameter:optional_parameter() _ [Token::At] _ grade:grade() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { grade, base: base.into(), family: bind([parameter], right) }}
+				/ left:spine() _ [Token::At] _ grade:grade() _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { grade, base: left.into(), family: bind([None], right) }}
 			) fini:position!() {preterm.at((init, fini))}
 			/ spine()
 
 		rule preterm() -> Expression
 			= init:position!() preterm:(
-				  [Token::Keyword(Keyword::Let)] is_crisp:([Token::Bang] {()})? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
-				{ Preterm::Let { is_crisp: is_crisp.is_some(), ty: ty.into(), argument: argument.into(), tail: bind([name], tail) }}
+				  [Token::Keyword(Keyword::Let)] _ name:optional_parameter() _ [Token::At] _ grade:grade() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
+				{ Preterm::Let { grade, ty: ty.into(), argument: argument.into(), tail: bind([name], tail) }}
 			) fini:position!() {preterm.at((init, fini))}
-			/ init:position!() [Token::Keyword(Keyword::Def)] is_crisp:([Token::Bang] {()})? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() fini:position!()
+			/ init:position!() [Token::Keyword(Keyword::Def)] _ name:optional_parameter() _ [Token::At] _ grade:grade() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() fini:position!()
 			{
 				let tail_range = tail.range;
-				Preterm::Splice(Preterm::Let { is_crisp: is_crisp.is_some(), ty: ty.into(), argument: argument.into(), tail: bind([name], Preterm::Quote(tail.into()).at((tail_range.0, tail_range.1))) }.at((init, fini)).into()).at((init, fini))
+				Preterm::Splice(Preterm::Let { grade, ty: ty.into(), argument: argument.into(), tail: bind([name], Preterm::Quote(tail.into()).at((tail_range.0, tail_range.1))) }.at((init, fini)).into()).at((init, fini))
 			}
 			/ spine_headed()
 

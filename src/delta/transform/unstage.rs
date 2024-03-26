@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use super::autolyze::Autolyze;
 use crate::{
-	gamma::{
+	delta::{
 		common::{bind, Binder, Closure, Index, Level, Repr, UniverseKind},
 		ir::{
 			object::{DynamicValue, Environment},

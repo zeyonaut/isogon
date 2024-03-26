@@ -1,7 +1,7 @@
 use std::{fmt::Debug, rc::Rc};
 
 use super::syntax::{DynamicTerm, StaticTerm};
-use crate::gamma::common::{Closure, Copyability, Field, Index, Level, Name, Repr, UniverseKind};
+use crate::delta::common::{Closure, Copyability, Field, Index, Level, Name, Repr, UniverseKind};
 
 #[derive(Clone)]
 pub enum StaticValue {

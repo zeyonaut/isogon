@@ -1,0 +1,3 @@
+let f @ 1 : * c0 rnone @ 1 -> * c0 rnone = |x @ 1| x;
+let x @ 1 : * c0 rnone = * c0 rnone;
+f x

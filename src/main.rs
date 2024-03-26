@@ -4,6 +4,8 @@ mod alpha;
 //mod beta;
 // Staged.
 mod gamma;
+// Experimental.
+mod delta;
 mod utility;
 
 mod parse;
@@ -15,6 +17,7 @@ enum LanguageOption {
 	Alpha,
 	//	Beta,
 	Gamma,
+	Delta,
 }
 
 impl FromStr for LanguageOption {
@@ -26,6 +29,7 @@ impl FromStr for LanguageOption {
 			"a" => Ok(Alpha),
 			//	"b" => Ok(Beta),
 			"c" => Ok(Gamma),
+			"d" => Ok(Delta),
 			_ => Err("no such language".to_owned()),
 		}
 	}
@@ -62,5 +66,6 @@ fn main() {
 		LanguageOption::Alpha => alpha::run(&input),
 		//	LanguageOption::Beta => beta::run(&input),
 		LanguageOption::Gamma => gamma::run(&input),
+		LanguageOption::Delta => delta::run(&input),
 	}
 }
