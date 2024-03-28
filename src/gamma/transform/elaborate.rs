@@ -556,19 +556,6 @@ fn verify_static(
 			let fiberpoint = verify_static(context, *fiberpoint, family.evaluate_with([basepoint_value]))?;
 			StaticTerm::Pair { basepoint: bx!(basepoint), fiberpoint: bx!(fiberpoint) }
 		}
-		(Preterm::Let { is_crisp, ty, argument, tail }, _) => {
-			let ty = verify_static(&mut context.lock_if(is_crisp), *ty, StaticValue::Universe)?;
-			let ty_value = ty.clone().evaluate_in(&context.environment);
-			let argument = verify_static(&mut context.lock_if(is_crisp), *argument, ty_value.clone())?;
-			let argument_value = argument.clone().evaluate_in(&context.environment);
-			let parameters = tail.parameters;
-			let tail = verify_static(
-				&mut context.extend_static(parameters[0], is_crisp, ty_value.clone(), argument_value),
-				*tail.body,
-				ty_value,
-			)?;
-			StaticTerm::Let { ty: bx!(ty), argument: bx!(argument), tail: bind(parameters, tail) }
-		}
 		(Preterm::Quote(quotee), ty) => {
 			let StaticValue::Lift { ty: liftee, .. } = ty else {
 				return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Lift).at(expr.range));
@@ -1262,26 +1249,6 @@ fn verify_dynamic(
 			let basepoint_value = basepoint.clone().evaluate_in(&context.environment);
 			let fiberpoint = verify_dynamic(context, *fiberpoint, family.evaluate_with([basepoint_value]))?;
 			DynamicTerm::Pair { basepoint: bx!(basepoint), fiberpoint: bx!(fiberpoint) }
-		}
-		(Preterm::Let { is_crisp, ty, argument, tail }, _) => {
-			let (ty, assig_copy, assig_repr) = elaborate_dynamic_type(&mut context.lock_if(is_crisp), *ty)?;
-			let ty_value = ty.clone().evaluate_in(&context.environment);
-			let argument = verify_dynamic(&mut context.lock_if(is_crisp), *argument, ty_value.clone())?;
-			let argument_value = argument.clone().evaluate_in(&context.environment);
-			let parameters = tail.parameters;
-			let tail = verify_dynamic(
-				&mut context.extend_dynamic(
-					parameters[0],
-					is_crisp,
-					ty_value.clone(),
-					assig_copy,
-					assig_repr,
-					argument_value,
-				),
-				*tail.body,
-				ty_value,
-			)?;
-			DynamicTerm::Let { ty: bx!(ty), argument: bx!(argument), tail: bind(parameters, tail) }
 		}
 		(Preterm::Constructor(Constructor::Wrap, tms), ty) => {
 			let DynamicValue::WrapType { inner: ty, .. } = ty else {
