@@ -514,7 +514,7 @@ fn verify_static(
 
 		// Dependent functions.
 		(Preterm::Lambda { grade, body }, StaticValue::IndexedProduct(grade_v, base, family)) => {
-			(grade == grade_v)
+			(grade * fragment as usize == grade_v * fragment as usize)
 				.then_some(())
 				.ok_or_else(|| ElaborationErrorKind::LambdaGradeMismatch(grade, grade_v).at(expr.range))?;
 			let parameters = body.parameters;
@@ -656,8 +656,8 @@ fn synthesize_dynamic(
 					family: bind(parameters, family),
 				},
 				DynamicValue::Universe {
-					copyability: rc!(StaticValue::Copyability(Copyability::Nontrivial)),
-					representation: rc!(StaticValue::ReprAtom(ReprAtom::Fun)),
+					copyability: StaticValue::Copyability(Copyability::Nontrivial).into(),
+					representation: StaticValue::ReprAtom(ReprAtom::Fun).into(),
 				},
 				// TODO: Factor this out; this is common for all types.
 				StaticValue::Copyability(Copyability::Trivial).into(),
@@ -743,12 +743,36 @@ fn synthesize_dynamic(
 			Former::Enum(card) if arguments.is_empty() => (
 				DynamicTerm::Enum(card),
 				DynamicValue::Universe {
-					copyability: rc!(StaticValue::Copyability(Copyability::Trivial)),
-					representation: rc!(StaticValue::ReprAtom(ReprAtom::Byte)),
+					copyability: StaticValue::Copyability(Copyability::Trivial).into(),
+					representation: StaticValue::ReprAtom(ReprAtom::Byte).into(),
 				},
 				StaticValue::Copyability(Copyability::Trivial),
 				StaticValue::ReprNone,
 			),
+
+			// Paths.
+			Former::Id => {
+				let [ty, x, y] = arguments.try_into().unwrap();
+				let (ty, c, r) = elaborate_dynamic_type(context, ty)?;
+				let ty_value = ty.clone().evaluate_in(&context.environment);
+				let x = verify_dynamic(context, x, 0, ty_value.clone())?;
+				let y = verify_dynamic(context, y, 0, ty_value.clone())?;
+				(
+					DynamicTerm::Id {
+						copy: c.unevaluate_in(context.len()).into(),
+						repr: r.unevaluate_in(context.len()).into(),
+						space: ty.into(),
+						left: x.into(),
+						right: y.into(),
+					},
+					DynamicValue::Universe {
+						copyability: StaticValue::Copyability(Copyability::Trivial).into(),
+						representation: StaticValue::ReprNone.into(),
+					},
+					StaticValue::Copyability(Copyability::Trivial),
+					StaticValue::ReprNone,
+				)
+			}
 
 			// Invalid former.
 			_ => return Err(ElaborationErrorKind::InvalidFormer.at(expr.range)),
@@ -785,6 +809,7 @@ fn synthesize_dynamic(
 			let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *scrutinee, fragment)?;
 			let scrutinee_value = scrutinee.clone().evaluate_in(&context.environment);
 			match scrutinee_ty {
+				// Enumerated numbers.
 				DynamicValue::Enum(card) => {
 					// TODO: Handle this error.
 					let [motive_parameter] = (*motive.parameters).try_into().unwrap();
@@ -842,6 +867,64 @@ fn synthesize_dynamic(
 					)
 				}
 
+				// Paths.
+				DynamicValue::Id { copy, repr, space, left, right } => {
+					// TODO: Something more like:
+					// let motive = elaborate_dynamic_motive([space, space, id(space, var(1), var(0))]);
+
+					// TODO: Handle this error.
+					let [v, p] = (*motive.parameters).try_into().unwrap();
+					let Ok([(Pattern::Construction(Constructor::Refl, pattern), case_refl)]) =
+						<[_; 1]>::try_from(cases)
+					else {
+						return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+					};
+					let Ok([]) = <[_; 0]>::try_from(pattern) else {
+						panic!();
+					};
+
+					// TODO: Throw specific error if copy/repr depend on the motive.
+					let (motive_term, fiber_copy, fiber_repr) = {
+						let mut context =
+							context.bind_dynamic(v, 0.into(), (*space).clone(), (*copy).clone(), (*repr).clone());
+						let index_level = context.len().index(0);
+						let mut context = context.bind_dynamic(
+							p,
+							0.into(),
+							DynamicValue::Id {
+								copy: copy.clone(),
+								repr: repr.clone(),
+								space: space.clone(),
+								left: left.clone(),
+								right: DynamicValue::Neutral(DynamicNeutral::Variable(v, index_level)).into(),
+							},
+							// TODO: Refactor into a better place.
+							StaticValue::Copyability(Copyability::Trivial),
+							StaticValue::ReprNone,
+						);
+						elaborate_dynamic_type(&mut context, *motive.body)?
+					};
+					let motive = Closure::new(context.environment.clone(), [v, p], motive_term.clone());
+
+					let case_refl = verify_dynamic(
+						context,
+						case_refl,
+						fragment,
+						motive.evaluate_with([(*left).clone(), DynamicValue::Refl]),
+					)?;
+
+					(
+						DynamicTerm::CasePath {
+							scrutinee: scrutinee.into(),
+							motive: bind([v, p], motive_term),
+							case_refl: case_refl.into(),
+						},
+						motive.evaluate_with([(*right).clone(), scrutinee_value]),
+						fiber_copy,
+						fiber_repr,
+					)
+				}
+
 				// Invalid case split.
 				_ => return Err(ElaborationErrorKind::InvalidCaseSplitScrutineeType.at(expr.range)),
 			}
@@ -872,7 +955,7 @@ fn verify_dynamic(
 			},
 		) => {
 			// FIXME: Error handle
-			(grade == grade_t)
+			(grade * fragment as usize == grade_t * fragment as usize)
 				.then_some(())
 				.ok_or_else(|| ElaborationErrorKind::LambdaGradeMismatch(grade, grade_t).at(expr.range))?;
 			let fiber = family.autolyze(context.len());
@@ -902,6 +985,17 @@ fn verify_dynamic(
 				family,
 				body: bind(parameters, body),
 			}
+		}
+
+		// Paths.
+		(Preterm::Constructor(Constructor::Refl, tms), ty) => {
+			let DynamicValue::Id { left, right, .. } = ty else {
+				return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Id).at(expr.range));
+			};
+			assert!(context.len().can_convert(&*left, &right));
+
+			let [] = tms.try_into().unwrap();
+			DynamicTerm::Refl
 		}
 
 		// Synthesize and conversion-check.

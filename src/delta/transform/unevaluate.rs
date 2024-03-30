@@ -108,9 +108,21 @@ impl Unevaluate for DynamicNeutral {
 	fn try_unevaluate_in(&self, level @ Level(context_length): Level) -> Result<Self::Term, ()> {
 		use DynamicNeutral::*;
 		Ok(match self {
+			// Variables.
 			Variable(name, Level(level)) =>
 				DynamicTerm::Variable(*name, Index(context_length.checked_sub(level + 1).ok_or(())?)),
+
+			// Quoted programs.
 			Splice(splicee) => DynamicTerm::Splice(splicee.try_unevaluate_in(level)?.into()),
+
+			// Repeated programs.
+			LetExp { scrutinee, grade, tail } => DynamicTerm::LetExp {
+				argument: scrutinee.unevaluate_in(level).into(),
+				grade: *grade,
+				tail: tail.unevaluate_in(level),
+			},
+
+			// Dependent functions.
 			Apply { scrutinee, argument, fiber_copyability, fiber_representation, base, family } =>
 				DynamicTerm::Apply {
 					scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
@@ -120,11 +132,8 @@ impl Unevaluate for DynamicNeutral {
 					base: base.as_ref().unwrap().try_unevaluate_in(level)?.into(),
 					family: family.as_ref().unwrap().try_unevaluate_in(level)?,
 				},
-			LetExp { scrutinee, grade, tail } => DynamicTerm::LetExp {
-				argument: scrutinee.unevaluate_in(level).into(),
-				grade: *grade,
-				tail: tail.unevaluate_in(level),
-			},
+
+			// Enumerated numbers.
 			CaseEnum { scrutinee, cases, fiber_copyability, fiber_representation, motive } =>
 				DynamicTerm::CaseEnum {
 					scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
@@ -136,6 +145,13 @@ impl Unevaluate for DynamicNeutral {
 					fiber_representation: fiber_representation.try_unevaluate_in(level)?.into(),
 					motive: motive.try_unevaluate_in(level)?,
 				},
+
+			// Paths.
+			CasePath { scrutinee, motive, case_refl } => DynamicTerm::CasePath {
+				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
+				motive: motive.try_unevaluate_in(level)?,
+				case_refl: case_refl.try_unevaluate_in(level)?.into(),
+			},
 		})
 	}
 }
@@ -186,6 +202,16 @@ impl Unevaluate for DynamicValue {
 			// Enumerated numbers.
 			Enum(k) => DynamicTerm::Enum(*k),
 			EnumValue(k, v) => DynamicTerm::EnumValue(*k, *v),
+
+			// Paths.
+			Id { copy, repr, space, left, right } => DynamicTerm::Id {
+				copy: copy.try_unevaluate_in(level)?.into(),
+				repr: repr.try_unevaluate_in(level)?.into(),
+				space: space.try_unevaluate_in(level)?.into(),
+				left: left.try_unevaluate_in(level)?.into(),
+				right: right.try_unevaluate_in(level)?.into(),
+			},
+			Refl => DynamicTerm::Refl,
 		})
 	}
 }

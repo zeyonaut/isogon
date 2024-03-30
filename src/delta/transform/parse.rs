@@ -148,6 +148,8 @@ peg::parser! {
 			/ [Token::Bang] grade:finite_grade_annotation() {Former::Exp(grade)}
 			/ [Token::Keyword(Keyword::Bool)] {Former::Enum(2)}
 			/ [Token::Hash] card:number() { assert!(card <= 256); Former::Enum(card as u16)}
+			// Paths.
+			/ [Token::Keyword(Keyword::Id)] {Former::Id}
 
 		rule constructor() -> Constructor
 			= [Token::Keyword(Keyword::C0)] {Constructor::Copyability(Copyability::Trivial)}
@@ -165,6 +167,8 @@ peg::parser! {
 			/ number:number() [Token::LowDash] card:number() {assert!(card <= 256 && number < card); Constructor::Enum(card as _, number as _)}
 			/ [Token::Keyword(Keyword::False)] {Constructor::Enum(2, 0)}
 			/ [Token::Keyword(Keyword::True)] {Constructor::Enum(2, 1)}
+			// Paths.
+			/ [Token::Keyword(Keyword::Refl)] {Constructor::Refl}
 
 		rule atom() -> Expression
 			= [Token::ParenL] _ preterm:preterm() _ [Token::ParenR] {preterm}

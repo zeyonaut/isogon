@@ -170,9 +170,17 @@ fn write_dynamic_spine(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo)
 fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use DynamicTerm::*;
 	match term {
-		Variable(..) | Universe { .. } | Splice(_) | Repeat(..) | Enum(..) | EnumValue(..) =>
+		Variable(..) | Universe { .. } | Splice(_) | Repeat(..) | Enum(..) | EnumValue(..) | Refl =>
 			write_dynamic(term, f, interner),
-		Let { .. } | Function { .. } | Apply { .. } | Pi { .. } | LetExp { .. } | Exp(..) | CaseEnum { .. } => {
+		Let { .. }
+		| Function { .. }
+		| Apply { .. }
+		| Pi { .. }
+		| LetExp { .. }
+		| Exp(..)
+		| CaseEnum { .. }
+		| Id { .. }
+		| CasePath { .. } => {
 			write!(f, "(")?;
 			write_dynamic(term, f, interner)?;
 			write!(f, ")")
@@ -183,6 +191,35 @@ fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) 
 pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use DynamicTerm::*;
 	match term {
+		// Variables.
+		Variable(name, ..) => write!(f, "{}", resolve(interner, name)),
+
+		// Let-expressions.
+		Let { grade, ty, argument, tail } => {
+			write!(f, "let [{grade}] {} : ", resolve(interner, &tail.parameter()))?;
+			write_dynamic(ty, f, interner)?;
+			write!(f, " = ")?;
+			write_dynamic(argument, f, interner)?;
+			write!(f, "; ")?;
+			write_dynamic(&tail.body, f, interner)
+		}
+
+		// Types.
+		Universe { copyability, representation } => {
+			write!(f, "* ")?;
+			write_static_atom(&copyability, f, interner)?;
+			write!(f, " ")?;
+			write_static_atom(&representation, f, interner)
+		}
+
+		// Quoted programs.
+		Splice(splicee) => {
+			write!(f, "[")?;
+			write_static(splicee, f, interner)?;
+			write!(f, "]")
+		}
+
+		// Repeated programs.
 		Exp(grade, ty) => {
 			write!(f, "![{grade}] ")?;
 			write_dynamic_atom(ty, f, interner)
@@ -199,26 +236,7 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write_dynamic(&tail.body, f, interner)
 		}
 
-		Let { grade, ty, argument, tail } => {
-			write!(f, "let [{grade}] {} : ", resolve(interner, &tail.parameter()))?;
-			write_dynamic(ty, f, interner)?;
-			write!(f, " = ")?;
-			write_dynamic(argument, f, interner)?;
-			write!(f, "; ")?;
-			write_dynamic(&tail.body, f, interner)
-		}
-		Variable(name, ..) => write!(f, "{}", resolve(interner, name)),
-		Splice(splicee) => {
-			write!(f, "[")?;
-			write_static(splicee, f, interner)?;
-			write!(f, "]")
-		}
-		Universe { copyability, representation } => {
-			write!(f, "* ")?;
-			write_static_atom(&copyability, f, interner)?;
-			write!(f, " ")?;
-			write_static_atom(&representation, f, interner)
-		}
+		// Dependent functions.
 		Pi { grade, base, family, .. } => {
 			let parameter = resolve(interner, &family.parameter());
 			if parameter != "_" {
@@ -240,6 +258,8 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write!(f, " ")?;
 			write_dynamic_atom(argument, f, interner)
 		}
+
+		// Enumerated numbers.
 		Enum(k) => write!(f, "#{k}"),
 		EnumValue(k, v) => write!(f, "{v}_{k}"),
 		CaseEnum { scrutinee, motive, cases, .. } => {
@@ -254,6 +274,29 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 				write!(f, "{i} -> ")?;
 				write_dynamic(case, f, interner)?;
 			}
+			write!(f, "}}")
+		}
+		// Paths.
+		Id { copy: _, repr: _, space, left, right } => {
+			write!(f, "Id ")?;
+			write_dynamic_atom(space, f, interner)?;
+			write!(f, " ")?;
+			write_dynamic_atom(left, f, interner)?;
+			write!(f, " ")?;
+			write_dynamic_atom(right, f, interner)
+		}
+		Refl => write!(f, "refl"),
+		CasePath { scrutinee, motive, case_refl } => {
+			write_dynamic_spine(scrutinee, f, interner)?;
+			write!(
+				f,
+				" :: |{}.{}| ",
+				resolve(interner, &motive.parameters[0]),
+				resolve(interner, &motive.parameters[1]),
+			)?;
+			write_dynamic(&motive.body, f, interner)?;
+			write!(f, " {{refl -> ")?;
+			write_dynamic(case_refl, f, interner)?;
 			write!(f, "}}")
 		}
 	}

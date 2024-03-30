@@ -10,24 +10,6 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub enum StaticNeutral {
-	// Variables.
-	Variable(Option<Name>, Level),
-
-	// Repeated programs.
-	LetExp { scrutinee: Rc<Self>, grade: usize, tail: Rc<Closure<Environment, StaticTerm>> },
-
-	// Dependent functions.
-	Apply(Rc<Self>, Rc<StaticValue>),
-
-	// Hacks.
-	MaxCopyability(Rc<Self>, Rc<Self>),
-
-	// Enumerated numbers.
-	CaseEnum { scrutinee: Rc<Self>, motive: Rc<Closure<Environment, StaticTerm>>, cases: Vec<StaticValue> },
-}
-
-#[derive(Clone, Debug)]
 pub enum StaticValue {
 	// Neutrals.
 	Neutral(StaticNeutral),
@@ -60,6 +42,24 @@ pub enum StaticValue {
 	EnumValue(u16, u8),
 }
 
+#[derive(Clone, Debug)]
+pub enum StaticNeutral {
+	// Variables.
+	Variable(Option<Name>, Level),
+
+	// Repeated programs.
+	LetExp { scrutinee: Rc<Self>, grade: usize, tail: Rc<Closure<Environment, StaticTerm>> },
+
+	// Dependent functions.
+	Apply(Rc<Self>, Rc<StaticValue>),
+
+	// Hacks.
+	MaxCopyability(Rc<Self>, Rc<Self>),
+
+	// Enumerated numbers.
+	CaseEnum { scrutinee: Rc<Self>, motive: Rc<Closure<Environment, StaticTerm>>, cases: Vec<StaticValue> },
+}
+
 impl From<&Repr> for StaticValue {
 	fn from(value: &Repr) -> Self {
 		match value {
@@ -75,42 +75,6 @@ impl From<Option<&Repr>> for StaticValue {
 			None => Self::ReprNone,
 		}
 	}
-}
-
-#[derive(Clone, Debug)]
-pub enum DynamicNeutral {
-	// Variables.
-	Variable(Option<Name>, Level),
-
-	// Quoted programs.
-	Splice(StaticNeutral),
-
-	// Repeated programs.
-	LetExp {
-		scrutinee: Rc<Self>,
-		grade: usize,
-		tail: Rc<Closure<Environment, DynamicTerm>>,
-	},
-
-	// Dependent functions.
-	// NOTE: The family universe is optional because of conversion-checking with eta-conversion.
-	Apply {
-		scrutinee: Rc<Self>,
-		argument: Rc<DynamicValue>,
-		fiber_copyability: Option<Rc<StaticValue>>,
-		fiber_representation: Option<Rc<StaticValue>>,
-		base: Option<Rc<DynamicValue>>,
-		family: Option<Rc<Closure<Environment, DynamicTerm>>>,
-	},
-
-	// Enumerated numbers.
-	CaseEnum {
-		scrutinee: Rc<Self>,
-		cases: Vec<DynamicValue>,
-		fiber_copyability: Rc<StaticValue>,
-		fiber_representation: Rc<StaticValue>,
-		motive: Rc<Closure<Environment, DynamicTerm>>,
-	},
 }
 
 #[derive(Clone, Debug)]
@@ -148,6 +112,59 @@ pub enum DynamicValue {
 	// Enumerated numbers.
 	Enum(u16),
 	EnumValue(u16, u8),
+
+	// Paths.
+	Id {
+		copy: Rc<StaticValue>,
+		repr: Rc<StaticValue>,
+		space: Rc<Self>,
+		left: Rc<Self>,
+		right: Rc<Self>,
+	},
+	Refl,
+}
+
+#[derive(Clone, Debug)]
+pub enum DynamicNeutral {
+	// Variables.
+	Variable(Option<Name>, Level),
+
+	// Quoted programs.
+	Splice(StaticNeutral),
+
+	// Repeated programs.
+	LetExp {
+		scrutinee: Rc<Self>,
+		grade: usize,
+		tail: Rc<Closure<Environment, DynamicTerm>>,
+	},
+
+	// Dependent functions.
+	// NOTE: The family universe is optional because of conversion-checking with eta-conversion.
+	Apply {
+		scrutinee: Rc<Self>,
+		argument: Rc<DynamicValue>,
+		fiber_copyability: Option<Rc<StaticValue>>,
+		fiber_representation: Option<Rc<StaticValue>>,
+		base: Option<Rc<DynamicValue>>,
+		family: Option<Rc<Closure<Environment, DynamicTerm>>>,
+	},
+
+	// Enumerated numbers.
+	CaseEnum {
+		scrutinee: Rc<Self>,
+		cases: Vec<DynamicValue>,
+		fiber_copyability: Rc<StaticValue>,
+		fiber_representation: Rc<StaticValue>,
+		motive: Rc<Closure<Environment, DynamicTerm>>,
+	},
+
+	// Paths.
+	CasePath {
+		scrutinee: Rc<Self>,
+		motive: Rc<Closure<Environment, DynamicTerm, 2>>,
+		case_refl: Rc<DynamicValue>,
+	},
 }
 
 impl StaticValue {
@@ -288,11 +305,11 @@ impl Conversion<StaticNeutral> for Level {
 			(LetExp { scrutinee: sl, grade: gl, tail: tl }, LetExp { scrutinee: sr, grade: gr, tail: tr }) =>
 				self.can_convert(&**sl, sr)
 					&& gl == gr && self.can_convert(&tl.autolyze(self), &tr.autolyze(self)),
-	
+
 			// Dependent functions.
 			(Apply(left, left_argument), Apply(right, right_argument)) =>
 				self.can_convert(&**left, &right) && self.can_convert(&**left_argument, &right_argument),
-			
+
 			// Enumerated numbers.
 			(
 				CaseEnum { scrutinee: l_scrutinee, cases: l_cases, .. },
@@ -368,6 +385,11 @@ impl Conversion<DynamicValue> for Level {
 			(Enum(left), Enum(right)) => left == right,
 			(EnumValue(_, left), EnumValue(_, right)) => left == right,
 
+			// Paths.
+			(Id { left: left_l, right: right_l, .. }, Id { left: left_r, right: right_r, .. }) =>
+				self.can_convert(&**left_l, left_r) && self.can_convert(&**right_l, right_r),
+			(Refl, Refl) => true,
+
 			// Inconvertible.
 			_ => false,
 		}
@@ -405,6 +427,12 @@ impl Conversion<DynamicNeutral> for Level {
 						.iter()
 						.zip(r_cases.iter())
 						.fold(true, |acc, (left, right)| acc && self.can_convert(left, right)),
+
+			// Paths.
+			(
+				CasePath { scrutinee: scrutinee_l, case_refl: case_l, .. },
+				CasePath { scrutinee: scrutinee_r, case_refl: case_r, .. },
+			) => self.can_convert(&**scrutinee_l, scrutinee_r) && self.can_convert(&**case_l, &case_r),
 
 			// Inconvertible.
 			_ => false,

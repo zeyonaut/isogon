@@ -40,6 +40,9 @@ pub enum Former {
 
 	// Enumerated numbers.
 	Enum(u16),
+
+	// Paths.
+	Id,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +61,9 @@ pub enum Constructor {
 
 	// Enumerated numbers.
 	Enum(u16, u8),
+
+	// Paths.
+	Refl,
 }
 
 #[derive(Debug, Clone)]

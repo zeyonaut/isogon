@@ -109,21 +109,13 @@ impl LexedSource {
 		match string {
 			"def" => Keyword(Def),
 			"let" => Keyword(Let),
-			"suc" => Keyword(Suc),
-			"nat" => Keyword(Nat),
-			"bool" => Keyword(Bool),
-			"true" => Keyword(True),
-			"false" => Keyword(False),
+
+			"copy" => Keyword(Copy),
 			"cmax" => Keyword(CMax),
 			"c0" => Keyword(C0),
 			"c1" => Keyword(C1),
-			"copy" => Keyword(Copy),
-			"wrap" => Keyword(WrapNew),
-			"unwrap" => Keyword(Unwrap),
-			"Wrap" => Keyword(WrapType),
-			"rc" => Keyword(RcNew),
-			"unrc" => Keyword(UnRc),
-			"RC" => Keyword(RcType),
+
+			"repr" => Keyword(Repr),
 			"rnone" => Keyword(RNone),
 			"rpointer" => Keyword(RPointer),
 			"rbyte" => Keyword(RByte),
@@ -132,9 +124,25 @@ impl LexedSource {
 			"rpair" => Keyword(RPair),
 			"rmax" => Keyword(RMax),
 			"rexp" => Keyword(RExp),
-			"repr" => Keyword(Repr),
+
+			"rc" => Keyword(RcNew),
+			"unrc" => Keyword(UnRc),
+			"RC" => Keyword(RcType),
+
+			"wrap" => Keyword(WrapNew),
+			"unwrap" => Keyword(Unwrap),
+			"Wrap" => Keyword(WrapType),
+
+			"bool" => Keyword(Bool),
+			"true" => Keyword(True),
+			"false" => Keyword(False),
+
 			"Id" => Keyword(Id),
 			"refl" => Keyword(Refl),
+
+			"nat" => Keyword(Nat),
+			"suc" => Keyword(Suc),
+
 			_ => Identifier,
 		}
 	}

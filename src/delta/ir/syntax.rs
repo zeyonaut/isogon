@@ -123,4 +123,19 @@ pub enum DynamicTerm {
 		fiber_representation: Box<StaticTerm>,
 		motive: Binder<Box<Self>>,
 	},
+
+	// Paths.
+	Id {
+		copy: Box<StaticTerm>,
+		repr: Box<StaticTerm>,
+		space: Box<Self>,
+		left: Box<Self>,
+		right: Box<Self>,
+	},
+	Refl,
+	CasePath {
+		scrutinee: Box<Self>,
+		motive: Binder<Box<Self>, 2>,
+		case_refl: Box<Self>,
+	},
 }

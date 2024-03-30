@@ -194,6 +194,25 @@ impl Evaluate for DynamicTerm {
 					}),
 					_ => panic!(),
 				},
+
+			// Paths.
+			Id { copy, repr, space, left, right } => DynamicValue::Id {
+				copy: copy.evaluate_in(environment).into(),
+				repr: repr.evaluate_in(environment).into(),
+				space: space.evaluate_in(environment).into(),
+				left: left.evaluate_in(environment).into(),
+				right: right.evaluate_in(environment).into(),
+			},
+			Refl => DynamicValue::Refl,
+			CasePath { scrutinee, motive, case_refl } => match scrutinee.clone().evaluate_in(environment) {
+				DynamicValue::Refl => case_refl.evaluate_in(environment),
+				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::CasePath {
+					scrutinee: neutral.into(),
+					motive: motive.evaluate_in(environment).into(),
+					case_refl: case_refl.evaluate_in(environment).into(),
+				}),
+				_ => panic!(),
+			},
 		}
 	}
 }
