@@ -101,10 +101,6 @@ pub enum Copyability {
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub enum ReprAtom {
-	Class,
-	Pointer,
-	Byte,
-	Nat,
 	Fun,
 }
 

@@ -1,3 +1,5 @@
-let f @ 1 : * c0 rnone @ 1 -> * c0 rnone = |x @ 1| x;
-let x @ 1 : * c0 rnone = * c0 rnone;
-f x
+let f : * c0 rnone -> * c0 rnone = |x| x;
+let [0] x : * c0 rnone = * c1 rfun;
+%let [1] y : ![1] (* c0 rnone) = @[1] (x);
+%let @[1] (z) = y;
+<<f>> % <<x>>

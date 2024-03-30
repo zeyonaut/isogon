@@ -41,11 +41,11 @@ impl Unevaluate for StaticNeutral {
 				StaticTerm::Variable(*name, Index(context_length.checked_sub(level + 1).ok_or(())?)),
 			MaxCopyability(a, b) =>
 				StaticTerm::MaxCopyability(a.try_unevaluate_in(level)?.into(), b.try_unevaluate_in(level)?.into()),
-			ReprUniv(c) => StaticTerm::ReprUniv(c.try_unevaluate_in(level)?.into()),
 			Apply(callee, argument) => StaticTerm::Apply {
 				scrutinee: callee.try_unevaluate_in(level)?.into(),
 				argument: argument.try_unevaluate_in(level)?.into(),
 			},
+			LetExp { scrutinee, grade, tail } => StaticTerm::LetExp  { argument: scrutinee.unevaluate_in(level).into(), grade: *grade, tail: tail.unevaluate_in(level) },
 		})
 	}
 }
@@ -59,7 +59,7 @@ impl Unevaluate for StaticValue {
 			Universe => StaticTerm::Universe,
 			IndexedProduct(grade, base, family) =>
 				StaticTerm::Pi(*grade, base.try_unevaluate_in(level)?.into(), family.try_unevaluate_in(level)?),
-			Function(function) => StaticTerm::Lambda(function.try_unevaluate_in(level)?),
+			Function(grade, function) => StaticTerm::Lambda(*grade, function.try_unevaluate_in(level)?),
 			Lift { ty: liftee, copy, repr } => StaticTerm::Lift {
 				liftee: liftee.try_unevaluate_in(level)?.into(),
 				copy: copy.try_unevaluate_in(level)?.into(),
@@ -71,6 +71,9 @@ impl Unevaluate for StaticValue {
 			ReprType => StaticTerm::ReprType,
 			ReprNone => StaticTerm::ReprAtom(None),
 			ReprAtom(r) => StaticTerm::ReprAtom(Some(*r)),
+			ReprExp(grade, r) => StaticTerm::ReprExp(*grade, r.unevaluate_in(level).into()),
+			Repeat(grade, value) => StaticTerm::Repeat(*grade, value.unevaluate_in(level).into()),
+			Exp(grade, ty) => StaticTerm::Exp(*grade, ty.unevaluate_in(level).into()),
 		})
 	}
 }
@@ -92,6 +95,7 @@ impl Unevaluate for DynamicNeutral {
 					base: base.as_ref().unwrap().try_unevaluate_in(level)?.into(),
 					family: family.as_ref().unwrap().try_unevaluate_in(level)?,
 				},
+					 LetExp { scrutinee, grade, tail } => DynamicTerm::LetExp  { argument: scrutinee.unevaluate_in(level).into(), grade: *grade, tail: tail.unevaluate_in(level) },
 		})
 	}
 }
@@ -123,11 +127,14 @@ impl Unevaluate for DynamicValue {
 				family_representation: base_representation.try_unevaluate_in(level)?.into(),
 				family: family.try_unevaluate_in(level)?,
 			},
-			Function { base, family, body } => DynamicTerm::Function {
+			Function { grade, base, family, body } => DynamicTerm::Function {
+				grade: *grade,
 				base: base.try_unevaluate_in(level)?.into(),
 				family: family.try_unevaluate_in(level)?.into(),
 				body: body.try_unevaluate_in(level)?.into(),
 			},
+			Repeat(grade, value) => DynamicTerm::Repeat(*grade, value.unevaluate_in(level).into()),
+			Exp(grade, ty) => DynamicTerm::Exp(*grade, ty.unevaluate_in(level).into()),
 		})
 	}
 }

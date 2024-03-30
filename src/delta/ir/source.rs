@@ -53,15 +53,14 @@ pub enum Keyword {
 	RcNew,
 	UnRc,
 	RcType,
-	RClass,
 	RPointer,
 	RByte,
 	RNat,
 	RFun,
 	RPair,
 	RMax,
+	RExp,
 	RNone,
-	RUniv,
 	Repr,
 	Id,
 	Refl,
@@ -126,14 +125,13 @@ impl LexedSource {
 			"unrc" => Keyword(UnRc),
 			"RC" => Keyword(RcType),
 			"rnone" => Keyword(RNone),
-			"rclass" => Keyword(RClass),
 			"rpointer" => Keyword(RPointer),
 			"rbyte" => Keyword(RByte),
 			"rnat" => Keyword(RNat),
 			"rfun" => Keyword(RFun),
 			"rpair" => Keyword(RPair),
 			"rmax" => Keyword(RMax),
-			"runiv" => Keyword(RUniv),
+			"rexp" => Keyword(RExp),
 			"repr" => Keyword(Repr),
 			"Id" => Keyword(Id),
 			"refl" => Keyword(Refl),
@@ -155,6 +153,15 @@ impl LexedSource {
 					}
 					Whitespace
 				}
+				'%' =>  {
+					while let Some(c) = scanner.peek() {
+						scanner.pop();
+						if c == '\n' {
+							break
+						} 
+					}
+					Whitespace
+				} 
 				'a'..='z' | 'A'..='Z' => {
 					while let Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_') = scanner.peek() {
 						scanner.pop();

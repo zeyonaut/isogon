@@ -11,7 +11,7 @@ fn write_static_spine(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -
 	use StaticTerm::*;
 	match term {
 		// Any case which is not already covered by write_static_atom.
-		Apply { .. } | MaxCopyability(..) | ReprUniv(..) => write_static(term, f, interner),
+		Apply { .. } | MaxCopyability(..) => write_static(term, f, interner),
 		_ => write_static_atom(term, f, interner),
 	}
 }
@@ -26,8 +26,9 @@ fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) ->
 		| Copyability(..)
 		| CopyabilityType
 		| ReprType
-		| ReprAtom(_) => write_static(term, f, interner),
-		Let { .. } | Lambda { .. } | Apply { .. } | Pi { .. } | MaxCopyability(..) | ReprUniv(_) => {
+		| ReprAtom(_)
+		| Repeat(..) => write_static(term, f, interner),
+		Let { .. } | Lambda { .. } | Apply { .. } | Pi { .. } | MaxCopyability(..) | Exp(..) | ReprExp(..) | LetExp { .. }  => {
 			write!(f, "(")?;
 			write_static(term, f, interner)?;
 			write!(f, ")")
@@ -49,6 +50,23 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 	use self::Copyability as C;
 	match term {
 		Variable(name, ..) => write!(f, "{}", resolve(interner, name)),
+
+		Exp(grade, ty) => {
+			write!(f, "![{grade}] ")?;
+			write_static_atom(ty, f, interner)
+		}
+		Repeat(grade, tm) => {
+			write!(f, "@[{grade}] {{")?;
+			write_static(tm, f, interner)?;
+			write!(f, "}}")
+		}
+		LetExp { grade, argument, tail } => {
+			write!(f, "let [{grade}] {{{}}} = ", resolve(interner, &tail.parameter()))?;
+			write_static(argument, f, interner)?;
+			write!(f, "; ")?;
+			write_static(&tail.body, f, interner)
+		}
+
 		CopyabilityType => write!(f, "copy"),
 		Copyability(C::Trivial) => write!(f, "c0"),
 		Copyability(C::Nontrivial) => write!(f, "c1"),
@@ -70,8 +88,8 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			}
 			write_static(&family.body, f, interner)
 		}
-		Lambda(function) => {
-			write!(f, "|{}| ", resolve(interner, &function.parameter()))?;
+		Lambda(grade, function) => {
+			write!(f, "|[{grade}] {}| ", resolve(interner, &function.parameter()))?;
 			write_static(&function.body, f, interner)
 		}
 		Apply { scrutinee, argument } => {
@@ -79,8 +97,8 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			write!(f, " ")?;
 			write_static_atom(argument, f, interner)
 		}
-		Let { ty, argument, tail } => {
-			write!(f, "let {} : ", resolve(interner, &tail.parameter()))?;
+		Let { grade, ty, argument, tail } => {
+			write!(f, "let [{grade}] {} : ", resolve(interner, &tail.parameter()))?;
 			write_static(ty, f, interner)?;
 			write!(f, " = ")?;
 			write_static(argument, f, interner)?;
@@ -103,16 +121,15 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			f,
 			"{}",
 			match r {
-				self::ReprAtom::Class => "rclass",
-				self::ReprAtom::Pointer => "rpointer",
-				self::ReprAtom::Byte => "rbyte",
-				self::ReprAtom::Nat => "rnat",
+				// self::ReprAtom::Pointer => "rpointer",
+				// self::ReprAtom::Byte => "rbyte",
+				// self::ReprAtom::Nat => "rnat",
 				self::ReprAtom::Fun => "rfun",
 			}
 		),
-		ReprUniv(c) => {
-			write!(f, "runiv ")?;
-			write_static_atom(c, f, interner)
+		ReprExp(grade, r) => {
+			write!(f, "rexp[{grade}] ")?;
+			write_static_atom(r, f, interner)
 		}
 	}
 }
@@ -128,8 +145,8 @@ fn write_dynamic_spine(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo)
 fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use DynamicTerm::*;
 	match term {
-		Variable(..) | Universe { .. } | Splice(_) => write_dynamic(term, f, interner),
-		Let { .. } | Function { .. } | Apply { .. } | Pi { .. } => {
+		Variable(..) | Universe { .. } | Splice(_) | Repeat(..) => write_dynamic(term, f, interner),
+		Let { .. } | Function { .. } | Apply { .. } | Pi { .. } | LetExp { .. } | Exp(..) => {
 			write!(f, "(")?;
 			write_dynamic(term, f, interner)?;
 			write!(f, ")")
@@ -140,8 +157,24 @@ fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) 
 pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use DynamicTerm::*;
 	match term {
-		Let { ty, argument, tail } => {
-			write!(f, "let {} : ", resolve(interner, &tail.parameter()))?;
+		Exp(grade, ty) => {
+			write!(f, "![{grade}] ")?;
+			write_dynamic_atom(ty, f, interner)
+		}
+		Repeat(grade, tm) => {
+			write!(f, "@[{grade}] {{")?;
+			write_dynamic(tm, f, interner)?;
+			write!(f, "}}")
+		}
+		LetExp { grade, argument, tail } => {
+			write!(f, "let [{grade}] {{{}}} = ", resolve(interner, &tail.parameter()))?;
+			write_dynamic(argument, f, interner)?;
+			write!(f, "; ")?;
+			write_dynamic(&tail.body, f, interner)
+		}
+
+		Let { grade, ty, argument, tail } => {
+			write!(f, "let [{grade}] {} : ", resolve(interner, &tail.parameter()))?;
 			write_dynamic(ty, f, interner)?;
 			write!(f, " = ")?;
 			write_dynamic(argument, f, interner)?;
@@ -160,20 +193,20 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write!(f, " ")?;
 			write_static_atom(&representation, f, interner)
 		}
-		Pi { base, family, .. } => {
+		Pi { grade, base, family, .. } => {
 			let parameter = resolve(interner, &family.parameter());
 			if parameter != "_" {
-				write!(f, "|{parameter} : ")?;
+				write!(f, "|[{grade}] {parameter} : ")?;
 				write_dynamic(base, f, interner)?;
 				write!(f, "| -> ")?;
 			} else {
 				write_dynamic_spine(base, f, interner)?;
-				write!(f, " -> ")?;
+				write!(f, " [{grade}] -> ")?;
 			}
 			write_dynamic(&family.body, f, interner)
 		}
-		Function { body, .. } => {
-			write!(f, "|{}| ", resolve(interner, &body.parameter()))?;
+		Function { grade, body, .. } => {
+			write!(f, "|[{grade}] {}| ", resolve(interner, &body.parameter()))?;
 			write_dynamic(&body.body, f, interner)
 		}
 		Apply { scrutinee, argument, .. } => {

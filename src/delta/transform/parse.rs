@@ -137,34 +137,35 @@ peg::parser! {
 		rule optional_parameter() -> Option<Name>
 			= name:identifier() {Some(name)} / [Token::LowDash] {None}
 
-		rule grade() -> Option<usize>
-			= number:number() {Some(number)} / [Token::LowDash] {None}
+		rule finite_grade_annotation() -> usize
+			= [Token::SquareL] _ number:number() _ [Token::SquareR] {number}
 
 		rule former() -> Former
 			= [Token::Tick] {Former::Lift}
 			/ [Token::Keyword(Keyword::Copy)] {Former::Copy}
 			/ [Token::Keyword(Keyword::Repr)] {Former::Repr}
 			/ [Token::Ast] {Former::Universe}
+			/ [Token::Bang] grade:finite_grade_annotation() {Former::Exp(grade)}
 
 		rule constructor() -> Constructor
 			= [Token::Keyword(Keyword::C0)] {Constructor::Copyability(Copyability::Trivial)}
 			/ [Token::Keyword(Keyword::C1)] {Constructor::Copyability(Copyability::Nontrivial)}
 			/ [Token::Keyword(Keyword::CMax)] {Constructor::CopyMax}
-			/ [Token::Keyword(Keyword::RClass)] {Constructor::ReprAtom(Some(ReprAtom::Class))}
-			/ [Token::Keyword(Keyword::RPointer)] {Constructor::ReprAtom(Some(ReprAtom::Pointer))}
-			/ [Token::Keyword(Keyword::RByte)] {Constructor::ReprAtom(Some(ReprAtom::Byte))}
-			/ [Token::Keyword(Keyword::RNat)] {Constructor::ReprAtom(Some(ReprAtom::Nat))}
+			// / [Token::Keyword(Keyword::RPointer)] {Constructor::ReprAtom(Some(ReprAtom::Pointer))}
+			// / [Token::Keyword(Keyword::RByte)] {Constructor::ReprAtom(Some(ReprAtom::Byte))}
+			// / [Token::Keyword(Keyword::RNat)] {Constructor::ReprAtom(Some(ReprAtom::Nat))}
 			/ [Token::Keyword(Keyword::RFun)] {Constructor::ReprAtom(Some(ReprAtom::Fun))}
 			/ [Token::Keyword(Keyword::RNone)] {Constructor::ReprAtom(None)}
 			/ [Token::Keyword(Keyword::RPair)] {Constructor::ReprPair}
 			/ [Token::Keyword(Keyword::RMax)] {Constructor::ReprMax}
-			/ [Token::Keyword(Keyword::RUniv)] {Constructor::ReprUniv}
+			/ [Token::Keyword(Keyword::RExp)] grade:finite_grade_annotation() {Constructor::ReprExp(grade)}
+			/ [Token::At] grade:finite_grade_annotation() {Constructor::Exp(grade)}
 
 		rule atom() -> Expression
 			= [Token::ParenL] _ preterm:preterm() _ [Token::ParenR] {preterm}
 			/ init:position!() preterm:(
-				  [Token::SquareL] _ preterm:preterm() _ [Token::SquareR] {Preterm::Splice(preterm.into())}
-				/ [Token::AngleL] _ preterm:preterm() _ [Token::AngleR] {Preterm::Quote(preterm.into())}
+				  [Token::SquareL] _ preterm:preterm() _ [Token::SquareR] {Preterm::SwitchLevel(preterm.into())}
+				/ [Token::AngleL] _ preterm:preterm() _ [Token::AngleR] {Preterm::SwitchLevel(preterm.into())}
 				/ identifier:identifier() {Preterm::Variable(identifier)}
 				/ former:former() {Preterm::Former(former, vec![])}
 				/ constructor:constructor() {Preterm::Constructor(constructor, vec![])}
@@ -188,21 +189,24 @@ peg::parser! {
 		rule spine_headed() -> Expression
 			// TODO: Refactor to avoid caching?
 			= init:position!() preterm:(
-				  [Token::Pipe] _ parameter:optional_parameter() _ [Token::At] _ grade:grade() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { grade, body: bind([parameter], body) }}
-				/ [Token::Pipe] _ parameter:optional_parameter() _ [Token::At] _ grade:grade() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { grade, base: base.into(), family: bind([parameter], right) }}
-				/ left:spine() _ [Token::At] _ grade:grade() _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { grade, base: left.into(), family: bind([None], right) }}
+				  [Token::Pipe] _ grade:(finite_grade_annotation())? _ parameter:optional_parameter() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { grade: grade.unwrap_or(parameter.is_some() as _), body: bind([parameter], body) }}
+				/ [Token::Pipe] _ grade:(finite_grade_annotation())? _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { grade: grade.unwrap_or(1), base: base.into(), family: bind([parameter], right) }}
+				/ left:spine() _ grade:(finite_grade_annotation())? _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { grade: grade.unwrap_or(1), base: left.into(), family: bind([None], right) }}
 			) fini:position!() {preterm.at((init, fini))}
 			/ spine()
 
 		rule preterm() -> Expression
 			= init:position!() preterm:(
-				  [Token::Keyword(Keyword::Let)] _ name:optional_parameter() _ [Token::At] _ grade:grade() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
-				{ Preterm::Let { grade, ty: ty.into(), argument: argument.into(), tail: bind([name], tail) }}
+				[Token::Keyword(Keyword::Let)] _ grade:(finite_grade_annotation())? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
+				{ Preterm::Let { grade: grade.unwrap_or(name.is_some() as _), ty: ty.into(), argument: argument.into(), tail: bind([name], tail) }}
+				/ [Token::Keyword(Keyword::Let)] _ grade:(finite_grade_annotation())? _ [Token::At] grade_argument:finite_grade_annotation() _ [Token::ParenL] _ name:optional_parameter() _ [Token::ParenR] _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() {
+					Preterm::LetExp { grade: grade.unwrap_or(name.is_some() as _), grade_argument, argument: argument.into(), tail: bind([name], tail) }
+				}
 			) fini:position!() {preterm.at((init, fini))}
-			/ init:position!() [Token::Keyword(Keyword::Def)] _ name:optional_parameter() _ [Token::At] _ grade:grade() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() fini:position!()
+			/ init:position!() [Token::Keyword(Keyword::Def)] _ grade:(finite_grade_annotation())? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() fini:position!()
 			{
 				let tail_range = tail.range;
-				Preterm::Splice(Preterm::Let { grade, ty: ty.into(), argument: argument.into(), tail: bind([name], Preterm::Quote(tail.into()).at((tail_range.0, tail_range.1))) }.at((init, fini)).into()).at((init, fini))
+				Preterm::SwitchLevel(Preterm::Let { grade: grade.unwrap_or(name.is_some() as _), ty: ty.into(), argument: argument.into(), tail: bind([name], Preterm::SwitchLevel(tail.into()).at((tail_range.0, tail_range.1))) }.at((init, fini)).into()).at((init, fini))
 			}
 			/ spine_headed()
 

@@ -14,22 +14,29 @@ pub enum StaticNeutral {
 	Variable(Option<Name>, Level),
 	Apply(Rc<Self>, Rc<StaticValue>),
 	MaxCopyability(Rc<Self>, Rc<Self>),
-	ReprUniv(Rc<Self>),
+	LetExp { scrutinee: Rc<Self>, grade: usize, tail: Rc<Closure<Environment, StaticTerm>>,},
 }
 
 #[derive(Clone, Debug)]
 pub enum StaticValue {
 	Neutral(StaticNeutral),
 	Universe,
+
 	CopyabilityType,
 	Copyability(Copyability),
+
 	ReprType,
 	ReprNone,
 	ReprAtom(ReprAtom),
+	ReprExp(usize, Rc<Self>),
+
 	Lift { ty: DynamicValue, copy: Rc<Self>, repr: Rc<Self> },
 	Quote(DynamicValue),
-	IndexedProduct(Option<usize>, Rc<Self>, Rc<Closure<Environment, StaticTerm>>),
-	Function(Rc<Closure<Environment, StaticTerm>>),
+	IndexedProduct(usize, Rc<Self>, Rc<Closure<Environment, StaticTerm>>),
+	Function(usize, Rc<Closure<Environment, StaticTerm>>),
+	
+	Exp(usize, Rc<Self>),
+	Repeat(usize, Rc<Self>),
 }
 
 impl From<&Repr> for StaticValue {
@@ -62,6 +69,7 @@ pub enum DynamicNeutral {
 		base: Option<Rc<DynamicValue>>,
 		family: Option<Rc<Closure<Environment, DynamicTerm>>>,
 	},
+	LetExp { scrutinee: Rc<Self>, grade: usize, tail: Rc<Closure<Environment, DynamicTerm>>,},
 }
 
 #[derive(Clone, Debug)]
@@ -72,7 +80,7 @@ pub enum DynamicValue {
 		representation: Rc<StaticValue>,
 	},
 	IndexedProduct {
-		grade: Option<usize>,
+		grade: usize,
 		base_copyability: Rc<StaticValue>,
 		base_representation: Rc<StaticValue>,
 		base: Rc<Self>,
@@ -81,10 +89,13 @@ pub enum DynamicValue {
 		family: Rc<Closure<Environment, DynamicTerm>>,
 	},
 	Function {
+		grade: usize,
 		base: Rc<Self>,
 		family: Rc<Closure<Environment, DynamicTerm>>,
 		body: Rc<Closure<Environment, DynamicTerm>>,
 	},
+	Exp(usize, Rc<Self>),
+	Repeat(usize, Rc<Self>),
 }
 
 impl StaticValue {
@@ -96,15 +107,6 @@ impl StaticValue {
 			(_, Self::Copyability(C::Nontrivial)) => Self::Copyability(C::Nontrivial),
 			(a, Self::Copyability(C::Trivial)) => a,
 			(Self::Neutral(a), Self::Neutral(b)) => Self::Neutral(StaticNeutral::MaxCopyability(rc!(a), rc!(b))),
-			_ => panic!(),
-		}
-	}
-
-	pub fn univ_representation(c: Self) -> Self {
-		match c {
-			StaticValue::Neutral(n) => StaticValue::Neutral(StaticNeutral::ReprUniv(rc!(n))),
-			StaticValue::Copyability(Copyability::Trivial) => StaticValue::ReprNone,
-			StaticValue::Copyability(Copyability::Nontrivial) => StaticValue::ReprAtom(ReprAtom::Class),
 			_ => panic!(),
 		}
 	}
@@ -178,14 +180,18 @@ impl Conversion<StaticValue> for Level {
 			(ReprAtom(left), ReprAtom(right)) => left == right,
 			(Lift { ty: left, .. }, Lift { ty: right, .. }) | (Quote(left), Quote(right)) =>
 				self.can_convert(left, right),
+
+			(Exp(grade_l, ty_l), Exp(grade_r, ty_r)) => grade_l == grade_r && self.can_convert(&**ty_l, ty_r),
+			(Repeat(_, left), Repeat(_, right)) => self.can_convert(&**left, right),
+
 			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
-			(Function(left), Function(right)) =>
+			(Function(_, left), Function(_, right)) =>
 				(self + 1).can_convert(&left.autolyze(self), &right.autolyze(self)),
-			(Neutral(left), Function(right)) => (self + 1).can_convert(
+			(Neutral(left), Function(_, right)) => (self + 1).can_convert(
 				&Neutral(StaticNeutral::Apply(rc!(left.clone()), rc!((right.parameter(), self).into()))),
 				&right.autolyze(self),
 			),
-			(Function(left), Neutral(right)) => (self + 1).can_convert(
+			(Function(_, left), Neutral(right)) => (self + 1).can_convert(
 				&left.autolyze(self),
 				&Neutral(StaticNeutral::Apply(rc!(right.clone()), rc!((left.parameter(), self).into()))),
 			),
@@ -209,9 +215,9 @@ impl Conversion<StaticNeutral> for Level {
 			(Variable(_, left), Variable(_, right)) => left == right,
 			(MaxCopyability(a_left, b_left), MaxCopyability(a_right, b_right)) =>
 				self.can_convert(&**a_left, a_right) && self.can_convert(&**b_left, b_right),
-			(ReprUniv(left), ReprUniv(right)) => self.can_convert(&**left, right),
 			(Apply(left, left_argument), Apply(right, right_argument)) =>
 				self.can_convert(&**left, &right) && self.can_convert(&**left_argument, &right_argument),
+			(LetExp { scrutinee: sl, grade: gl, tail: tl }, LetExp { scrutinee: sr, grade: gr, tail: tr }) => self.can_convert(&**sl, sr) && gl == gr && self.can_convert(&tl.autolyze(self), &tr.autolyze(self)),
 			_ => false,
 		}
 	}
@@ -223,13 +229,22 @@ impl Conversion<DynamicValue> for Level {
 		use DynamicValue::*;
 		use Field::*;
 		match (left, right) {
+			// Neutrals.
+			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
+
+			// Universes.
 			(
 				Universe { copyability: left_copyability, representation: left_representation },
 				Universe { copyability: right_copyability, representation: right_representation },
 			) =>
 				self.can_convert(&**left_copyability, right_copyability)
 					&& self.can_convert(&**left_representation, right_representation),
-			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
+
+			// Exponentials.
+			(Exp(grade_l, ty_l), Exp(grade_r, ty_r)) => grade_l == grade_r && self.can_convert(&**ty_l, ty_r),
+			(Repeat(_, left), Repeat(_, right)) => self.can_convert(&**left, right),
+
+			// Functions.			
 			(Function { body: left, .. }, Function { body: right, .. }) =>
 				(self + 1).can_convert(&left.autolyze(self), &right.autolyze(self)),
 			(Neutral(left), Function { body: right, .. }) => (self + 1).can_convert(
@@ -270,11 +285,19 @@ impl Conversion<DynamicNeutral> for Level {
 	fn can_convert(self, left: &DynamicNeutral, right: &DynamicNeutral) -> bool {
 		use DynamicNeutral::*;
 		match (left, right) {
+			// Variables.
 			(Variable(_, left), Variable(_, right)) => left == right,
+			
+			// Exponential unpacking.
+			(LetExp { scrutinee: sl, grade: gl, tail: tl }, LetExp { scrutinee: sr, grade: gr, tail: tr }) => self.can_convert(&**sl, sr) && gl == gr && self.can_convert(&tl.autolyze(self), &tr.autolyze(self)),
+
+			// Function application.
 			(
 				Apply { scrutinee: left, argument: left_argument, .. },
 				Apply { scrutinee: right, argument: right_argument, .. },
 			) => self.can_convert(&**left, right) && self.can_convert(&**left_argument, right_argument),
+
+			// Metaprogram splicing.
 			(Splice(left), Splice(right)) => self.can_convert(left, right),
 			_ => false,
 		}

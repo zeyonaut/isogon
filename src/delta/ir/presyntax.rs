@@ -10,13 +10,13 @@ pub struct Expression {
 pub enum Preterm {
 	Variable(Name),
 
-	Quote(Box<Expression>),
-	Splice(Box<Expression>),
+	SwitchLevel(Box<Expression>),
 
-	Let { grade: Option<usize>, ty: Box<Expression>, argument: Box<Expression>, tail: Binder<Box<Expression>> },
+	Let { grade: usize, ty: Box<Expression>, argument: Box<Expression>, tail: Binder<Box<Expression>> },
+	LetExp { grade: usize, grade_argument: usize, argument: Box<Expression>, tail: Binder<Box<Expression>> },
 
-	Pi { grade: Option<usize>, base: Box<Expression>, family: Binder<Box<Expression>> },
-	Lambda { grade: Option<usize>, body: Binder<Box<Expression>> },
+	Pi { grade: usize, base: Box<Expression>, family: Binder<Box<Expression>> },
+	Lambda { grade: usize, body: Binder<Box<Expression>> },
 
 	Former(Former, Vec<Expression>),
 	Constructor(Constructor, Vec<Expression>),
@@ -26,7 +26,7 @@ pub enum Preterm {
 
 #[derive(Debug, Clone)]
 pub enum Former {
-	Poly(usize),
+	Exp(usize),
 	Lift,
 	Copy,
 	Repr,
@@ -35,12 +35,13 @@ pub enum Former {
 
 #[derive(Debug, Clone)]
 pub enum Constructor {
-	Poly(usize),
+	Exp(usize),
 
 	Copyability(Copyability),
 	CopyMax,
 
 	ReprAtom(Option<ReprAtom>),
+	ReprExp(usize),
 	ReprPair,
 	ReprMax,
 	ReprUniv,

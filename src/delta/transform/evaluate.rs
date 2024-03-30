@@ -34,6 +34,13 @@ impl Evaluate for StaticTerm {
 	fn evaluate_in(self, environment: &Environment) -> Self::Value {
 		use StaticTerm::*;
 		match self {
+			Exp(grade, ty) => StaticValue::Exp(grade, ty.evaluate_in(environment).into()),
+			Repeat(grade, argument) => StaticValue::Repeat(grade, argument.evaluate_in(environment).into()),
+			LetExp { grade, argument, tail } => match argument.evaluate_in(environment) {
+				StaticValue::Repeat(_, argument) => tail.evaluate_at(environment, [(*argument).clone()]),
+				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::LetExp { scrutinee: neutral.into(), grade, tail: tail.clone().evaluate_in(environment).into() }),
+				 _ => panic!(),
+			},
 			Variable(_, index) => environment.lookup_static(index),
 			CopyabilityType => StaticValue::CopyabilityType,
 			Copyability(c) => StaticValue::Copyability(c),
@@ -41,15 +48,15 @@ impl Evaluate for StaticTerm {
 				StaticValue::max_copyability(a.evaluate_in(environment), b.evaluate_in(environment)),
 			ReprType => StaticValue::ReprType,
 			ReprAtom(r) => r.map(StaticValue::ReprAtom).unwrap_or(StaticValue::ReprNone),
-			ReprUniv(c) => StaticValue::univ_representation(c.evaluate_in(environment)),
+			ReprExp(grade, repr) => StaticValue::ReprExp(grade, repr.evaluate_in(environment).into()),
 			Pi(grade, base, family) => StaticValue::IndexedProduct(
 				grade,
 				rc!(base.evaluate_in(environment)),
 				rc!(family.evaluate_in(environment)),
 			),
-			Lambda(function) => StaticValue::Function(rc!(function.evaluate_in(environment))),
+			Lambda(grade, function) => StaticValue::Function(grade, rc!(function.evaluate_in(environment))),
 			Apply { scrutinee, argument } => match scrutinee.evaluate_in(environment) {
-				StaticValue::Function(function) => function.evaluate_with([argument.evaluate_in(environment)]),
+				StaticValue::Function(_, function) => function.evaluate_with([argument.evaluate_in(environment)]),
 				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::Apply(
 					rc!(neutral),
 					rc!(argument.evaluate_in(environment)),
@@ -74,7 +81,17 @@ impl Evaluate for DynamicTerm {
 		use DynamicTerm::*;
 		match self {
 			Variable(_, index) => environment.lookup_dynamic(index),
-			Function { base, family, body } => DynamicValue::Function {
+
+			Exp(grade, ty) => DynamicValue::Exp(grade, ty.evaluate_in(environment).into()),
+			Repeat(grade, argument) => DynamicValue::Repeat(grade, argument.evaluate_in(environment).into()),
+			LetExp { grade, argument, tail } => match argument.evaluate_in(environment) {
+				DynamicValue::Repeat(_, argument) => tail.evaluate_at(environment, [(*argument).clone()]),
+				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::LetExp { scrutinee: neutral.into(), grade, tail: tail.clone().evaluate_in(environment).into() }),
+				 _ => panic!(),
+			},
+
+			Function { grade, base, family, body } => DynamicValue::Function {
+				grade,
 				base: base.evaluate_in(environment).into(),
 				family: family.evaluate_in(environment).into(),
 				body: body.evaluate_in(environment).into(),
