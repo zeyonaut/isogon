@@ -1,10 +1,10 @@
-let! empty : *c0 rbyte = #0;
+let [0] empty : * c0 rbyte = #0;
 
-let! unit : *c0 rbyte = #1;
+let [0] unit : * c0 rbyte = #1;
 
-let! tt : unit = 0_1;
+let [0] tt : unit = 0_1;
 
-let thunk_true : unit -> bool = |x|
+let [0] thunk_true : unit -> bool = |x|
 	x :: |_| bool {
 		0_1 -> true
 	};

@@ -11,15 +11,28 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub enum StaticNeutral {
+	// Variables.
 	Variable(Option<Name>, Level),
+
+	// Repeated programs.
+	LetExp { scrutinee: Rc<Self>, grade: usize, tail: Rc<Closure<Environment, StaticTerm>> },
+
+	// Dependent functions.
 	Apply(Rc<Self>, Rc<StaticValue>),
+
+	// Hacks.
 	MaxCopyability(Rc<Self>, Rc<Self>),
-	LetExp { scrutinee: Rc<Self>, grade: usize, tail: Rc<Closure<Environment, StaticTerm>>,},
+
+	// Enumerated numbers.
+	CaseEnum { scrutinee: Rc<Self>, motive: Rc<Closure<Environment, StaticTerm>>, cases: Vec<StaticValue> },
 }
 
 #[derive(Clone, Debug)]
 pub enum StaticValue {
+	// Neutrals.
 	Neutral(StaticNeutral),
+
+	// Types and universe indices.
 	Universe,
 
 	CopyabilityType,
@@ -30,13 +43,21 @@ pub enum StaticValue {
 	ReprAtom(ReprAtom),
 	ReprExp(usize, Rc<Self>),
 
+	// Quoted programs.
 	Lift { ty: DynamicValue, copy: Rc<Self>, repr: Rc<Self> },
 	Quote(DynamicValue),
-	IndexedProduct(usize, Rc<Self>, Rc<Closure<Environment, StaticTerm>>),
-	Function(usize, Rc<Closure<Environment, StaticTerm>>),
-	
+
+	// Repeated programs.
 	Exp(usize, Rc<Self>),
 	Repeat(usize, Rc<Self>),
+
+	// Dependent functions.
+	IndexedProduct(usize, Rc<Self>, Rc<Closure<Environment, StaticTerm>>),
+	Function(usize, Rc<Closure<Environment, StaticTerm>>),
+
+	// Enumerated numbers.
+	Enum(u16),
+	EnumValue(u16, u8),
 }
 
 impl From<&Repr> for StaticValue {
@@ -58,8 +79,20 @@ impl From<Option<&Repr>> for StaticValue {
 
 #[derive(Clone, Debug)]
 pub enum DynamicNeutral {
+	// Variables.
 	Variable(Option<Name>, Level),
+
+	// Quoted programs.
 	Splice(StaticNeutral),
+
+	// Repeated programs.
+	LetExp {
+		scrutinee: Rc<Self>,
+		grade: usize,
+		tail: Rc<Closure<Environment, DynamicTerm>>,
+	},
+
+	// Dependent functions.
 	// NOTE: The family universe is optional because of conversion-checking with eta-conversion.
 	Apply {
 		scrutinee: Rc<Self>,
@@ -69,16 +102,33 @@ pub enum DynamicNeutral {
 		base: Option<Rc<DynamicValue>>,
 		family: Option<Rc<Closure<Environment, DynamicTerm>>>,
 	},
-	LetExp { scrutinee: Rc<Self>, grade: usize, tail: Rc<Closure<Environment, DynamicTerm>>,},
+
+	// Enumerated numbers.
+	CaseEnum {
+		scrutinee: Rc<Self>,
+		cases: Vec<DynamicValue>,
+		fiber_copyability: Rc<StaticValue>,
+		fiber_representation: Rc<StaticValue>,
+		motive: Rc<Closure<Environment, DynamicTerm>>,
+	},
 }
 
 #[derive(Clone, Debug)]
 pub enum DynamicValue {
+	// Neutrals.
 	Neutral(DynamicNeutral),
+
+	// Types.
 	Universe {
 		copyability: Rc<StaticValue>,
 		representation: Rc<StaticValue>,
 	},
+
+	// Repeated programs.
+	Exp(usize, Rc<Self>),
+	Repeat(usize, Rc<Self>),
+
+	// Dependent functions.
 	IndexedProduct {
 		grade: usize,
 		base_copyability: Rc<StaticValue>,
@@ -94,8 +144,10 @@ pub enum DynamicValue {
 		family: Rc<Closure<Environment, DynamicTerm>>,
 		body: Rc<Closure<Environment, DynamicTerm>>,
 	},
-	Exp(usize, Rc<Self>),
-	Repeat(usize, Rc<Self>),
+
+	// Enumerated numbers.
+	Enum(u16),
+	EnumValue(u16, u8),
 }
 
 impl StaticValue {
@@ -173,18 +225,33 @@ impl Conversion<StaticValue> for Level {
 	fn can_convert(self, left: &StaticValue, right: &StaticValue) -> bool {
 		use StaticValue::*;
 		match (left, right) {
+			// Neutrals.
+			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
+
+			// Types and universe indidces.
 			(Universe, Universe)
 			| (CopyabilityType, CopyabilityType)
 			| (ReprType, ReprType)
 			| (ReprNone, ReprNone) => true,
+			(Copyability(left), Copyability(right)) => left == right,
 			(ReprAtom(left), ReprAtom(right)) => left == right,
+
+			// Quoted programs.
 			(Lift { ty: left, .. }, Lift { ty: right, .. }) | (Quote(left), Quote(right)) =>
 				self.can_convert(left, right),
 
+			// Repeated programs.
 			(Exp(grade_l, ty_l), Exp(grade_r, ty_r)) => grade_l == grade_r && self.can_convert(&**ty_l, ty_r),
 			(Repeat(_, left), Repeat(_, right)) => self.can_convert(&**left, right),
 
-			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
+			// Dependent functions.
+			(
+				IndexedProduct(left_grade, left_base, left_family),
+				IndexedProduct(right_grade, right_base, right_family),
+			) =>
+				left_grade == right_grade
+					&& self.can_convert(&**left_base, right_base)
+					&& (self + 1).can_convert(&left_family.autolyze(self), &right_family.autolyze(self)),
 			(Function(_, left), Function(_, right)) =>
 				(self + 1).can_convert(&left.autolyze(self), &right.autolyze(self)),
 			(Neutral(left), Function(_, right)) => (self + 1).can_convert(
@@ -195,14 +262,12 @@ impl Conversion<StaticValue> for Level {
 				&left.autolyze(self),
 				&Neutral(StaticNeutral::Apply(rc!(right.clone()), rc!((left.parameter(), self).into()))),
 			),
-			(
-				IndexedProduct(left_grade, left_base, left_family),
-				IndexedProduct(right_grade, right_base, right_family),
-			) =>
-				left_grade == right_grade
-					&& self.can_convert(&**left_base, right_base)
-					&& (self + 1).can_convert(&left_family.autolyze(self), &right_family.autolyze(self)),
-			(Copyability(left), Copyability(right)) => left == right,
+
+			// Enumerated numbers.
+			(Enum(left), Enum(right)) => left == right,
+			(EnumValue(_, left), EnumValue(_, right)) => left == right,
+
+			// Inconvertible.
 			_ => false,
 		}
 	}
@@ -212,12 +277,34 @@ impl Conversion<StaticNeutral> for Level {
 	fn can_convert(self, left: &StaticNeutral, right: &StaticNeutral) -> bool {
 		use StaticNeutral::*;
 		match (left, right) {
+			// Variables.
 			(Variable(_, left), Variable(_, right)) => left == right,
+
+			// Universe indices.
 			(MaxCopyability(a_left, b_left), MaxCopyability(a_right, b_right)) =>
 				self.can_convert(&**a_left, a_right) && self.can_convert(&**b_left, b_right),
+
+			// Repeated programs.
+			(LetExp { scrutinee: sl, grade: gl, tail: tl }, LetExp { scrutinee: sr, grade: gr, tail: tr }) =>
+				self.can_convert(&**sl, sr)
+					&& gl == gr && self.can_convert(&tl.autolyze(self), &tr.autolyze(self)),
+	
+			// Dependent functions.
 			(Apply(left, left_argument), Apply(right, right_argument)) =>
 				self.can_convert(&**left, &right) && self.can_convert(&**left_argument, &right_argument),
-			(LetExp { scrutinee: sl, grade: gl, tail: tl }, LetExp { scrutinee: sr, grade: gr, tail: tr }) => self.can_convert(&**sl, sr) && gl == gr && self.can_convert(&tl.autolyze(self), &tr.autolyze(self)),
+			
+			// Enumerated numbers.
+			(
+				CaseEnum { scrutinee: l_scrutinee, cases: l_cases, .. },
+				CaseEnum { scrutinee: r_scrutinee, cases: r_cases, .. },
+			) =>
+				self.can_convert(&**l_scrutinee, r_scrutinee)
+					&& l_cases
+						.iter()
+						.zip(r_cases.iter())
+						.fold(true, |acc, (left, right)| acc && self.can_convert(left, right)),
+
+			// Inconvertible.
 			_ => false,
 		}
 	}
@@ -244,7 +331,14 @@ impl Conversion<DynamicValue> for Level {
 			(Exp(grade_l, ty_l), Exp(grade_r, ty_r)) => grade_l == grade_r && self.can_convert(&**ty_l, ty_r),
 			(Repeat(_, left), Repeat(_, right)) => self.can_convert(&**left, right),
 
-			// Functions.			
+			// Dependent functions.
+			// NOTE: Annotation conversion not implemented, as it's unclear if it gives any useful advantages.
+			(
+				IndexedProduct { base: left_base, family: left_family, .. },
+				IndexedProduct { base: right_base, family: right_family, .. },
+			) =>
+				self.can_convert(&**left_base, &right_base)
+					&& (self + 1).can_convert(&left_family.autolyze(self), &right_family.autolyze(self)),
 			(Function { body: left, .. }, Function { body: right, .. }) =>
 				(self + 1).can_convert(&left.autolyze(self), &right.autolyze(self)),
 			(Neutral(left), Function { body: right, .. }) => (self + 1).can_convert(
@@ -269,13 +363,12 @@ impl Conversion<DynamicValue> for Level {
 					family: None,
 				}),
 			),
-			// NOTE: Annotation conversion not implemented, as it's unclear if it gives any useful advantages.
-			(
-				IndexedProduct { base: left_base, family: left_family, .. },
-				IndexedProduct { base: right_base, family: right_family, .. },
-			) =>
-				self.can_convert(&**left_base, &right_base)
-					&& (self + 1).can_convert(&left_family.autolyze(self), &right_family.autolyze(self)),
+
+			// Enumerated numbers.
+			(Enum(left), Enum(right)) => left == right,
+			(EnumValue(_, left), EnumValue(_, right)) => left == right,
+
+			// Inconvertible.
 			_ => false,
 		}
 	}
@@ -287,18 +380,33 @@ impl Conversion<DynamicNeutral> for Level {
 		match (left, right) {
 			// Variables.
 			(Variable(_, left), Variable(_, right)) => left == right,
-			
-			// Exponential unpacking.
-			(LetExp { scrutinee: sl, grade: gl, tail: tl }, LetExp { scrutinee: sr, grade: gr, tail: tr }) => self.can_convert(&**sl, sr) && gl == gr && self.can_convert(&tl.autolyze(self), &tr.autolyze(self)),
 
-			// Function application.
+			// Quoted programs.
+			(Splice(left), Splice(right)) => self.can_convert(left, right),
+
+			// Repeated programs.
+			(LetExp { scrutinee: sl, grade: gl, tail: tl }, LetExp { scrutinee: sr, grade: gr, tail: tr }) =>
+				self.can_convert(&**sl, sr)
+					&& gl == gr && self.can_convert(&tl.autolyze(self), &tr.autolyze(self)),
+
+			// Dependent functions.
 			(
 				Apply { scrutinee: left, argument: left_argument, .. },
 				Apply { scrutinee: right, argument: right_argument, .. },
 			) => self.can_convert(&**left, right) && self.can_convert(&**left_argument, right_argument),
 
-			// Metaprogram splicing.
-			(Splice(left), Splice(right)) => self.can_convert(left, right),
+			// Enumerated numbers.
+			(
+				CaseEnum { scrutinee: l_scrutinee, cases: l_cases, .. },
+				CaseEnum { scrutinee: r_scrutinee, cases: r_cases, .. },
+			) =>
+				self.can_convert(&**l_scrutinee, r_scrutinee)
+					&& l_cases
+						.iter()
+						.zip(r_cases.iter())
+						.fold(true, |acc, (left, right)| acc && self.can_convert(left, right)),
+
+			// Inconvertible.
 			_ => false,
 		}
 	}

@@ -45,7 +45,16 @@ impl Unevaluate for StaticNeutral {
 				scrutinee: callee.try_unevaluate_in(level)?.into(),
 				argument: argument.try_unevaluate_in(level)?.into(),
 			},
-			LetExp { scrutinee, grade, tail } => StaticTerm::LetExp  { argument: scrutinee.unevaluate_in(level).into(), grade: *grade, tail: tail.unevaluate_in(level) },
+			LetExp { scrutinee, grade, tail } => StaticTerm::LetExp {
+				argument: scrutinee.unevaluate_in(level).into(),
+				grade: *grade,
+				tail: tail.unevaluate_in(level),
+			},
+			CaseEnum { scrutinee, motive, cases } => StaticTerm::CaseEnum {
+				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
+				motive: motive.try_unevaluate_in(level)?,
+				cases: cases.into_iter().map(|case| case.try_unevaluate_in(level)).collect::<Result<_, _>>()?,
+			},
 		})
 	}
 }
@@ -55,25 +64,41 @@ impl Unevaluate for StaticValue {
 	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
 		use StaticValue::*;
 		Ok(match self {
+			// Neutrals.
 			Neutral(neutral) => neutral.try_unevaluate_in(level)?,
+
+			// Types.
 			Universe => StaticTerm::Universe,
-			IndexedProduct(grade, base, family) =>
-				StaticTerm::Pi(*grade, base.try_unevaluate_in(level)?.into(), family.try_unevaluate_in(level)?),
-			Function(grade, function) => StaticTerm::Lambda(*grade, function.try_unevaluate_in(level)?),
+
+			// Universe indices.
+			CopyabilityType => StaticTerm::CopyabilityType,
+			Copyability(c) => StaticTerm::Copyability(*c),
+
+			ReprType => StaticTerm::ReprType,
+			ReprNone => StaticTerm::ReprAtom(None),
+			ReprAtom(r) => StaticTerm::ReprAtom(Some(*r)),
+			ReprExp(grade, r) => StaticTerm::ReprExp(*grade, r.unevaluate_in(level).into()),
+
+			// Quoted programs.
 			Lift { ty: liftee, copy, repr } => StaticTerm::Lift {
 				liftee: liftee.try_unevaluate_in(level)?.into(),
 				copy: copy.try_unevaluate_in(level)?.into(),
 				repr: repr.try_unevaluate_in(level)?.into(),
 			},
 			Quote(quotee) => StaticTerm::Quote(quotee.try_unevaluate_in(level)?.into()),
-			CopyabilityType => StaticTerm::CopyabilityType,
-			Copyability(c) => StaticTerm::Copyability(*c),
-			ReprType => StaticTerm::ReprType,
-			ReprNone => StaticTerm::ReprAtom(None),
-			ReprAtom(r) => StaticTerm::ReprAtom(Some(*r)),
-			ReprExp(grade, r) => StaticTerm::ReprExp(*grade, r.unevaluate_in(level).into()),
-			Repeat(grade, value) => StaticTerm::Repeat(*grade, value.unevaluate_in(level).into()),
+
+			// Repeated programs.
 			Exp(grade, ty) => StaticTerm::Exp(*grade, ty.unevaluate_in(level).into()),
+			Repeat(grade, value) => StaticTerm::Repeat(*grade, value.unevaluate_in(level).into()),
+
+			// Dependent functions.
+			IndexedProduct(grade, base, family) =>
+				StaticTerm::Pi(*grade, base.try_unevaluate_in(level)?.into(), family.try_unevaluate_in(level)?),
+			Function(grade, function) => StaticTerm::Lambda(*grade, function.try_unevaluate_in(level)?),
+
+			// Enumerated values.
+			Enum(k) => StaticTerm::Enum(*k),
+			EnumValue(k, v) => StaticTerm::EnumValue(*k, *v),
 		})
 	}
 }
@@ -95,7 +120,22 @@ impl Unevaluate for DynamicNeutral {
 					base: base.as_ref().unwrap().try_unevaluate_in(level)?.into(),
 					family: family.as_ref().unwrap().try_unevaluate_in(level)?,
 				},
-					 LetExp { scrutinee, grade, tail } => DynamicTerm::LetExp  { argument: scrutinee.unevaluate_in(level).into(), grade: *grade, tail: tail.unevaluate_in(level) },
+			LetExp { scrutinee, grade, tail } => DynamicTerm::LetExp {
+				argument: scrutinee.unevaluate_in(level).into(),
+				grade: *grade,
+				tail: tail.unevaluate_in(level),
+			},
+			CaseEnum { scrutinee, cases, fiber_copyability, fiber_representation, motive } =>
+				DynamicTerm::CaseEnum {
+					scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
+					cases: cases
+						.into_iter()
+						.map(|case| case.try_unevaluate_in(level))
+						.collect::<Result<_, _>>()?,
+					fiber_copyability: fiber_copyability.try_unevaluate_in(level)?.into(),
+					fiber_representation: fiber_representation.try_unevaluate_in(level)?.into(),
+					motive: motive.try_unevaluate_in(level)?,
+				},
 		})
 	}
 }
@@ -105,11 +145,20 @@ impl Unevaluate for DynamicValue {
 	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
 		use DynamicValue::*;
 		Ok(match self {
+			// Neutrals.
 			Neutral(neutral) => neutral.try_unevaluate_in(level)?,
+
+			// Types.
 			Universe { copyability, representation } => DynamicTerm::Universe {
 				copyability: copyability.try_unevaluate_in(level)?.into(),
 				representation: representation.try_unevaluate_in(level)?.into(),
 			},
+
+			// Repeated programs.
+			Exp(grade, ty) => DynamicTerm::Exp(*grade, ty.unevaluate_in(level).into()),
+			Repeat(grade, value) => DynamicTerm::Repeat(*grade, value.unevaluate_in(level).into()),
+
+			// Dependent functions.
 			IndexedProduct {
 				grade,
 				base_copyability,
@@ -133,8 +182,10 @@ impl Unevaluate for DynamicValue {
 				family: family.try_unevaluate_in(level)?.into(),
 				body: body.try_unevaluate_in(level)?.into(),
 			},
-			Repeat(grade, value) => DynamicTerm::Repeat(*grade, value.unevaluate_in(level).into()),
-			Exp(grade, ty) => DynamicTerm::Exp(*grade, ty.unevaluate_in(level).into()),
+
+			// Enumerated numbers.
+			Enum(k) => DynamicTerm::Enum(*k),
+			EnumValue(k, v) => DynamicTerm::EnumValue(*k, *v),
 		})
 	}
 }

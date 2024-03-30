@@ -11,7 +11,7 @@ fn write_static_spine(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -
 	use StaticTerm::*;
 	match term {
 		// Any case which is not already covered by write_static_atom.
-		Apply { .. } | MaxCopyability(..) => write_static(term, f, interner),
+		Apply { .. } | MaxCopyability(..) | CaseEnum { .. } => write_static(term, f, interner),
 		_ => write_static_atom(term, f, interner),
 	}
 }
@@ -27,8 +27,18 @@ fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) ->
 		| CopyabilityType
 		| ReprType
 		| ReprAtom(_)
-		| Repeat(..) => write_static(term, f, interner),
-		Let { .. } | Lambda { .. } | Apply { .. } | Pi { .. } | MaxCopyability(..) | Exp(..) | ReprExp(..) | LetExp { .. }  => {
+		| Repeat(..)
+		| Enum(..)
+		| EnumValue(..) => write_static(term, f, interner),
+		Let { .. }
+		| Lambda { .. }
+		| Apply { .. }
+		| Pi { .. }
+		| MaxCopyability(..)
+		| Exp(..)
+		| ReprExp(..)
+		| LetExp { .. }
+		| CaseEnum { .. } => {
 			write!(f, "(")?;
 			write_static(term, f, interner)?;
 			write!(f, ")")
@@ -122,7 +132,7 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			"{}",
 			match r {
 				// self::ReprAtom::Pointer => "rpointer",
-				// self::ReprAtom::Byte => "rbyte",
+				self::ReprAtom::Byte => "rbyte",
 				// self::ReprAtom::Nat => "rnat",
 				self::ReprAtom::Fun => "rfun",
 			}
@@ -131,13 +141,28 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			write!(f, "rexp[{grade}] ")?;
 			write_static_atom(r, f, interner)
 		}
+		Enum(k) => write!(f, "#{k}"),
+		EnumValue(k, v) => write!(f, "{v}_{k}"),
+		CaseEnum { scrutinee, motive, cases } => {
+			write_static_spine(scrutinee, f, interner)?;
+			write!(f, " :: |{}| ", resolve(interner, &motive.parameter()))?;
+			write_static(&motive.body, f, interner)?;
+			for (i, case) in cases.iter().enumerate() {
+				if i > 0 {
+					write!(f, " | ")?;
+				}
+				write!(f, "{i} -> ")?;
+				write_static(case, f, interner)?;
+			}
+			write!(f, "}}")
+		}
 	}
 }
 
 fn write_dynamic_spine(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use DynamicTerm::*;
 	match term {
-		Apply { .. } => write_dynamic(term, f, interner),
+		Apply { .. } | CaseEnum { .. } => write_dynamic(term, f, interner),
 		_ => write_dynamic_atom(term, f, interner),
 	}
 }
@@ -145,8 +170,9 @@ fn write_dynamic_spine(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo)
 fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use DynamicTerm::*;
 	match term {
-		Variable(..) | Universe { .. } | Splice(_) | Repeat(..) => write_dynamic(term, f, interner),
-		Let { .. } | Function { .. } | Apply { .. } | Pi { .. } | LetExp { .. } | Exp(..) => {
+		Variable(..) | Universe { .. } | Splice(_) | Repeat(..) | Enum(..) | EnumValue(..) =>
+			write_dynamic(term, f, interner),
+		Let { .. } | Function { .. } | Apply { .. } | Pi { .. } | LetExp { .. } | Exp(..) | CaseEnum { .. } => {
 			write!(f, "(")?;
 			write_dynamic(term, f, interner)?;
 			write!(f, ")")
@@ -213,6 +239,22 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write_dynamic_spine(scrutinee, f, interner)?;
 			write!(f, " ")?;
 			write_dynamic_atom(argument, f, interner)
+		}
+		Enum(k) => write!(f, "#{k}"),
+		EnumValue(k, v) => write!(f, "{v}_{k}"),
+		CaseEnum { scrutinee, motive, cases, .. } => {
+			write_dynamic_spine(scrutinee, f, interner)?;
+			write!(f, " :: bool |{}| ", resolve(interner, &motive.parameter()))?;
+			write_dynamic(&motive.body, f, interner)?;
+			write!(f, " {{")?;
+			for (i, case) in cases.iter().enumerate() {
+				if i > 0 {
+					write!(f, " | ")?;
+				}
+				write!(f, "{i} -> ")?;
+				write_dynamic(case, f, interner)?;
+			}
+			write!(f, "}}")
 		}
 	}
 }

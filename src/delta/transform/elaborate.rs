@@ -4,7 +4,7 @@ use crate::{
 	delta::{
 		common::{bind, Binder, Closure, Copyability, Field, Index, Level, Name, ReprAtom},
 		ir::{
-			presyntax::{Constructor, Expression, Former, Preterm},
+			presyntax::{Constructor, Expression, Former, Pattern, Preterm},
 			semantics::{
 				Conversion, DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue, Value,
 			},
@@ -301,12 +301,22 @@ fn synthesize_static(
 		Preterm::Let { grade, ty, argument, tail } => {
 			let ty = verify_static(context, *ty, 0, StaticValue::Universe)?;
 			let ty_value = ty.clone().evaluate_in(&context.environment);
-			let argument = verify_static(&mut context.amplify(grade), *argument, fragment * (grade > 0) as u8, ty_value.clone())?;
+			let argument = verify_static(
+				&mut context.amplify(grade),
+				*argument,
+				fragment * (grade > 0) as u8,
+				ty_value.clone(),
+			)?;
 			// TODO: Lazy evaluation.
 			let argument_value = argument.clone().evaluate_in(&context.environment);
 			let parameters = tail.parameters;
 			let (tail, tail_ty) = {
-				let mut context = context.extend_static(parameters[0], (grade * fragment as usize).into(), ty_value, argument_value);
+				let mut context = context.extend_static(
+					parameters[0],
+					(grade * fragment as usize).into(),
+					ty_value,
+					argument_value,
+				);
 				let result = synthesize_static(&mut context, *tail.body, fragment)?;
 				context.free().map_err(|e| e.at(expr.range))?;
 				result
@@ -316,7 +326,7 @@ fn synthesize_static(
 				tail_ty,
 			)
 		}
-		
+
 		// Quoting.
 		Preterm::SwitchLevel(quotee) => {
 			let (quotee, quotee_ty, copy, repr) = synthesize_dynamic(context, *quotee, fragment)?;
@@ -332,7 +342,7 @@ fn synthesize_static(
 			let base_value = base.clone().evaluate_in(&context.environment);
 			let [parameter] = family.parameters;
 			let family = {
-				let mut context = context.bind_static(parameter, None, base_value);
+				let mut context = context.bind_static(parameter, 0.into(), base_value);
 				let family = verify_static(&mut context, *family.body, 0, StaticValue::Universe)?;
 				context.free().map_err(|e| e.at(expr.range))?;
 				family
@@ -345,19 +355,27 @@ fn synthesize_static(
 			let StaticValue::IndexedProduct(grade, base, family) = scrutinee_ty else {
 				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
 			};
-			let argument = verify_static(&mut context.amplify(grade), *argument, fragment * (grade > 0) as u8, (*base).clone())?;
+			let argument = verify_static(
+				&mut context.amplify(grade),
+				*argument,
+				fragment * (grade > 0) as u8,
+				(*base).clone(),
+			)?;
 			(
 				StaticTerm::Apply { scrutinee: bx!(callee), argument: bx!(argument.clone()) },
 				family.evaluate_with([argument.evaluate_in(&context.environment)]),
 			)
 		}
-		
-		// Other.
+
+		// Generic type formers.
 		Preterm::Former(former, arguments) => match former {
 			// Types and universe indices.
-			Former::Universe if fragment == 0 && arguments.is_empty() => (StaticTerm::Universe, StaticValue::Universe),
-			Former::Copy if fragment == 0 && arguments.is_empty() => (StaticTerm::CopyabilityType, StaticValue::Universe),
-			Former::Repr if fragment == 0 && arguments.is_empty() => (StaticTerm::ReprType, StaticValue::Universe),
+			Former::Universe if fragment == 0 && arguments.is_empty() =>
+				(StaticTerm::Universe, StaticValue::Universe),
+			Former::Copy if fragment == 0 && arguments.is_empty() =>
+				(StaticTerm::CopyabilityType, StaticValue::Universe),
+			Former::Repr if fragment == 0 && arguments.is_empty() =>
+				(StaticTerm::ReprType, StaticValue::Universe),
 
 			// Quoting.
 			Former::Lift => {
@@ -379,11 +397,18 @@ fn synthesize_static(
 				let ty = verify_static(context, ty, 0, StaticValue::Universe)?;
 				(StaticTerm::Exp(grade, ty.into()), StaticValue::Universe)
 			}
+
+			// Enumerated numbers.
+			Former::Enum(card) if arguments.is_empty() => (StaticTerm::Enum(card), StaticValue::Universe),
+
+			// Invalid former.
 			_ => return Err(ElaborationErrorKind::InvalidFormer.at(expr.range)),
 		},
+
+		// Generic term constructors.
 		Preterm::Constructor(constructor, arguments) => match constructor {
 			// Universe indices.
-			Constructor::Copyability(c) if fragment == 0 && arguments.is_empty()=>
+			Constructor::Copyability(c) if fragment == 0 && arguments.is_empty() =>
 				(StaticTerm::Copyability(c), StaticValue::CopyabilityType),
 			Constructor::CopyMax if fragment == 0 => {
 				let [a, b] = arguments.try_into().unwrap();
@@ -391,7 +416,8 @@ fn synthesize_static(
 				let b = verify_static(context, b, 0, StaticValue::CopyabilityType)?;
 				(StaticTerm::MaxCopyability(bx!(a), bx!(b)), StaticValue::CopyabilityType)
 			}
-			Constructor::ReprAtom(r) if fragment == 0 && arguments.is_empty() => (StaticTerm::ReprAtom(r), StaticValue::ReprType),
+			Constructor::ReprAtom(r) if fragment == 0 && arguments.is_empty() =>
+				(StaticTerm::ReprAtom(r), StaticValue::ReprType),
 
 			// Repeated programs.
 			Constructor::Exp(grade) => {
@@ -399,9 +425,72 @@ fn synthesize_static(
 				let (tm, ty) = synthesize_static(context, tm, 0)?;
 				(StaticTerm::Exp(grade, tm.into()), StaticValue::Exp(grade, ty.into()))
 			}
+
+			// Enumerated numbers.
+			Constructor::Enum(k, v) if arguments.is_empty() =>
+				(StaticTerm::EnumValue(k, v), StaticValue::Enum(k)),
+
+			// Invalid constructor.
 			_ => return Err(ElaborationErrorKind::InvalidConstructor.at(expr.range)),
 		},
-		
+
+		// Generic case splits.
+		Preterm::Split { scrutinee, motive, cases } => {
+			let (scrutinee, scrutinee_ty) = synthesize_static(context, *scrutinee, fragment)?;
+			let scrutinee_value = scrutinee.clone().evaluate_in(&context.environment);
+			match scrutinee_ty {
+				StaticValue::Enum(card) => {
+					let [motive_parameter] = (*motive.parameters).try_into().unwrap();
+					(cases.len() == card as _)
+						.then_some(())
+						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
+					let motive_term = verify_static(
+						&mut context.bind_static(motive_parameter, 0.into(), StaticValue::Enum(card)),
+						*motive.body,
+						0,
+						StaticValue::Universe,
+					)?;
+					let motive_value =
+						Closure::new(context.environment.clone(), [motive_parameter], motive_term.clone());
+					// TODO: Avoid cloning.
+					let mut new_cases = Vec::new();
+					for v in 0..card {
+						let v = v as u8;
+						let case = cases[cases
+							.iter()
+							.position(|(pattern, _)| {
+								if let Pattern::Construction(Constructor::Enum(target_card, target_v), args) = pattern
+								{
+									*target_card == card && *target_v == v && args.is_empty()
+								} else {
+									false
+								}
+							})
+							.unwrap()]
+						.1
+						.clone();
+						new_cases.push(verify_static(
+							context,
+							case,
+							fragment,
+							motive_value.evaluate_with([StaticValue::EnumValue(card, v)]),
+						)?)
+					}
+
+					(
+						StaticTerm::CaseEnum {
+							scrutinee: bx!(scrutinee),
+							motive: bind([motive_parameter], motive_term),
+							cases: new_cases,
+						},
+						motive_value.evaluate_with([scrutinee_value]),
+					)
+				}
+
+				// Invalid case split.
+				_ => return Err(ElaborationErrorKind::InvalidCaseSplitScrutineeType.at(expr.range)),
+			}
+		}
 		// Synthesis failure.
 		_ => return Err(ElaborationErrorKind::CouldNotSynthesizeStatic.at(expr.range)),
 	})
@@ -429,7 +518,8 @@ fn verify_static(
 				.then_some(())
 				.ok_or_else(|| ElaborationErrorKind::LambdaGradeMismatch(grade, grade_v).at(expr.range))?;
 			let parameters = body.parameters;
-			let mut context = context.bind_static(parameters[0], (grade * fragment as usize).into(), base.as_ref().clone());
+			let mut context =
+				context.bind_static(parameters[0], (grade * fragment as usize).into(), base.as_ref().clone());
 			let basepoint_level = context.len().index(0);
 			let body = verify_static(
 				&mut context,
@@ -440,7 +530,7 @@ fn verify_static(
 			context.free().map_err(|e| e.at(expr.range))?;
 			StaticTerm::Lambda(grade, bind(parameters, body))
 		}
-		
+
 		// Synthesize and conversion-check.
 		(term, ty) => {
 			let (term, synthesized_ty) = synthesize_static(context, term.at(expr.range), fragment)?;
@@ -488,7 +578,12 @@ fn synthesize_dynamic(
 		Preterm::Let { grade, ty, argument, tail } => {
 			let (ty, base_copy, base_repr) = elaborate_dynamic_type(context, *ty)?;
 			let ty_value = ty.clone().evaluate_in(&context.environment);
-			let argument = verify_dynamic(&mut context.amplify(grade), *argument, fragment * (grade > 0) as u8, ty_value.clone())?;
+			let argument = verify_dynamic(
+				&mut context.amplify(grade),
+				*argument,
+				fragment * (grade > 0) as u8,
+				ty_value.clone(),
+			)?;
 			// TODO: Lazy evaluation.
 			let argument_value = argument.clone().evaluate_in(&context.environment);
 			let parameters = tail.parameters;
@@ -516,7 +611,8 @@ fn synthesize_dynamic(
 
 		// Splicing.
 		Preterm::SwitchLevel(splicee) => {
-			let (splicee, StaticValue::Lift { ty: liftee, copy, repr }) = synthesize_static(context, *splicee, fragment)?
+			let (splicee, StaticValue::Lift { ty: liftee, copy, repr }) =
+				synthesize_static(context, *splicee, fragment)?
 			else {
 				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Lift).at(expr.range));
 			};
@@ -531,7 +627,7 @@ fn synthesize_dynamic(
 			let (family, family_copyability, family_representation) = {
 				let mut context = context.bind_dynamic(
 					parameters[0],
-					None,
+					0.into(),
 					base_value,
 					base_copyability.clone(),
 					base_representation.clone(),
@@ -582,7 +678,12 @@ fn synthesize_dynamic(
 			else {
 				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
 			};
-			let argument = verify_dynamic(&mut context.amplify(grade), *argument, fragment * (grade > 0) as u8, (*base).clone())?;
+			let argument = verify_dynamic(
+				&mut context.amplify(grade),
+				*argument,
+				fragment * (grade > 0) as u8,
+				(*base).clone(),
+			)?;
 			let argument_value = argument.clone().evaluate_in(&context.environment);
 			(
 				DynamicTerm::Apply {
@@ -599,7 +700,7 @@ fn synthesize_dynamic(
 			)
 		}
 
-		// Other.
+		// Generic type formers.
 		Preterm::Former(former, arguments) => match former {
 			// Types.
 			Former::Universe if fragment == 0 => {
@@ -618,7 +719,7 @@ fn synthesize_dynamic(
 						representation: StaticValue::ReprNone.into(),
 					},
 					// TODO: Factor out this, this is common for all types.
-					StaticValue::Copyability(Copyability::Trivial).into(),
+					StaticValue::Copyability(Copyability::Trivial),
 					StaticValue::ReprNone.into(),
 				)
 			}
@@ -633,12 +734,27 @@ fn synthesize_dynamic(
 						copyability: copy.into(),
 						representation: StaticValue::ReprExp(grade, repr.into()).into(),
 					},
-					StaticValue::Copyability(Copyability::Trivial).into(),
+					StaticValue::Copyability(Copyability::Trivial),
 					StaticValue::ReprNone.into(),
 				)
 			}
+
+			// Enumerated numbers.
+			Former::Enum(card) if arguments.is_empty() => (
+				DynamicTerm::Enum(card),
+				DynamicValue::Universe {
+					copyability: rc!(StaticValue::Copyability(Copyability::Trivial)),
+					representation: rc!(StaticValue::ReprAtom(ReprAtom::Byte)),
+				},
+				StaticValue::Copyability(Copyability::Trivial),
+				StaticValue::ReprNone,
+			),
+
+			// Invalid former.
 			_ => return Err(ElaborationErrorKind::InvalidFormer.at(expr.range)),
 		},
+
+		// Generic type constructors.
 		Preterm::Constructor(constructor, arguments) => match constructor {
 			// Repeated programs.
 			Constructor::Exp(grade) => {
@@ -651,8 +767,85 @@ fn synthesize_dynamic(
 					StaticValue::ReprExp(grade, r.into()),
 				)
 			}
+
+			// Enumerated numbers.
+			Constructor::Enum(k, v) if arguments.is_empty() => (
+				DynamicTerm::EnumValue(k, v),
+				DynamicValue::Enum(k),
+				StaticValue::Copyability(Copyability::Trivial),
+				StaticValue::ReprAtom(ReprAtom::Byte),
+			),
+
+			// Invalid constructor.
 			_ => return Err(ElaborationErrorKind::InvalidConstructor.at(expr.range)),
 		},
+
+		// Generic case splits.
+		Preterm::Split { scrutinee, motive, cases } => {
+			let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *scrutinee, fragment)?;
+			let scrutinee_value = scrutinee.clone().evaluate_in(&context.environment);
+			match scrutinee_ty {
+				DynamicValue::Enum(card) => {
+					// TODO: Handle this error.
+					let [motive_parameter] = (*motive.parameters).try_into().unwrap();
+					(cases.len() == card as _)
+						.then_some(())
+						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
+					// TODO: Throw specific error if copy/repr depend on the motive.
+					let (motive_term, fiber_copy, fiber_repr) = elaborate_dynamic_type(
+						&mut context.bind_dynamic(
+							motive_parameter,
+							0.into(),
+							DynamicValue::Enum(card),
+							StaticValue::Copyability(Copyability::Trivial),
+							StaticValue::ReprAtom(ReprAtom::Byte),
+						),
+						*motive.body,
+					)?;
+					let motive =
+						Closure::new(context.environment.clone(), [motive_parameter], motive_term.clone());
+					// TODO: Avoid cloning.
+					let mut new_cases = Vec::new();
+					for v in 0..card {
+						let v = v as u8;
+						let case = cases[cases
+							.iter()
+							.position(|(pattern, _)| {
+								if let Pattern::Construction(Constructor::Enum(target_card, target_v), args) = pattern
+								{
+									*target_card == card && *target_v == v && args.is_empty()
+								} else {
+									false
+								}
+							})
+							.unwrap()]
+						.1
+						.clone();
+						new_cases.push(verify_dynamic(
+							context,
+							case,
+							fragment,
+							motive.evaluate_with([DynamicValue::EnumValue(card, v)]),
+						)?)
+					}
+					(
+						DynamicTerm::CaseEnum {
+							scrutinee: bx!(scrutinee),
+							cases: new_cases,
+							fiber_copyability: fiber_copy.unevaluate_in(context.len()).into(),
+							fiber_representation: fiber_repr.unevaluate_in(context.len()).into(),
+							motive: bind([motive_parameter], motive_term),
+						},
+						motive.evaluate_with([scrutinee_value]),
+						fiber_copy,
+						fiber_repr,
+					)
+				}
+
+				// Invalid case split.
+				_ => return Err(ElaborationErrorKind::InvalidCaseSplitScrutineeType.at(expr.range)),
+			}
+		}
 
 		// Synthesis failure.
 		_ => return Err(ElaborationErrorKind::CouldNotSynthesizeDynamic.at(expr.range)),

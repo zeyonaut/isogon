@@ -153,15 +153,15 @@ impl LexedSource {
 					}
 					Whitespace
 				}
-				'%' =>  {
+				'%' => {
 					while let Some(c) = scanner.peek() {
 						scanner.pop();
 						if c == '\n' {
-							break
-						} 
+							break;
+						}
 					}
 					Whitespace
-				} 
+				}
 				'a'..='z' | 'A'..='Z' => {
 					while let Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_') = scanner.peek() {
 						scanner.pop();

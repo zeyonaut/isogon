@@ -3,7 +3,7 @@ use lasso::Rodeo;
 use crate::delta::{
 	common::{any_bind, bind, AnyBinder, Copyability, Name, ReprAtom},
 	ir::{
-		presyntax::{Constructor, Expression, Former, Preterm},
+		presyntax::{Constructor, Expression, Former, Pattern, Preterm},
 		source::{Keyword, LexError, LexErrorKind, LexedSource, Token},
 	},
 };
@@ -146,13 +146,15 @@ peg::parser! {
 			/ [Token::Keyword(Keyword::Repr)] {Former::Repr}
 			/ [Token::Ast] {Former::Universe}
 			/ [Token::Bang] grade:finite_grade_annotation() {Former::Exp(grade)}
+			/ [Token::Keyword(Keyword::Bool)] {Former::Enum(2)}
+			/ [Token::Hash] card:number() { assert!(card <= 256); Former::Enum(card as u16)}
 
 		rule constructor() -> Constructor
 			= [Token::Keyword(Keyword::C0)] {Constructor::Copyability(Copyability::Trivial)}
 			/ [Token::Keyword(Keyword::C1)] {Constructor::Copyability(Copyability::Nontrivial)}
 			/ [Token::Keyword(Keyword::CMax)] {Constructor::CopyMax}
 			// / [Token::Keyword(Keyword::RPointer)] {Constructor::ReprAtom(Some(ReprAtom::Pointer))}
-			// / [Token::Keyword(Keyword::RByte)] {Constructor::ReprAtom(Some(ReprAtom::Byte))}
+			/ [Token::Keyword(Keyword::RByte)] {Constructor::ReprAtom(Some(ReprAtom::Byte))}
 			// / [Token::Keyword(Keyword::RNat)] {Constructor::ReprAtom(Some(ReprAtom::Nat))}
 			/ [Token::Keyword(Keyword::RFun)] {Constructor::ReprAtom(Some(ReprAtom::Fun))}
 			/ [Token::Keyword(Keyword::RNone)] {Constructor::ReprAtom(None)}
@@ -160,6 +162,9 @@ peg::parser! {
 			/ [Token::Keyword(Keyword::RMax)] {Constructor::ReprMax}
 			/ [Token::Keyword(Keyword::RExp)] grade:finite_grade_annotation() {Constructor::ReprExp(grade)}
 			/ [Token::At] grade:finite_grade_annotation() {Constructor::Exp(grade)}
+			/ number:number() [Token::LowDash] card:number() {assert!(card <= 256 && number < card); Constructor::Enum(card as _, number as _)}
+			/ [Token::Keyword(Keyword::False)] {Constructor::Enum(2, 0)}
+			/ [Token::Keyword(Keyword::True)] {Constructor::Enum(2, 1)}
 
 		rule atom() -> Expression
 			= [Token::ParenL] _ preterm:preterm() _ [Token::ParenR] {preterm}
@@ -174,20 +179,35 @@ peg::parser! {
 		rule bound_spine_headed() -> AnyBinder<Box<Expression>>
 			= [Token::Pipe] _ variables:(variable:optional_parameter())**[Token::Period] _ [Token::Pipe] _ body:spine_headed() {any_bind(variables, body)}
 
+		// Case arms.
+		rule atomic_pattern() -> Pattern
+			// TODO: Refactor longest match.
+			= [Token::At] index:optional_parameter() _ [Token::Period] witness:optional_parameter() {Pattern::Witness {index, witness}}
+			/ [Token::At] variable:optional_parameter() {Pattern::Variable(variable)}
+
+		rule pattern() -> Pattern
+			= constructor:constructor() patterns:(_ p:atomic_pattern() {p})* {Pattern::Construction(constructor, patterns)}
+
+		rule case() -> (Pattern, Expression)
+			= pattern:pattern() _ [Token::Arrow] _ preterm:preterm() {(pattern, preterm)}
+
 		// Spines: projections, calls, and case-splits.
 		#[cache_left_rec]
 		rule spine() -> Expression
 			= init:position!() preterm:(
 				  former:former() arguments:(_ a:atom() {a})* {Preterm::Former(former, arguments)}
 				/ constructor:constructor() arguments:(_ a:atom() {a})* {Preterm::Constructor(constructor, arguments)}
+				// Function calls.
 				/ callee:spine() _ argument:atom()
 					{ Preterm::Call { callee: callee.into(), argument: argument.into() } }
+				// Case splits.
+				/ scrutinee:spine() _ [Token::TwoColon] _ motive:bound_spine_headed() _ [Token::CurlyL] (_ [Token::Pipe])? _ cases:case()**(_ [Token::Pipe] _) _ [Token::CurlyR]
+					{ Preterm::Split { scrutinee: scrutinee.into(), motive, cases} }
 			) fini:position!() {preterm.at((init, fini))}
 			/ atom()
 
 		#[cache]
 		rule spine_headed() -> Expression
-			// TODO: Refactor to avoid caching?
 			= init:position!() preterm:(
 				  [Token::Pipe] _ grade:(finite_grade_annotation())? _ parameter:optional_parameter() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { grade: grade.unwrap_or(parameter.is_some() as _), body: bind([parameter], body) }}
 				/ [Token::Pipe] _ grade:(finite_grade_annotation())? _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { grade: grade.unwrap_or(1), base: base.into(), family: bind([parameter], right) }}

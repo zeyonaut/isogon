@@ -22,21 +22,29 @@ pub enum Preterm {
 	Constructor(Constructor, Vec<Expression>),
 
 	Call { callee: Box<Expression>, argument: Box<Expression> },
+	Split { scrutinee: Box<Expression>, motive: AnyBinder<Box<Expression>>, cases: Vec<(Pattern, Expression)> },
 }
 
 #[derive(Debug, Clone)]
 pub enum Former {
-	Exp(usize),
-	Lift,
+	// Types and universe indices.
+	Universe,
 	Copy,
 	Repr,
-	Universe,
+
+	// Quoted programs.
+	Lift,
+
+	// Repeated programs.
+	Exp(usize),
+
+	// Enumerated numbers.
+	Enum(u16),
 }
 
 #[derive(Debug, Clone)]
 pub enum Constructor {
-	Exp(usize),
-
+	// Universe indices.
 	Copyability(Copyability),
 	CopyMax,
 
@@ -44,7 +52,20 @@ pub enum Constructor {
 	ReprExp(usize),
 	ReprPair,
 	ReprMax,
-	ReprUniv,
+
+	// Quoted programs.
+	Exp(usize),
+
+	// Enumerated numbers.
+	Enum(u16, u8),
+}
+
+#[derive(Debug, Clone)]
+pub enum Pattern {
+	Variable(Option<Name>),
+	// Inductive hypothesis witness.
+	Witness { index: Option<Name>, witness: Option<Name> },
+	Construction(Constructor, Vec<Pattern>),
 }
 
 impl Preterm {

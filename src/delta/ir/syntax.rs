@@ -2,31 +2,42 @@ use crate::delta::common::{Binder, Copyability, Field, Index, Name, Repr, ReprAt
 
 #[derive(Clone, Debug)]
 pub enum StaticTerm {
+	// Variables.
 	Variable(Option<Name>, Index),
-	
-	Let { 
-		grade: usize, ty: Box<Self>, argument: Box<Self>, tail: Binder<Box<Self>> },
 
+	// Let-expressions.
+	Let { grade: usize, ty: Box<Self>, argument: Box<Self>, tail: Binder<Box<Self>> },
+
+	// Types.
 	Universe,
 
-	Lift { liftee: Box<DynamicTerm>, copy: Box<Self>, repr: Box<Self> },
-	Quote(Box<DynamicTerm>),
-
-	Exp(usize, Box<Self>),
-	Repeat(usize, Box<Self>),
-	LetExp { grade: usize, argument: Box<Self>, tail: Binder<Box<Self>>},
-
-	Pi(usize, Box<Self>, Binder<Box<Self>>),
-	Lambda(usize, Binder<Box<Self>>),
-	Apply { scrutinee: Box<Self>, argument: Box<Self> },
-
+	// Universe indices.
 	CopyabilityType,
 	Copyability(Copyability),
 	MaxCopyability(Box<Self>, Box<Self>),
 
 	ReprType,
 	ReprAtom(Option<ReprAtom>),
-	ReprExp(usize, Box<Self>)
+	ReprExp(usize, Box<Self>),
+
+	// Quoted programs.
+	Lift { liftee: Box<DynamicTerm>, copy: Box<Self>, repr: Box<Self> },
+	Quote(Box<DynamicTerm>),
+
+	// Repeated programs.
+	Exp(usize, Box<Self>),
+	Repeat(usize, Box<Self>),
+	LetExp { grade: usize, argument: Box<Self>, tail: Binder<Box<Self>> },
+
+	// Dependent functions.
+	Pi(usize, Box<Self>, Binder<Box<Self>>),
+	Lambda(usize, Binder<Box<Self>>),
+	Apply { scrutinee: Box<Self>, argument: Box<Self> },
+
+	// Enumerated numbers.
+	Enum(u16),
+	EnumValue(u16, u8),
+	CaseEnum { scrutinee: Box<Self>, motive: Binder<Box<Self>>, cases: Vec<Self> },
 }
 
 impl From<&Repr> for StaticTerm {
@@ -48,8 +59,10 @@ impl From<Option<&Repr>> for StaticTerm {
 
 #[derive(Clone, Debug)]
 pub enum DynamicTerm {
+	// Variables.
 	Variable(Option<Name>, Index),
 
+	// Let-expressions.
 	Let {
 		grade: usize,
 		ty: Box<Self>,
@@ -57,13 +70,25 @@ pub enum DynamicTerm {
 		tail: Binder<Box<Self>>,
 	},
 
+	// Types.
 	Universe {
 		copyability: Box<StaticTerm>,
 		representation: Box<StaticTerm>,
 	},
 
+	// Quoted programs.
 	Splice(Box<StaticTerm>),
 
+	// Repeated programs.
+	Exp(usize, Box<Self>),
+	Repeat(usize, Box<Self>),
+	LetExp {
+		grade: usize,
+		argument: Box<Self>,
+		tail: Binder<Box<Self>>,
+	},
+
+	// Dependent functions.
 	Pi {
 		grade: usize,
 		base_copyability: Box<StaticTerm>,
@@ -87,8 +112,15 @@ pub enum DynamicTerm {
 		base: Box<Self>,
 		family: Binder<Box<Self>>,
 	},
-	
-	Exp(usize, Box<Self>),
-	Repeat(usize, Box<Self>),
-	LetExp { grade: usize, argument: Box<Self>, tail: Binder<Box<Self>>},
+
+	// Enumerated numbers.
+	Enum(u16),
+	EnumValue(u16, u8),
+	CaseEnum {
+		scrutinee: Box<Self>,
+		cases: Vec<Self>,
+		fiber_copyability: Box<StaticTerm>,
+		fiber_representation: Box<StaticTerm>,
+		motive: Binder<Box<Self>>,
+	},
 }

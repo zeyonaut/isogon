@@ -34,14 +34,14 @@ impl Evaluate for StaticTerm {
 	fn evaluate_in(self, environment: &Environment) -> Self::Value {
 		use StaticTerm::*;
 		match self {
-			Exp(grade, ty) => StaticValue::Exp(grade, ty.evaluate_in(environment).into()),
-			Repeat(grade, argument) => StaticValue::Repeat(grade, argument.evaluate_in(environment).into()),
-			LetExp { grade, argument, tail } => match argument.evaluate_in(environment) {
-				StaticValue::Repeat(_, argument) => tail.evaluate_at(environment, [(*argument).clone()]),
-				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::LetExp { scrutinee: neutral.into(), grade, tail: tail.clone().evaluate_in(environment).into() }),
-				 _ => panic!(),
-			},
+			// Variables.
 			Variable(_, index) => environment.lookup_static(index),
+
+			// Let-expressions.
+			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate_in(environment)]),
+
+			// Types and universe indices.
+			Universe => StaticValue::Universe,
 			CopyabilityType => StaticValue::CopyabilityType,
 			Copyability(c) => StaticValue::Copyability(c),
 			MaxCopyability(a, b) =>
@@ -49,6 +49,29 @@ impl Evaluate for StaticTerm {
 			ReprType => StaticValue::ReprType,
 			ReprAtom(r) => r.map(StaticValue::ReprAtom).unwrap_or(StaticValue::ReprNone),
 			ReprExp(grade, repr) => StaticValue::ReprExp(grade, repr.evaluate_in(environment).into()),
+
+			// Quoted programs.
+			Lift { liftee, copy, repr } => StaticValue::Lift {
+				ty: liftee.evaluate_in(environment),
+				copy: copy.evaluate_in(environment).into(),
+				repr: repr.evaluate_in(environment).into(),
+			},
+			Quote(quotee) => StaticValue::Quote(quotee.evaluate_in(environment)),
+
+			// Repeated programs.
+			Exp(grade, ty) => StaticValue::Exp(grade, ty.evaluate_in(environment).into()),
+			Repeat(grade, argument) => StaticValue::Repeat(grade, argument.evaluate_in(environment).into()),
+			LetExp { grade, argument, tail } => match argument.evaluate_in(environment) {
+				StaticValue::Repeat(_, argument) => tail.evaluate_at(environment, [(*argument).clone()]),
+				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::LetExp {
+					scrutinee: neutral.into(),
+					grade,
+					tail: tail.clone().evaluate_in(environment).into(),
+				}),
+				_ => panic!(),
+			},
+
+			// Dependent functions.
 			Pi(grade, base, family) => StaticValue::IndexedProduct(
 				grade,
 				rc!(base.evaluate_in(environment)),
@@ -63,14 +86,19 @@ impl Evaluate for StaticTerm {
 				)),
 				_ => panic!(),
 			},
-			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate_in(environment)]),
-			Universe => StaticValue::Universe,
-			Lift { liftee, copy, repr } => StaticValue::Lift {
-				ty: liftee.evaluate_in(environment),
-				copy: copy.evaluate_in(environment).into(),
-				repr: repr.evaluate_in(environment).into(),
+
+			// Enumerated numbers.
+			Enum(card) => StaticValue::Enum(card),
+			EnumValue(k, v) => StaticValue::EnumValue(k, v),
+			CaseEnum { scrutinee, motive, cases } => match scrutinee.evaluate_in(environment) {
+				StaticValue::EnumValue(_, v) => cases.into_iter().nth(v.into()).unwrap().evaluate_in(environment),
+				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::CaseEnum {
+					scrutinee: rc!(neutral),
+					motive: rc!(motive.evaluate_in(environment)),
+					cases: cases.into_iter().map(|case| case.evaluate_in(environment)).collect(),
+				}),
+				_ => panic!(),
 			},
-			Quote(quotee) => StaticValue::Quote(quotee.evaluate_in(environment)),
 		}
 	}
 }
@@ -80,16 +108,39 @@ impl Evaluate for DynamicTerm {
 	fn evaluate_in(self, environment: &Environment) -> Self::Value {
 		use DynamicTerm::*;
 		match self {
+			// Variables.
 			Variable(_, index) => environment.lookup_dynamic(index),
 
+			// Let-expressions.
+			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate_in(environment)]),
+
+			// Types.
+			Universe { copyability, representation } => DynamicValue::Universe {
+				copyability: rc!(copyability.evaluate_in(environment)),
+				representation: rc!(representation.evaluate_in(environment)),
+			},
+
+			// Quoted programs.
+			Splice(splicee) => match splicee.evaluate_in(environment) {
+				StaticValue::Quote(quotee) => quotee,
+				StaticValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Splice(neutral)),
+				_ => panic!(),
+			},
+
+			// Repeated programs.
 			Exp(grade, ty) => DynamicValue::Exp(grade, ty.evaluate_in(environment).into()),
 			Repeat(grade, argument) => DynamicValue::Repeat(grade, argument.evaluate_in(environment).into()),
 			LetExp { grade, argument, tail } => match argument.evaluate_in(environment) {
 				DynamicValue::Repeat(_, argument) => tail.evaluate_at(environment, [(*argument).clone()]),
-				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::LetExp { scrutinee: neutral.into(), grade, tail: tail.clone().evaluate_in(environment).into() }),
-				 _ => panic!(),
+				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::LetExp {
+					scrutinee: neutral.into(),
+					grade,
+					tail: tail.clone().evaluate_in(environment).into(),
+				}),
+				_ => panic!(),
 			},
 
+			// Dependent functions.
 			Function { grade, base, family, body } => DynamicValue::Function {
 				grade,
 				base: base.evaluate_in(environment).into(),
@@ -126,16 +177,23 @@ impl Evaluate for DynamicTerm {
 				family_representation: family_representation.evaluate_in(environment).into(),
 				family: family.evaluate_in(environment).into(),
 			},
-			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate_in(environment)]),
-			Universe { copyability, representation } => DynamicValue::Universe {
-				copyability: rc!(copyability.evaluate_in(environment)),
-				representation: rc!(representation.evaluate_in(environment)),
-			},
-			Splice(splicee) => match splicee.evaluate_in(environment) {
-				StaticValue::Quote(quotee) => quotee,
-				StaticValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Splice(neutral)),
-				_ => panic!(),
-			},
+
+			// Enumerated numbers.
+			Enum(k) => DynamicValue::Enum(k),
+			EnumValue(k, v) => DynamicValue::EnumValue(k, v),
+			CaseEnum { scrutinee, cases, fiber_copyability, fiber_representation, motive } =>
+				match scrutinee.evaluate_in(environment) {
+					DynamicValue::EnumValue(_, v) =>
+						cases.into_iter().nth(v.into()).unwrap().evaluate_in(environment),
+					DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::CaseEnum {
+						scrutinee: rc!(neutral),
+						cases: cases.into_iter().map(|case| case.evaluate_in(environment)).collect(),
+						fiber_copyability: fiber_copyability.evaluate_in(environment).into(),
+						fiber_representation: fiber_representation.evaluate_in(environment).into(),
+						motive: rc!(motive.evaluate_in(environment)),
+					}),
+					_ => panic!(),
+				},
 		}
 	}
 }
