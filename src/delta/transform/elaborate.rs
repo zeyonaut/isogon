@@ -59,6 +59,7 @@ enum ElaborationErrorKind {
 	LambdaGradeMismatch(usize, usize),
 	ExpectedStaticFoundDynamicVariable,
 	ExpectedDynamicFoundStaticVariable,
+	UsedNonCrispLockedVariable,
 	VariableHasUsesLeft(usize),
 	SynthesizedLambdaOrPair,
 	InvalidFormer,
@@ -90,12 +91,38 @@ pub enum ContextType {
 
 #[derive(Clone, Debug)]
 pub struct ContextEntry {
+	is_crisp: bool,
 	grade: Option<usize>,
 	ty: ContextType,
 }
 
 impl ContextEntry {
-	pub fn new(grade: Option<usize>, ty: ContextType) -> Self { Self { grade, ty } }
+	pub fn new(is_crisp: bool, grade: Option<usize>, ty: ContextType) -> Self { Self { is_crisp, grade, ty } }
+}
+
+pub struct LockedContext<'c> {
+	context: &'c mut Context,
+	old_lock: Option<usize>,
+}
+
+impl<'c> LockedContext<'c> {
+	fn new(ctx: &'c mut Context, should_lock: bool) -> Self {
+		Self { old_lock: should_lock.then(|| std::mem::replace(&mut ctx.lock, ctx.tys.len())), context: ctx }
+	}
+}
+
+impl<'c> Deref for LockedContext<'c> {
+	type Target = Context;
+
+	fn deref(&self) -> &Self::Target { self.context }
+}
+
+impl<'c> DerefMut for LockedContext<'c> {
+	fn deref_mut(&mut self) -> &mut Self::Target { self.context }
+}
+
+impl<'c> Drop for LockedContext<'c> {
+	fn drop(&mut self) { self.old_lock.map(|old_lock| self.context.lock = old_lock); }
 }
 
 pub struct AmplifiedContext<'c> {
@@ -163,6 +190,7 @@ impl<'c> Drop for ExtendedContext<'c> {
 }
 
 pub struct Context {
+	lock: usize,
 	amplifiers: Vec<(usize, Option<usize>)>,
 	environment: Environment,
 	tys: Vec<(Option<Name>, ContextEntry)>,
@@ -170,7 +198,7 @@ pub struct Context {
 
 impl Context {
 	pub fn empty() -> Self {
-		Self { amplifiers: Vec::new(), environment: Environment(Vec::new()), tys: Vec::new() }
+		Self { lock: 0, amplifiers: Vec::new(), environment: Environment(Vec::new()), tys: Vec::new() }
 	}
 
 	pub fn len(&self) -> Level { Level(self.environment.0.len()) }
@@ -179,6 +207,11 @@ impl Context {
 	#[must_use]
 	fn take_index(&mut self, index: usize, fragment: u8) -> Result<(), ElaborationErrorKind> {
 		let level = self.tys.len() - (index + 1);
+
+		if !self.tys[level].1.is_crisp && level < self.lock {
+			return Err(ElaborationErrorKind::UsedNonCrispLockedVariable);
+		}
+
 		let mut usage = Some(fragment as usize);
 		// Skip this for fragment 0, as 0 is absorbing under multiplication.
 		if usage != Some(0) {
@@ -208,6 +241,10 @@ impl Context {
 		Ok(())
 	}
 
+	pub fn lock_if<'c>(&'c mut self, should_lock: bool) -> LockedContext<'c> {
+		LockedContext::new(self, should_lock)
+	}
+
 	pub fn amplify<'c>(&'c mut self, amplifier: impl Into<Option<usize>>) -> AmplifiedContext<'c> {
 		AmplifiedContext::new(self, amplifier.into())
 	}
@@ -215,13 +252,14 @@ impl Context {
 	pub fn bind_static<'c>(
 		&'c mut self,
 		name: Option<Name>,
+		is_crisp: bool,
 		grade: Option<usize>,
 		ty: StaticValue,
 	) -> ExtendedContext<'c> {
 		ExtendedContext::new(
 			self,
 			name,
-			ContextEntry::new(grade, ContextType::Static(ty)),
+			ContextEntry::new(is_crisp, grade, ContextType::Static(ty)),
 			Value::Static(StaticValue::Neutral(StaticNeutral::Variable(name, self.len()))),
 		)
 	}
@@ -229,6 +267,7 @@ impl Context {
 	pub fn bind_dynamic<'c>(
 		&'c mut self,
 		name: Option<Name>,
+		is_crisp: bool,
 		grade: Option<usize>,
 		ty: DynamicValue,
 		copy: StaticValue,
@@ -237,7 +276,7 @@ impl Context {
 		ExtendedContext::new(
 			self,
 			name,
-			ContextEntry::new(grade, ContextType::Dynamic(ty, copy, repr)),
+			ContextEntry::new(is_crisp, grade, ContextType::Dynamic(ty, copy, repr)),
 			Value::Dynamic(DynamicValue::Neutral(DynamicNeutral::Variable(name, self.len()))),
 		)
 	}
@@ -245,6 +284,7 @@ impl Context {
 	pub fn extend_static<'c>(
 		&'c mut self,
 		name: Option<Name>,
+		is_crisp: bool,
 		grade: Option<usize>,
 		ty: StaticValue,
 		value: StaticValue,
@@ -252,7 +292,7 @@ impl Context {
 		ExtendedContext::new(
 			self,
 			name,
-			ContextEntry::new(grade, ContextType::Static(ty)),
+			ContextEntry::new(is_crisp, grade, ContextType::Static(ty)),
 			Value::Static(value),
 		)
 	}
@@ -260,6 +300,7 @@ impl Context {
 	pub fn extend_dynamic<'c>(
 		&'c mut self,
 		name: Option<Name>,
+		is_crisp: bool,
 		grade: Option<usize>,
 		ty: DynamicValue,
 		copy: StaticValue,
@@ -269,7 +310,7 @@ impl Context {
 		ExtendedContext::new(
 			self,
 			name,
-			ContextEntry::new(grade, ContextType::Dynamic(ty, copy, repr)),
+			ContextEntry::new(is_crisp, grade, ContextType::Dynamic(ty, copy, repr)),
 			Value::Dynamic(value),
 		)
 	}
@@ -311,8 +352,13 @@ fn synthesize_static(
 			let argument_value = argument.clone().evaluate_in(&ctx.environment);
 			let parameters = tail.parameters;
 			let (tail, tail_ty) = {
-				let mut context =
-					ctx.extend_static(parameters[0], (grade * fragment as usize).into(), ty_value, argument_value);
+				let mut context = ctx.extend_static(
+					parameters[0],
+					false,
+					(grade * fragment as usize).into(),
+					ty_value,
+					argument_value,
+				);
 				let result = synthesize_static(&mut context, *tail.body, fragment)?;
 				context.free().map_err(|e| e.at(expr.range))?;
 				result
@@ -338,7 +384,7 @@ fn synthesize_static(
 			let base_value = base.clone().evaluate_in(&ctx.environment);
 			let [parameter] = family.parameters;
 			let family = {
-				let mut context = ctx.bind_static(parameter, 0.into(), base_value);
+				let mut context = ctx.bind_static(parameter, false, 0.into(), base_value);
 				let family = verify_static(&mut context, *family.body, 0, StaticValue::Universe)?;
 				context.free().map_err(|e| e.at(expr.range))?;
 				family
@@ -365,7 +411,7 @@ fn synthesize_static(
 			let base_value = base.clone().evaluate_in(&ctx.environment);
 			let [parameter] = family.parameters;
 			let family = {
-				let mut context = ctx.bind_static(parameter, 0.into(), base_value);
+				let mut context = ctx.bind_static(parameter, false, 0.into(), base_value);
 				let family = verify_static(&mut context, *family.body, 0, StaticValue::Universe)?;
 				context.free().map_err(|e| e.at(expr.range))?;
 				family
@@ -385,6 +431,7 @@ fn synthesize_static(
 			let (tail, tail_ty) = {
 				let mut ctx = ctx.extend_static(
 					parameters[0],
+					false,
 					(grade * fragment as usize).into(),
 					(*base).clone(),
 					basepoint.clone(),
@@ -392,6 +439,7 @@ fn synthesize_static(
 				let result = {
 					let mut ctx = ctx.extend_static(
 						parameters[0],
+						false,
 						(grade * fragment as usize).into(),
 						family.evaluate_with([basepoint]),
 						fiberpoint,
@@ -511,7 +559,7 @@ fn synthesize_static(
 						.then_some(())
 						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
 					let motive_term = verify_static(
-						&mut ctx.bind_static(motive_parameter, 0.into(), StaticValue::Enum(card)),
+						&mut ctx.bind_static(motive_parameter, false, 0.into(), StaticValue::Enum(card)),
 						*motive.body,
 						0,
 						StaticValue::Universe,
@@ -585,7 +633,7 @@ fn verify_static(
 				.ok_or_else(|| ElaborationErrorKind::LambdaGradeMismatch(grade, grade_v).at(expr.range))?;
 			let parameters = body.parameters;
 			let mut context =
-				ctx.bind_static(parameters[0], (grade * fragment as usize).into(), base.as_ref().clone());
+				ctx.bind_static(parameters[0], false, (grade * fragment as usize).into(), base.as_ref().clone());
 			let basepoint_level = context.len().index(0);
 			let body = verify_static(
 				&mut context,
@@ -664,6 +712,7 @@ fn synthesize_dynamic(
 			let (tail, tail_ty, tail_copy, tail_repr) = {
 				let mut context = ctx.extend_dynamic(
 					parameters[0],
+					false,
 					(grade * fragment as usize).into(),
 					ty_value,
 					base_copy,
@@ -701,6 +750,7 @@ fn synthesize_dynamic(
 			let (family, family_copyability, family_representation) = {
 				let mut context = ctx.bind_dynamic(
 					parameters[0],
+					false,
 					0.into(),
 					base_value,
 					base_copyability.clone(),
@@ -782,6 +832,7 @@ fn synthesize_dynamic(
 			let (family, family_copyability, family_representation) = {
 				let mut context = ctx.bind_dynamic(
 					parameters[0],
+					false,
 					0.into(),
 					base_value,
 					base_copyability.clone(),
@@ -842,6 +893,7 @@ fn synthesize_dynamic(
 			let (tail, tail_ty, c, r) = {
 				let mut ctx = ctx.extend_dynamic(
 					parameters[0],
+					false,
 					(grade * fragment as usize).into(),
 					(*base).clone(),
 					(*base_copyability).clone(),
@@ -851,6 +903,7 @@ fn synthesize_dynamic(
 				let result = {
 					let mut ctx = ctx.extend_dynamic(
 						parameters[0],
+						false,
 						(grade * fragment as usize).into(),
 						family.evaluate_with([basepoint]),
 						(*family_copyability).clone(),
@@ -1118,6 +1171,7 @@ fn synthesize_dynamic(
 					let (motive_term, fiber_copy, fiber_repr) = elaborate_dynamic_type(
 						&mut ctx.bind_dynamic(
 							motive_parameter,
+							false,
 							0.into(),
 							DynamicValue::Enum(card),
 							StaticValue::CpyValue(Cpy::Tr),
@@ -1183,10 +1237,11 @@ fn synthesize_dynamic(
 					// TODO: Throw specific error if copy/repr depend on the motive.
 					let (motive_term, fiber_copy, fiber_repr) = {
 						let mut context =
-							ctx.bind_dynamic(v, 0.into(), (*space).clone(), (*copy).clone(), (*repr).clone());
+							ctx.bind_dynamic(v, false, 0.into(), (*space).clone(), (*copy).clone(), (*repr).clone());
 						let index_level = context.len().index(0);
 						let mut context = context.bind_dynamic(
 							p,
+							false,
 							0.into(),
 							DynamicValue::Id {
 								copy: copy.clone(),
@@ -1266,6 +1321,7 @@ fn verify_dynamic(
 			let body = {
 				let mut context = ctx.bind_dynamic(
 					parameters[0],
+					false,
 					(grade * fragment as usize).into(),
 					base.as_ref().clone(),
 					(*base_copyability).clone(),
