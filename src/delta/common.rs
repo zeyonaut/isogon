@@ -69,8 +69,16 @@ pub struct AnyBinder<T> {
 	pub body: T,
 }
 
+impl<T> AnyBinder<T> {
+	pub fn new(parameters: Box<[Option<Name>]>, body: T) -> Self { Self { parameters, body } }
+}
+
+impl<T, const N: usize> From<Binder<T, N>> for AnyBinder<T> {
+	fn from(value: Binder<T, N>) -> Self { Self { parameters: value.parameters.into(), body: value.body } }
+}
+
 pub fn any_bind<T>(parameters: impl Into<Box<[Option<Name>]>>, body: impl Into<T>) -> AnyBinder<T> {
-	AnyBinder { parameters: parameters.into(), body: body.into() }
+	AnyBinder::new(parameters.into(), body.into())
 }
 
 #[derive(Clone, Debug)]

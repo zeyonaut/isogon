@@ -63,7 +63,7 @@ impl Evaluate for StaticTerm {
 			// Repeated programs.
 			Exp(grade, ty) => StaticValue::Exp(grade, ty.evaluate_in(environment).into()),
 			Repeat(grade, argument) => StaticValue::Repeat(grade, argument.evaluate_in(environment).into()),
-			LetExp { grade, argument, tail } => match argument.evaluate_in(environment) {
+			LetExp { grade, grade_argument: _, argument, tail } => match argument.evaluate_in(environment) {
 				StaticValue::Repeat(_, argument) => tail.evaluate_at(environment, [(*argument).clone()]),
 				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::LetExp {
 					scrutinee: neutral.into(),
@@ -158,7 +158,7 @@ impl Evaluate for DynamicTerm {
 			// Repeated programs.
 			Exp(grade, ty) => DynamicValue::Exp(grade, ty.evaluate_in(environment).into()),
 			Repeat(grade, argument) => DynamicValue::Repeat(grade, argument.evaluate_in(environment).into()),
-			LetExp { grade, argument, tail } => match argument.evaluate_in(environment) {
+			LetExp { grade, grade_argument: _, argument, tail } => match argument.evaluate_in(environment) {
 				DynamicValue::Repeat(_, argument) => tail.evaluate_at(environment, [(*argument).clone()]),
 				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::LetExp {
 					scrutinee: neutral.into(),

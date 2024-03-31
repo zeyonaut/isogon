@@ -102,6 +102,9 @@ impl Unevaluate for StaticNeutral {
 			LetExp { scrutinee, grade, tail } => StaticTerm::LetExp {
 				argument: scrutinee.unevaluate_in(level).into(),
 				grade: *grade,
+				// NOTE: It seems like we're converging towards not having LetExp in the domain at all!
+				// So, we'll probably just remove it instead of implement it.
+				grade_argument: unimplemented!(),
 				tail: tail.unevaluate_in(level),
 			},
 
@@ -236,6 +239,7 @@ impl Unevaluate for DynamicNeutral {
 			LetExp { scrutinee, grade, tail } => DynamicTerm::LetExp {
 				argument: scrutinee.unevaluate_in(level).into(),
 				grade: *grade,
+				grade_argument: unimplemented!(),
 				tail: tail.unevaluate_in(level),
 			},
 

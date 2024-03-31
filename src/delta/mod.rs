@@ -3,11 +3,11 @@ mod ir;
 mod sourcify;
 mod transform;
 
-use lasso::{Key, Rodeo};
+use lasso::Rodeo;
 use transform::{elaborate, evaluate::Evaluate, parse::parse};
 
-use self::{ir::syntax::DynamicTerm, sourcify::write_dynamic};
-use crate::delta::transform::unevaluate::Unevaluate;
+use self::{ir::presyntax::PurePreterm, sourcify::print};
+use crate::delta::transform::{unelaborate::Unelaborate, unevaluate::Unevaluate};
 
 pub fn run(source: &str) {
 	// Parsing.
@@ -19,9 +19,9 @@ pub fn run(source: &str) {
 	// Elaboration.
 	let (term, ty) = elaborate(source, &lexed_source, preterm);
 	println!("Elaboration complete.");
-	println!("Elaborated term: {}", pretty_print(&term, &interner));
-	println!("Synthesized type: {}", pretty_print(&ty.unevaluate(), &interner));
-	println!("Evaluation: {}", pretty_print(&term.clone().evaluate().unevaluate(), &interner));
+	println!("Elaborated term: {}", pretty_print(&term.clone().unelaborate(), &interner));
+	println!("Synthesized type: {}", pretty_print(&ty.unevaluate().unelaborate(), &interner));
+	println!("Evaluation: {}", pretty_print(&term.clone().evaluate().unevaluate().unelaborate(), &interner));
 
 	println!();
 
@@ -33,8 +33,8 @@ pub fn run(source: &str) {
 	// println!("Evaluation: {}", pretty_print(&unstaged_term.clone().evaluate().unevaluate(), &interner));
 }
 
-fn pretty_print(term: &DynamicTerm, interner: &Rodeo) -> String {
+fn pretty_print(term: &PurePreterm, interner: &Rodeo) -> String {
 	let mut s = String::new();
-	write_dynamic(term, &mut s, interner).unwrap();
+	print(term, &mut s, interner).unwrap();
 	s
 }

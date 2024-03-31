@@ -4,7 +4,7 @@ use crate::{
 	delta::{
 		common::{bind, Binder, Closure, Cpy, Field, Index, Level, Name, ReprAtom},
 		ir::{
-			presyntax::{Constructor, Expression, Former, Pattern, Preterm, Projector},
+			presyntax::{Constructor, Expression, Former, ParsedPreterm, Pattern, Preterm, Projector},
 			semantics::{
 				Conversion, DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue, Value,
 			},
@@ -321,7 +321,8 @@ fn synthesize_static(
 	expr: Expression,
 	fragment: u8,
 ) -> Result<(StaticTerm, StaticValue), ElaborationError> {
-	Ok(match expr.preterm {
+	let ParsedPreterm(preterm) = expr.preterm;
+	Ok(match preterm {
 		// Variables.
 		Preterm::Variable(name) => 'var: loop {
 			for (i, (name_1, entry)) in ctx.tys.iter().rev().enumerate() {
@@ -616,7 +617,8 @@ fn verify_static(
 	fragment: u8,
 	ty: StaticValue,
 ) -> Result<StaticTerm, ElaborationError> {
-	Ok(match (expr.preterm, ty) {
+	let ParsedPreterm(preterm) = expr.preterm;
+	Ok(match (preterm, ty) {
 		// Quoted programs.
 		(Preterm::SwitchLevel(quotee), ty) => {
 			let StaticValue::Lift { ty: liftee, .. } = ty else {
@@ -678,7 +680,8 @@ fn synthesize_dynamic(
 	expr: Expression,
 	fragment: u8,
 ) -> Result<(DynamicTerm, DynamicValue, StaticValue, StaticValue), ElaborationError> {
-	Ok(match expr.preterm {
+	let ParsedPreterm(preterm) = expr.preterm;
+	Ok(match preterm {
 		// Variables.
 		Preterm::Variable(name) => 'var: loop {
 			for (i, (name_1, entry)) in ctx.tys.iter().rev().enumerate() {
@@ -1293,7 +1296,8 @@ fn verify_dynamic(
 	fragment: u8,
 	ty: DynamicValue,
 ) -> Result<DynamicTerm, ElaborationError> {
-	Ok(match (expr.preterm, ty) {
+	let ParsedPreterm(preterm) = expr.preterm;
+	Ok(match (preterm, ty) {
 		// Dependent functions.
 		(
 			Preterm::Lambda { grade, body },

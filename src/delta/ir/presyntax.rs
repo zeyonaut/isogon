@@ -3,31 +3,36 @@ use crate::delta::common::{AnyBinder, Binder, Cpy, Field, Name, ReprAtom};
 #[derive(Debug, Clone)]
 pub struct Expression {
 	pub range: (usize, usize),
-	pub preterm: Preterm,
+	pub preterm: ParsedPreterm,
 }
 
 #[derive(Debug, Clone)]
-pub enum Preterm {
+pub struct ParsedPreterm(pub Preterm<Expression>);
+
+pub struct PurePreterm(pub Preterm<Self>);
+
+#[derive(Debug, Clone)]
+pub enum Preterm<E> {
 	Variable(Name),
 
-	Let { grade: usize, ty: Box<Expression>, argument: Box<Expression>, tail: Binder<Box<Expression>> },
+	Let { grade: usize, ty: Box<E>, argument: Box<E>, tail: Binder<Box<E>> },
 
-	SwitchLevel(Box<Expression>),
+	SwitchLevel(Box<E>),
 
-	LetExp { grade: usize, grade_argument: usize, argument: Box<Expression>, tail: Binder<Box<Expression>> },
+	LetExp { grade: usize, grade_argument: usize, argument: Box<E>, tail: Binder<Box<E>> },
 
-	Pi { grade: usize, base: Box<Expression>, family: Binder<Box<Expression>> },
-	Lambda { grade: usize, body: Binder<Box<Expression>> },
-	Call { callee: Box<Expression>, argument: Box<Expression> },
+	Pi { grade: usize, base: Box<E>, family: Binder<Box<E>> },
+	Lambda { grade: usize, body: Binder<Box<E>> },
+	Call { callee: Box<E>, argument: Box<E> },
 
-	Sg { base: Box<Expression>, family: Binder<Box<Expression>> },
-	Pair { basepoint: Box<Expression>, fiberpoint: Box<Expression> },
-	SgLet { grade: usize, argument: Box<Expression>, tail: Binder<Box<Expression>, 2> },
+	Sg { base: Box<E>, family: Binder<Box<E>> },
+	Pair { basepoint: Box<E>, fiberpoint: Box<E> },
+	SgLet { grade: usize, argument: Box<E>, tail: Binder<Box<E>, 2> },
 
-	Former(Former, Vec<Expression>),
-	Constructor(Constructor, Vec<Expression>),
-	Project(Box<Expression>, Projector),
-	Split { scrutinee: Box<Expression>, motive: AnyBinder<Box<Expression>>, cases: Vec<(Pattern, Expression)> },
+	Former(Former, Vec<E>),
+	Constructor(Constructor, Vec<E>),
+	Project(Box<E>, Projector),
+	Split { scrutinee: Box<E>, motive: AnyBinder<Box<E>>, cases: Vec<(Pattern, E)> },
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +99,6 @@ pub enum Pattern {
 	Construction(Constructor, Vec<Pattern>),
 }
 
-impl Preterm {
-	pub fn at(self, range: (usize, usize)) -> Expression { Expression { range, preterm: self } }
+impl Preterm<Expression> {
+	pub fn at(self, range: (usize, usize)) -> Expression { Expression { range, preterm: ParsedPreterm(self) } }
 }

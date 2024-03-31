@@ -28,7 +28,7 @@ pub enum StaticTerm {
 	// Repeated programs.
 	Exp(usize, Box<Self>),
 	Repeat(usize, Box<Self>),
-	LetExp { grade: usize, argument: Box<Self>, tail: Binder<Box<Self>> },
+	LetExp { grade: usize, grade_argument: usize, argument: Box<Self>, tail: Binder<Box<Self>> },
 
 	// Dependent functions.
 	Pi(usize, Box<Self>, Binder<Box<Self>>),
@@ -93,6 +93,7 @@ pub enum DynamicTerm {
 	Repeat(usize, Box<Self>),
 	LetExp {
 		grade: usize,
+		grade_argument: usize,
 		argument: Box<Self>,
 		tail: Binder<Box<Self>>,
 	},
