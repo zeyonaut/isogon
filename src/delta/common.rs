@@ -109,6 +109,8 @@ pub enum ReprAtom {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
 pub enum Repr {
 	Atom(ReprAtom),
+	Pair(Rc<Repr>, Rc<Repr>),
+	Exp(usize, Rc<Repr>),
 }
 
 #[derive(Clone, Debug)]

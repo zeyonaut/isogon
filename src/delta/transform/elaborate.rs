@@ -49,7 +49,7 @@ enum ExpectedFormer {
 	Sigma,
 	Pi,
 	Lift,
-	Rc,
+	Bx,
 	Wrap,
 	Id,
 }
@@ -359,14 +359,60 @@ fn synthesize_static(
 			)
 		}
 
+		// Dependent pairs.
+		Preterm::Sg { base, family } => {
+			let base = verify_static(ctx, *base, 0, StaticValue::Universe)?;
+			let base_value = base.clone().evaluate_in(&ctx.environment);
+			let [parameter] = family.parameters;
+			let family = {
+				let mut context = ctx.bind_static(parameter, 0.into(), base_value);
+				let family = verify_static(&mut context, *family.body, 0, StaticValue::Universe)?;
+				context.free().map_err(|e| e.at(expr.range))?;
+				family
+			};
+			(StaticTerm::Sg(bx!(base), bind([parameter], family)), StaticValue::Universe)
+		}
+		Preterm::Pair { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
+		Preterm::SgLet { grade, argument, tail } => {
+			let (tm, ty) = synthesize_static(&mut ctx.amplify(grade), *argument, fragment)?;
+			let StaticValue::IndexedSum(base, family) = ty else {
+				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
+			};
+			let parameters = tail.parameters;
+			// This evaluates tm twice; may want to factor this out if convenient.
+			let basepoint = StaticTerm::SgField(tm.clone().into(), Field::Base).evaluate_in(&ctx.environment);
+			let fiberpoint = StaticTerm::SgField(tm.clone().into(), Field::Fiber).evaluate_in(&ctx.environment);
+			let (tail, tail_ty) = {
+				let mut ctx = ctx.extend_static(
+					parameters[0],
+					(grade * fragment as usize).into(),
+					(*base).clone(),
+					basepoint.clone(),
+				);
+				let result = {
+					let mut ctx = ctx.extend_static(
+						parameters[0],
+						(grade * fragment as usize).into(),
+						family.evaluate_with([basepoint]),
+						fiberpoint,
+					);
+					let result = synthesize_static(&mut ctx, *tail.body, fragment)?;
+					result
+				};
+				ctx.free().map_err(|e| e.at(expr.range))?;
+				result
+			};
+
+			(StaticTerm::SgLet { grade, argument: tm.into(), tail: bind(parameters, tail) }, tail_ty)
+		}
+
 		// Generic type formers.
 		Preterm::Former(former, arguments) => match former {
 			// Types and universe indices.
 			Former::Universe if fragment == 0 && arguments.is_empty() =>
 				(StaticTerm::Universe, StaticValue::Universe),
 			Former::Copy if fragment == 0 && arguments.is_empty() => (StaticTerm::Cpy, StaticValue::Universe),
-			Former::Repr if fragment == 0 && arguments.is_empty() =>
-				(StaticTerm::Repr, StaticValue::Universe),
+			Former::Repr if fragment == 0 && arguments.is_empty() => (StaticTerm::Repr, StaticValue::Universe),
 
 			// Quoting.
 			Former::Lift => {
@@ -409,6 +455,12 @@ fn synthesize_static(
 			}
 			Constructor::ReprAtom(r) if fragment == 0 && arguments.is_empty() =>
 				(StaticTerm::ReprAtom(r), StaticValue::ReprType),
+			Constructor::ReprPair if fragment == 0 => {
+				let [r0, r1] = arguments.try_into().unwrap();
+				let r0 = verify_static(ctx, r0, 0, StaticValue::ReprType)?;
+				let r1 = verify_static(ctx, r1, 0, StaticValue::ReprType)?;
+				(StaticTerm::ReprPair(bx!(r0), bx!(r1)), StaticValue::ReprType)
+			}
 
 			// Repeated programs.
 			Constructor::Exp(grade) => {
@@ -423,6 +475,29 @@ fn synthesize_static(
 
 			// Invalid constructor.
 			_ => return Err(ElaborationErrorKind::InvalidConstructor.at(expr.range)),
+		},
+
+		// Generic projectors.
+		Preterm::Project(scrutinee, projector) => match projector {
+			// Dependent pairs.
+			Projector::Field(field) if fragment == 0 => {
+				let (scrutinee, scrutinee_ty) = synthesize_static(ctx, *scrutinee, 0)?;
+				let StaticValue::IndexedSum(base, family) = scrutinee_ty else {
+					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
+				};
+				match field {
+					Field::Base => (StaticTerm::SgField(scrutinee.into(), field), base.as_ref().clone()),
+					Field::Fiber => (
+						StaticTerm::SgField(bx!(scrutinee.clone()), field),
+						family
+							.evaluate_with([StaticTerm::SgField(scrutinee.clone().into(), Field::Base)
+								.evaluate_in(&ctx.environment)]),
+					),
+				}
+			}
+
+			// Invalid projector.
+			_ => return Err(ElaborationErrorKind::InvalidProjector.at(expr.range)),
 		},
 
 		// Generic case splits.
@@ -520,6 +595,14 @@ fn verify_static(
 			)?;
 			context.free().map_err(|e| e.at(expr.range))?;
 			StaticTerm::Function(grade, bind(parameters, body))
+		}
+
+		// Dependent pairs.
+		(Preterm::Pair { basepoint, fiberpoint }, StaticValue::IndexedSum(base, family)) => {
+			let basepoint = verify_static(ctx, *basepoint, fragment, base.as_ref().clone())?;
+			let basepoint_value = basepoint.clone().evaluate_in(&ctx.environment);
+			let fiberpoint = verify_static(ctx, *fiberpoint, fragment, family.evaluate_with([basepoint_value]))?;
+			StaticTerm::Pair { basepoint: basepoint.into(), fiberpoint: fiberpoint.into() }
 		}
 
 		// Synthesize and conversion-check.
@@ -691,13 +774,105 @@ fn synthesize_dynamic(
 			)
 		}
 
+		// Dependent pairs.
+		Preterm::Sg { base, family } => {
+			let (base, base_copyability, base_representation) = elaborate_dynamic_type(ctx, *base)?;
+			let base_value = base.clone().evaluate_in(&ctx.environment);
+			let parameters = family.parameters;
+			let (family, family_copyability, family_representation) = {
+				let mut context = ctx.bind_dynamic(
+					parameters[0],
+					0.into(),
+					base_value,
+					base_copyability.clone(),
+					base_representation.clone(),
+				);
+				let result = elaborate_dynamic_type(&mut context, *family.body)?;
+				context.free().map_err(|e| e.at(expr.range))?;
+				result
+			};
+
+			let copyability = StaticValue::max_copyability(base_copyability.clone(), family_copyability.clone());
+			let representation =
+				StaticValue::pair_representation(base_representation.clone(), family_representation.clone());
+
+			// Ensure that the inferred fiber axes are independent of the basepoint, or error otherwise.
+			let (Ok(family_copyability), Ok(family_representation)) = (
+				family_copyability.try_unevaluate_in(ctx.len()).into(),
+				family_representation.try_unevaluate_in(ctx.len()).into(),
+			) else {
+				return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
+			};
+
+			(
+				DynamicTerm::Sg {
+					base_copy: base_copyability.unevaluate_in(ctx.len()).into(),
+					base_repr: base_representation.unevaluate_in(ctx.len()).into(),
+					base: base.into(),
+					family_copy: family_copyability.into(),
+					family_repr: family_representation.into(),
+					family: bind(parameters, family),
+				},
+				DynamicValue::Universe { copy: copyability.clone().into(), repr: representation.clone().into() },
+				// TODO: Factor this out; this is common for all types.
+				StaticValue::CpyValue(Cpy::Tr).into(),
+				StaticValue::ReprNone.into(),
+			)
+		}
+		Preterm::Pair { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
+		Preterm::SgLet { grade, argument, tail } => {
+			let (tm, ty, _, _) = synthesize_dynamic(&mut ctx.amplify(grade), *argument, fragment)?;
+			let DynamicValue::IndexedSum {
+				base_copyability,
+				base_representation,
+				base,
+				family_copyability,
+				family_representation,
+				family,
+			} = ty
+			else {
+				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
+			};
+			let parameters = tail.parameters;
+			// This evaluates tm twice; may want to factor this out if convenient.
+			let basepoint = DynamicTerm::SgField { scrutinee: tm.clone().into(), field: Field::Base }
+				.evaluate_in(&ctx.environment);
+			let fiberpoint = DynamicTerm::SgField { scrutinee: tm.clone().into(), field: Field::Fiber }
+				.evaluate_in(&ctx.environment);
+			let (tail, tail_ty, c, r) = {
+				let mut ctx = ctx.extend_dynamic(
+					parameters[0],
+					(grade * fragment as usize).into(),
+					(*base).clone(),
+					(*base_copyability).clone(),
+					(*base_representation).clone(),
+					basepoint.clone(),
+				);
+				let result = {
+					let mut ctx = ctx.extend_dynamic(
+						parameters[0],
+						(grade * fragment as usize).into(),
+						family.evaluate_with([basepoint]),
+						(*family_copyability).clone(),
+						(*family_representation).clone(),
+						fiberpoint,
+					);
+					let result = synthesize_dynamic(&mut ctx, *tail.body, fragment)?;
+					result
+				};
+				ctx.free().map_err(|e| e.at(expr.range))?;
+				result
+			};
+
+			(DynamicTerm::SgLet { grade, argument: tm.into(), tail: bind(parameters, tail) }, tail_ty, c, r)
+		}
+
 		// Generic type formers.
 		Preterm::Former(former, arguments) => match former {
 			// Types.
 			Former::Universe if fragment == 0 => {
 				let [copyability, representation] = arguments.try_into().unwrap();
 				let copyability = verify_static(ctx, copyability, 0, StaticValue::Cpy)?;
-				let copyability_value = copyability.clone().evaluate_in(&ctx.environment);
 				let representation = verify_static(ctx, representation, 0, StaticValue::ReprType)?;
 
 				(
@@ -856,14 +1031,42 @@ fn synthesize_dynamic(
 		// Generic projectors.
 		Preterm::Project(scrutinee, projector) => match projector {
 			// Dependent pairs.
-			Projector::Field(_) => unimplemented!(),
+			Projector::Field(field) if fragment == 0 => {
+				let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(ctx, *scrutinee, 0)?;
+				let DynamicValue::IndexedSum {
+					base_copyability,
+					base_representation,
+					base,
+					family_copyability,
+					family_representation,
+					family,
+				} = scrutinee_ty
+				else {
+					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
+				};
+				let basepoint = DynamicTerm::SgField { scrutinee: scrutinee.clone().into(), field: Field::Base };
+				match field {
+					Field::Base => (
+						basepoint,
+						base.as_ref().clone(),
+						(*base_copyability).clone(),
+						(*base_representation).clone(),
+					),
+					Field::Fiber => (
+						DynamicTerm::SgField { scrutinee: scrutinee.into(), field },
+						family.evaluate_with([basepoint.evaluate_in(&ctx.environment)]),
+						(*family_copyability).clone(),
+						(*family_representation).clone(),
+					),
+				}
+			}
 
 			// Wrappers.
 			Projector::Bx => {
 				let (tm, DynamicValue::Bx { inner: ty, copy, repr }, _, _) =
 					synthesize_dynamic(ctx, *scrutinee, fragment)?
 				else {
-					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Rc).at(expr.range));
+					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Bx).at(expr.range));
 				};
 				(
 					DynamicTerm::BxProject {
@@ -876,6 +1079,7 @@ fn synthesize_dynamic(
 					(*repr).clone(),
 				)
 			}
+
 			Projector::Wrap => {
 				let (tm, DynamicValue::Wrap { inner: ty, copy, repr }, _, _) =
 					synthesize_dynamic(ctx, *scrutinee, fragment)?
@@ -893,6 +1097,9 @@ fn synthesize_dynamic(
 					(*repr).clone(),
 				)
 			}
+
+			// Invalid projector.
+			_ => return Err(ElaborationErrorKind::InvalidProjector.at(expr.range)),
 		},
 
 		// Generic case splits.
@@ -1077,6 +1284,15 @@ fn verify_dynamic(
 			}
 		}
 
+		// Dependent pairs.
+		(Preterm::Pair { basepoint, fiberpoint }, DynamicValue::IndexedSum { base, family, .. }) => {
+			let basepoint = verify_dynamic(ctx, *basepoint, fragment, base.as_ref().clone())?;
+			let basepoint_value = basepoint.clone().evaluate_in(&ctx.environment);
+			let fiberpoint =
+				verify_dynamic(ctx, *fiberpoint, fragment, family.evaluate_with([basepoint_value]))?;
+			DynamicTerm::Pair { basepoint: basepoint.into(), fiberpoint: fiberpoint.into() }
+		}
+
 		// Paths.
 		(Preterm::Constructor(Constructor::Refl, tms), ty) => {
 			let DynamicValue::Id { left, right, .. } = ty else {
@@ -1086,6 +1302,24 @@ fn verify_dynamic(
 
 			let [] = tms.try_into().unwrap();
 			DynamicTerm::Refl
+		}
+
+		// Wrappers.
+		(Preterm::Constructor(Constructor::Bx, tms), ty) => {
+			let DynamicValue::Bx { inner: ty, .. } = ty else {
+				return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Bx).at(expr.range));
+			};
+			let [tm] = tms.try_into().unwrap();
+			let tm = verify_dynamic(ctx, tm, fragment, ty.as_ref().clone())?;
+			DynamicTerm::BxValue(bx!(tm))
+		}
+		(Preterm::Constructor(Constructor::Wrap, tms), ty) => {
+			let DynamicValue::Wrap { inner: ty, .. } = ty else {
+				return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Wrap).at(expr.range));
+			};
+			let [tm] = tms.try_into().unwrap();
+			let tm = verify_dynamic(ctx, tm, fragment, ty.as_ref().clone())?;
+			DynamicTerm::WrapValue(bx!(tm))
 		}
 
 		// Synthesize and conversion-check.

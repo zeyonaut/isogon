@@ -196,6 +196,7 @@ impl Unevaluate for DynamicValue {
 				family: family.try_unevaluate_in(level)?.into(),
 				body: body.try_unevaluate_in(level)?.into(),
 			},
+			// FIXME: Unused variable analysis has revealed a rather embarassing bug here:
 			IndexedSum {
 				base_copyability,
 				base_representation,

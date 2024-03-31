@@ -47,6 +47,9 @@ impl Evaluate for StaticTerm {
 			CpyMax(a, b) => StaticValue::max_copyability(a.evaluate_in(environment), b.evaluate_in(environment)),
 			Repr => StaticValue::ReprType,
 			ReprAtom(r) => r.map(StaticValue::ReprAtom).unwrap_or(StaticValue::ReprNone),
+			ReprPair(l, r) =>
+				StaticValue::pair_representation(l.evaluate_in(environment), r.evaluate_in(environment)),
+			// TODO: Absorb rnone.
 			ReprExp(grade, repr) => StaticValue::ReprExp(grade, repr.evaluate_in(environment).into()),
 
 			// Quoted programs.
@@ -73,8 +76,8 @@ impl Evaluate for StaticTerm {
 			// Dependent functions.
 			Pi(grade, base, family) => StaticValue::IndexedProduct(
 				grade,
-				rc!(base.evaluate_in(environment)),
-				rc!(family.evaluate_in(environment)),
+				base.evaluate_in(environment).into(),
+				family.evaluate_in(environment).into(),
 			),
 			Function(grade, function) => StaticValue::Function(grade, rc!(function.evaluate_in(environment))),
 			Apply { scrutinee, argument } => match scrutinee.evaluate_in(environment) {
@@ -85,6 +88,32 @@ impl Evaluate for StaticTerm {
 				)),
 				_ => panic!(),
 			},
+
+			// Dependent pairs.
+			Sg(base, family) => StaticValue::IndexedSum(
+				base.evaluate_in(environment).into(),
+				family.evaluate_in(environment).into(),
+			),
+			Pair { basepoint, fiberpoint } => StaticValue::Pair(
+				basepoint.evaluate_in(environment).into(),
+				fiberpoint.evaluate_in(environment).into(),
+			),
+			SgField(scrutinee, projection) => match scrutinee.evaluate_in(environment) {
+				StaticValue::Pair(basepoint, fiberpoint) => match projection {
+					Field::Base => basepoint.as_ref().clone(),
+					Field::Fiber => fiberpoint.as_ref().clone(),
+				},
+				StaticValue::Neutral(neutral) =>
+					StaticValue::Neutral(StaticNeutral::Project(neutral.into(), projection)),
+				_ => panic!(),
+			},
+			SgLet { grade: _, argument, tail } => tail.evaluate_at(
+				environment,
+				[
+					SgField(argument.clone(), Field::Base).evaluate_in(environment),
+					SgField(argument.clone(), Field::Fiber).evaluate_in(environment),
+				],
+			),
 
 			// Enumerated numbers.
 			Enum(card) => StaticValue::Enum(card),
@@ -176,6 +205,36 @@ impl Evaluate for DynamicTerm {
 				family_representation: family_representation.evaluate_in(environment).into(),
 				family: family.evaluate_in(environment).into(),
 			},
+
+			// Dependent pairs.
+			Sg { base_copy, base_repr, base, family_copy, family_repr, family } => DynamicValue::IndexedSum {
+				base_copyability: base_copy.evaluate_in(environment).into(),
+				base_representation: base_repr.evaluate_in(environment).into(),
+				base: base.evaluate_in(environment).into(),
+				family_copyability: family_copy.evaluate_in(environment).into(),
+				family_representation: family_repr.evaluate_in(environment).into(),
+				family: family.evaluate_in(environment).into(),
+			},
+			Pair { basepoint, fiberpoint } => DynamicValue::Pair(
+				basepoint.evaluate_in(environment).into(),
+				fiberpoint.evaluate_in(environment).into(),
+			),
+			SgField { scrutinee, field } => match scrutinee.evaluate_in(environment) {
+				DynamicValue::Pair(basepoint, fiberpoint) => match field {
+					Field::Base => basepoint.as_ref().clone(),
+					Field::Fiber => fiberpoint.as_ref().clone(),
+				},
+				DynamicValue::Neutral(neutral) =>
+					DynamicValue::Neutral(DynamicNeutral::Project { scrutinee: neutral.into(), projection: field }),
+				_ => panic!(),
+			},
+			SgLet { grade: _, argument, tail } => tail.evaluate_at(
+				environment,
+				[
+					SgField { scrutinee: argument.clone(), field: Field::Base }.evaluate_in(environment),
+					SgField { scrutinee: argument.clone(), field: Field::Fiber }.evaluate_in(environment),
+				],
+			),
 
 			// Enumerated numbers.
 			Enum(k) => DynamicValue::Enum(k),

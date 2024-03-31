@@ -20,6 +20,10 @@ pub enum Preterm {
 	Lambda { grade: usize, body: Binder<Box<Expression>> },
 	Call { callee: Box<Expression>, argument: Box<Expression> },
 
+	Sg { base: Box<Expression>, family: Binder<Box<Expression>> },
+	Pair { basepoint: Box<Expression>, fiberpoint: Box<Expression> },
+	SgLet { grade: usize, argument: Box<Expression>, tail: Binder<Box<Expression>, 2> },
+
 	Former(Former, Vec<Expression>),
 	Constructor(Constructor, Vec<Expression>),
 	Project(Box<Expression>, Projector),

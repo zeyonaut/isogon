@@ -11,7 +11,7 @@ fn write_static_spine(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -
 	use StaticTerm::*;
 	match term {
 		// Any case which is not already covered by write_static_atom.
-		Apply { .. } | CpyMax(..) | CaseEnum { .. } => write_static(term, f, interner),
+		Apply { .. } | CpyMax(..) | CaseEnum { .. } | ReprPair(..) => write_static(term, f, interner),
 		_ => write_static_atom(term, f, interner),
 	}
 }
@@ -28,17 +28,22 @@ fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) ->
 		| CpyMax(..)
 		| Repr
 		| ReprAtom(_)
+		| ReprPair(_, _)
+		| ReprExp(..)
 		| Repeat(..)
 		| Enum(..)
 		| EnumValue(..) => write_static(term, f, interner),
 		Let { .. }
+		| Pi { .. }
 		| Function { .. }
 		| Apply { .. }
-		| Pi { .. }
 		| Exp(..)
-		| ReprExp(..)
 		| LetExp { .. }
-		| CaseEnum { .. } => {
+		| CaseEnum { .. }
+		| Sg { .. }
+		| Pair { .. }
+		| SgField { .. }
+		| SgLet { .. } => {
 			write!(f, "(")?;
 			write_static(term, f, interner)?;
 			write!(f, ")")
@@ -55,7 +60,9 @@ fn resolve<'a>(interner: &'a Rodeo, name: &Option<Name>) -> &'a str {
 }
 
 fn optional_grade_prefix(grade: usize, parameter: &str) -> String {
-	if (grade == 0 && parameter == "_") || (grade == 1 && parameter != "_")  { "".to_owned() } else {
+	if (grade == 0 && parameter == "_") || (grade == 1 && parameter != "_") {
+		"".to_owned()
+	} else {
 		format!("[{grade}] ")
 	}
 }
@@ -91,7 +98,7 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			write!(f, " ")?;
 			write_static_atom(b, f, interner)
 		}
-		
+
 		Repr => write!(f, "repr"),
 		ReprAtom(None) => write!(f, "rnone"),
 		ReprAtom(Some(r)) => write!(
@@ -104,6 +111,12 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 				self::ReprAtom::Fun => "rfun",
 			}
 		),
+		ReprPair(a, b) => {
+			write!(f, "rpair ")?;
+			write_static_atom(a, f, interner)?;
+			write!(f, " ")?;
+			write_static_atom(b, f, interner)
+		}
 		ReprExp(grade, r) => {
 			write!(f, "rexp[{grade}] ")?;
 			write_static_atom(r, f, interner)
@@ -162,6 +175,44 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			write_static_atom(argument, f, interner)
 		}
 
+		// Dependent pairs.
+		Sg(base, family) => {
+			let parameter = resolve(interner, &family.parameter());
+			if parameter != "_" {
+				write!(f, "|{parameter} : ")?;
+				write_static(base, f, interner)?;
+				write!(f, "| & ")?;
+			} else {
+				write_static_spine(base, f, interner)?;
+				write!(f, " & ")?;
+			}
+			write_static(&family.body, f, interner)
+		}
+		Pair { basepoint, fiberpoint } => {
+			write_static_spine(basepoint, f, interner)?;
+			write!(f, ", ")?;
+			write_static(fiberpoint, f, interner)
+		}
+		SgField(scrutinee, projection) => {
+			write_static_spine(scrutinee, f, interner)?;
+			match projection {
+				Field::Base => write!(f, "/."),
+				Field::Fiber => write!(f, "/!"),
+			}
+		}
+		SgLet { grade, argument, tail } => {
+			write!(
+				f,
+				"let {}({}, {}) = ",
+				optional_grade_prefix(*grade, ":)"),
+				resolve(interner, &tail.parameters[0]),
+				resolve(interner, &tail.parameters[1])
+			)?;
+			write_static(argument, f, interner)?;
+			write!(f, "; ")?;
+			write_static(&tail.body, f, interner)
+		}
+
 		// Enumerated numbers.
 		Enum(k) => write!(f, "#{k}"),
 		EnumValue(k, v) => write!(f, "{v}_{k}"),
@@ -195,14 +246,19 @@ fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) 
 		Variable(..) | Universe { .. } | Splice(_) | Repeat(..) | Enum(..) | EnumValue(..) | Refl =>
 			write_dynamic(term, f, interner),
 		Let { .. }
-		// Dependent functions.
-		| Function { .. }
-		| Pi { .. }
-		| Apply { .. }
 		// Repeated programs.
 		| Exp(..)
 		| CaseEnum { .. }
 		| LetExp { .. }
+		// Dependent functions.
+		| Function { .. }
+		| Pi { .. }
+		| Apply { .. }
+		// Dependent pairs.
+		| Sg { .. }
+		| Pair { .. }
+		| SgField { .. }
+		| SgLet {..}
 		// Paths.
 		| Id { .. }
 		| CasePath { .. }
@@ -294,6 +350,44 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write_dynamic_spine(scrutinee, f, interner)?;
 			write!(f, " ")?;
 			write_dynamic_atom(argument, f, interner)
+		}
+
+		// Dependent pairs.
+		Sg { base, family, .. } => {
+			let parameter = resolve(interner, &family.parameter());
+			if parameter != "_" {
+				write!(f, "|{parameter} : ")?;
+				write_dynamic(base, f, interner)?;
+				write!(f, "| & ")?;
+			} else {
+				write_dynamic_spine(base, f, interner)?;
+				write!(f, " & ")?;
+			}
+			write_dynamic(&family.body, f, interner)
+		}
+		Pair { basepoint, fiberpoint } => {
+			write_dynamic_spine(basepoint, f, interner)?;
+			write!(f, ", ")?;
+			write_dynamic(fiberpoint, f, interner)
+		}
+		SgField { scrutinee, field, .. } => {
+			write_dynamic_spine(scrutinee, f, interner)?;
+			match field {
+				Field::Base => write!(f, "/."),
+				Field::Fiber => write!(f, "/!"),
+			}
+		}
+		SgLet { grade, argument, tail } => {
+			write!(
+				f,
+				"let {}({}, {}) = ",
+				optional_grade_prefix(*grade, ":)"),
+				resolve(interner, &tail.parameters[0]),
+				resolve(interner, &tail.parameters[1])
+			)?;
+			write_dynamic(argument, f, interner)?;
+			write!(f, "; ")?;
+			write_dynamic(&tail.body, f, interner)
 		}
 
 		// Enumerated numbers.

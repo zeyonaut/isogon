@@ -1,13 +1,13 @@
 let [0] T : bool -> * c1 rptr
 	= |b| b :: |_| (* c1 rptr) {
-		| false -> Box #4 % (nat  & bool)
-		| true  -> Box #3 % (bool & nat)
+		| false -> Box (#5  & bool) % (nat  & bool)
+		| true  -> Box (bool & #5) % (bool & nat)
 	};
 
 let test : |b : bool| -> T b
 	= |b| b :: |x| T x {
-		| false -> box 3_4 % (0, false)
-		| true  -> box 2_3 % (true, 1)
+		| false -> box (0_5, false)
+		| true  -> box (true, 1_5)
 	};
 
 test false unbox

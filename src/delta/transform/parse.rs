@@ -134,6 +134,9 @@ peg::parser! {
 		rule number() -> usize
 			= pos:position!() [Token::Number] {parser.number(pos).unwrap()}
 
+		rule parameter() -> Option<Name>
+			= name:identifier() {Some(name)}
+
 		rule optional_parameter() -> Option<Name>
 			= name:identifier() {Some(name)} / [Token::LowDash] {None}
 
@@ -229,6 +232,9 @@ peg::parser! {
 				  [Token::Pipe] _ grade:(finite_grade_annotation())? _ parameter:optional_parameter() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { grade: grade.unwrap_or(parameter.is_some() as _), body: bind([parameter], body) }}
 				/ [Token::Pipe] _ grade:(finite_grade_annotation())? _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { grade: grade.unwrap_or(1), base: base.into(), family: bind([parameter], right) }}
 				/ left:spine() _ grade:(finite_grade_annotation())? _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { grade: grade.unwrap_or(1), base: left.into(), family: bind([None], right) }}
+				/ [Token::Pipe] _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Amp] _ right:spine_headed() {Preterm::Sg { base: base.into(), family: bind([parameter], right) }}
+				/ left:spine() _ [Token::Amp] _ right:spine_headed() {Preterm::Sg { base: left.into(), family: bind([None], right) }}
+				/ left:spine() _ [Token::Comma] _ right:spine_headed() {Preterm::Pair { basepoint: left.into(), fiberpoint: right.into() }}
 			) fini:position!() {preterm.at((init, fini))}
 			/ spine()
 
@@ -238,6 +244,9 @@ peg::parser! {
 				{ Preterm::Let { grade: grade.unwrap_or(name.is_some() as _), ty: ty.into(), argument: argument.into(), tail: bind([name], tail) }}
 				/ [Token::Keyword(Keyword::Let)] _ grade:(finite_grade_annotation())? _ [Token::At] grade_argument:finite_grade_annotation() _ [Token::ParenL] _ name:optional_parameter() _ [Token::ParenR] _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() {
 					Preterm::LetExp { grade: grade.unwrap_or(name.is_some() as _), grade_argument, argument: argument.into(), tail: bind([name], tail) }
+				}
+				/ [Token::Keyword(Keyword::Let)] _ grade:(finite_grade_annotation())? _ [Token::ParenL] _ a:parameter() _ [Token::Comma] _ b:parameter() _ [Token::ParenR] _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() {
+					Preterm::SgLet { grade: grade.unwrap_or(1), argument: argument.into(), tail: bind([a, b], tail) }
 				}
 			) fini:position!() {preterm.at((init, fini))}
 			/ init:position!() [Token::Keyword(Keyword::Def)] _ grade:(finite_grade_annotation())? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() fini:position!()

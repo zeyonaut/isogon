@@ -50,6 +50,7 @@ impl Unevaluate for StaticValue {
 			ReprType => StaticTerm::Repr,
 			ReprNone => StaticTerm::ReprAtom(None),
 			ReprAtom(r) => StaticTerm::ReprAtom(Some(*r)),
+			ReprPair(l, r) => StaticTerm::ReprPair(l.unevaluate_in(level).into(), r.unevaluate_in(level).into()),
 			ReprExp(grade, r) => StaticTerm::ReprExp(*grade, r.unevaluate_in(level).into()),
 
 			// Quoted programs.
@@ -69,6 +70,14 @@ impl Unevaluate for StaticValue {
 				StaticTerm::Pi(*grade, base.try_unevaluate_in(level)?.into(), family.try_unevaluate_in(level)?),
 			Function(grade, function) => StaticTerm::Function(*grade, function.try_unevaluate_in(level)?),
 
+			// Dependent pairs.
+			IndexedSum(base, family) =>
+				StaticTerm::Sg(base.try_unevaluate_in(level)?.into(), family.try_unevaluate_in(level)?),
+			Pair(basepoint, fiberpoint) => StaticTerm::Pair {
+				basepoint: basepoint.try_unevaluate_in(level)?.into(),
+				fiberpoint: fiberpoint.try_unevaluate_in(level)?.into(),
+			},
+
 			// Enumerated values.
 			Enum(k) => StaticTerm::Enum(*k),
 			EnumValue(k, v) => StaticTerm::EnumValue(*k, *v),
@@ -81,19 +90,32 @@ impl Unevaluate for StaticNeutral {
 	fn try_unevaluate_in(&self, level @ Level(context_length): Level) -> Result<Self::Term, ()> {
 		use StaticNeutral::*;
 		Ok(match self {
+			// Variables.
 			Variable(name, Level(level)) =>
 				StaticTerm::Variable(*name, Index(context_length.checked_sub(level + 1).ok_or(())?)),
+
+			// Universe indices.
 			CpyMax(a, b) =>
 				StaticTerm::CpyMax(a.try_unevaluate_in(level)?.into(), b.try_unevaluate_in(level)?.into()),
-			Apply(callee, argument) => StaticTerm::Apply {
-				scrutinee: callee.try_unevaluate_in(level)?.into(),
-				argument: argument.try_unevaluate_in(level)?.into(),
-			},
+
+			// Repeated programs.
 			LetExp { scrutinee, grade, tail } => StaticTerm::LetExp {
 				argument: scrutinee.unevaluate_in(level).into(),
 				grade: *grade,
 				tail: tail.unevaluate_in(level),
 			},
+
+			// Dependent functions.
+			Apply(callee, argument) => StaticTerm::Apply {
+				scrutinee: callee.try_unevaluate_in(level)?.into(),
+				argument: argument.try_unevaluate_in(level)?.into(),
+			},
+
+			// Dependent pairs.
+			Project(scrutinee, projection) =>
+				StaticTerm::SgField(scrutinee.try_unevaluate_in(level)?.into(), *projection),
+
+			// Enumerated numbers.
 			CaseEnum { scrutinee, motive, cases } => StaticTerm::CaseEnum {
 				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
 				motive: motive.try_unevaluate_in(level)?,
@@ -144,6 +166,27 @@ impl Unevaluate for DynamicValue {
 				base: base.try_unevaluate_in(level)?.into(),
 				family: family.try_unevaluate_in(level)?.into(),
 				body: body.try_unevaluate_in(level)?.into(),
+			},
+
+			// Dependent pairs.
+			IndexedSum {
+				base_copyability,
+				base_representation,
+				base,
+				family_copyability,
+				family_representation,
+				family,
+			} => DynamicTerm::Sg {
+				base_copy: base_copyability.try_unevaluate_in(level)?.into(),
+				base_repr: base_representation.try_unevaluate_in(level)?.into(),
+				base: base.try_unevaluate_in(level)?.into(),
+				family_copy: family_copyability.try_unevaluate_in(level)?.into(),
+				family_repr: family_representation.try_unevaluate_in(level)?.into(),
+				family: family.try_unevaluate_in(level)?,
+			},
+			Pair(basepoint, fiberpoint) => DynamicTerm::Pair {
+				basepoint: basepoint.try_unevaluate_in(level)?.into(),
+				fiberpoint: fiberpoint.try_unevaluate_in(level)?.into(),
 			},
 
 			// Enumerated numbers.
@@ -206,6 +249,10 @@ impl Unevaluate for DynamicNeutral {
 					base: base.as_ref().unwrap().try_unevaluate_in(level)?.into(),
 					family: family.as_ref().unwrap().try_unevaluate_in(level)?,
 				},
+
+			// Dependent pairs.
+			Project { scrutinee, projection } =>
+				DynamicTerm::SgField { scrutinee: scrutinee.try_unevaluate_in(level)?.into(), field: *projection },
 
 			// Enumerated numbers.
 			CaseEnum { scrutinee, cases, fiber_copyability, fiber_representation, motive } =>

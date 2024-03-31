@@ -19,6 +19,7 @@ pub enum StaticTerm {
 	Repr,
 	ReprAtom(Option<ReprAtom>),
 	ReprExp(usize, Box<Self>),
+	ReprPair(Box<Self>, Box<Self>),
 
 	// Quoted programs.
 	Lift { liftee: Box<DynamicTerm>, copy: Box<Self>, repr: Box<Self> },
@@ -34,6 +35,12 @@ pub enum StaticTerm {
 	Function(usize, Binder<Box<Self>>),
 	Apply { scrutinee: Box<Self>, argument: Box<Self> },
 
+	// Dependent pairs.
+	Sg(Box<Self>, Binder<Box<Self>>),
+	Pair { basepoint: Box<Self>, fiberpoint: Box<Self> },
+	SgLet { grade: usize, argument: Box<Self>, tail: Binder<Box<Self>, 2> },
+	SgField(Box<Self>, Field),
+
 	// Enumerated numbers.
 	Enum(u16),
 	EnumValue(u16, u8),
@@ -44,6 +51,8 @@ impl From<&Repr> for StaticTerm {
 	fn from(value: &Repr) -> Self {
 		match value {
 			Repr::Atom(atom) => Self::ReprAtom(Some(*atom)),
+			Repr::Pair(l, r) => Self::ReprPair(Self::from(&**l).into(), Self::from(&**r).into()),
+			Repr::Exp(n, r) => Self::ReprExp(*n, Self::from(&**r).into()),
 		}
 	}
 }
@@ -111,6 +120,29 @@ pub enum DynamicTerm {
 		fiber_representation: Box<StaticTerm>,
 		base: Box<Self>,
 		family: Binder<Box<Self>>,
+	},
+
+	// Dependent pairs.
+	Sg {
+		base_copy: Box<StaticTerm>,
+		base_repr: Box<StaticTerm>,
+		base: Box<Self>,
+		family_copy: Box<StaticTerm>,
+		family_repr: Box<StaticTerm>,
+		family: Binder<Box<Self>>,
+	},
+	Pair {
+		basepoint: Box<Self>,
+		fiberpoint: Box<Self>,
+	},
+	SgLet {
+		grade: usize,
+		argument: Box<Self>,
+		tail: Binder<Box<Self>, 2>,
+	},
+	SgField {
+		scrutinee: Box<Self>,
+		field: Field,
 	},
 
 	// Enumerated numbers.

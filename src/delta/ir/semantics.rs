@@ -24,6 +24,8 @@ pub enum StaticValue {
 	ReprNone,
 	ReprAtom(ReprAtom),
 	ReprExp(usize, Rc<Self>),
+	// NOTE: This is a little type-unsafe in exchange for less redundant code; we need to make sure that these two never contain a ReprNone.
+	ReprPair(Rc<Self>, Rc<Self>),
 
 	// Quoted programs.
 	Lift { ty: DynamicValue, copy: Rc<Self>, repr: Rc<Self> },
@@ -37,6 +39,10 @@ pub enum StaticValue {
 	IndexedProduct(usize, Rc<Self>, Rc<Closure<Environment, StaticTerm>>),
 	Function(usize, Rc<Closure<Environment, StaticTerm>>),
 
+	// Dependent pairs.
+	IndexedSum(Rc<Self>, Rc<Closure<Environment, StaticTerm>>),
+	Pair(/* basepoint */ Rc<Self>, /* fiberpoint */ Rc<Self>),
+
 	// Enumerated numbers.
 	Enum(u16),
 	EnumValue(u16, u8),
@@ -47,14 +53,17 @@ pub enum StaticNeutral {
 	// Variables.
 	Variable(Option<Name>, Level),
 
+	// Hacks.
+	CpyMax(Rc<Self>, Rc<Self>),
+
 	// Repeated programs.
 	LetExp { scrutinee: Rc<Self>, grade: usize, tail: Rc<Closure<Environment, StaticTerm>> },
 
 	// Dependent functions.
 	Apply(Rc<Self>, Rc<StaticValue>),
 
-	// Hacks.
-	CpyMax(Rc<Self>, Rc<Self>),
+	// Dependent pairs.
+	Project(Rc<Self>, Field),
 
 	// Enumerated numbers.
 	CaseEnum { scrutinee: Rc<Self>, motive: Rc<Closure<Environment, StaticTerm>>, cases: Vec<StaticValue> },
@@ -64,6 +73,8 @@ impl From<&Repr> for StaticValue {
 	fn from(value: &Repr) -> Self {
 		match value {
 			Repr::Atom(atom) => Self::ReprAtom(*atom),
+			Repr::Pair(l, r) => Self::ReprPair(Self::from(&**l).into(), Self::from(&**r).into()),
+			Repr::Exp(n, r) => Self::ReprExp(*n, Self::from(&**r).into()),
 		}
 	}
 }
@@ -108,6 +119,17 @@ pub enum DynamicValue {
 		family: Rc<Closure<Environment, DynamicTerm>>,
 		body: Rc<Closure<Environment, DynamicTerm>>,
 	},
+
+	// Dependent pairs.
+	IndexedSum {
+		base_copyability: Rc<StaticValue>,
+		base_representation: Rc<StaticValue>,
+		base: Rc<Self>,
+		family_copyability: Rc<StaticValue>,
+		family_representation: Rc<StaticValue>,
+		family: Rc<Closure<Environment, DynamicTerm>>,
+	},
+	Pair(/* basepoint */ Rc<Self>, /* fiberpoint */ Rc<Self>),
 
 	// Enumerated numbers.
 	Enum(u16),
@@ -164,6 +186,12 @@ pub enum DynamicNeutral {
 		family: Option<Rc<Closure<Environment, DynamicTerm>>>,
 	},
 
+	// Dependent pairs.
+	Project {
+		scrutinee: Rc<Self>,
+		projection: Field,
+	},
+
 	// Enumerated numbers.
 	CaseEnum {
 		scrutinee: Rc<Self>,
@@ -203,6 +231,14 @@ impl StaticValue {
 			(a, Self::CpyValue(C::Tr)) => a,
 			(Self::Neutral(a), Self::Neutral(b)) => Self::Neutral(StaticNeutral::CpyMax(rc!(a), rc!(b))),
 			_ => panic!(),
+		}
+	}
+
+	pub fn pair_representation(a: Self, b: Self) -> Self {
+		match (a, b) {
+			(Self::ReprNone, b) => b,
+			(a, Self::ReprNone) => a,
+			(a, b) => Self::ReprPair(rc!(a), rc!(b)),
 		}
 	}
 }
@@ -303,6 +339,20 @@ impl Conversion<StaticValue> for Level {
 				&Neutral(StaticNeutral::Apply(rc!(right.clone()), rc!((left.parameter(), self).into()))),
 			),
 
+			// Dependent pairs.
+			(IndexedSum(left_base, left_family), IndexedSum(right_base, right_family)) =>
+				self.can_convert(&**left_base, right_base)
+					&& (self + 1).can_convert(&left_family.autolyze(self), &right_family.autolyze(self)),
+			(Pair(left_bp, left_fp), Pair(right_bp, right_fp)) =>
+				self.can_convert(&**left_bp, &right_bp) && self.can_convert(&**left_fp, &right_fp),
+			(Neutral(left), Pair(br, fr)) =>
+				self.can_convert(&Neutral(StaticNeutral::Project(left.clone().into(), Field::Base)), &br)
+					&& self.can_convert(&Neutral(StaticNeutral::Project(left.clone().into(), Field::Fiber)), &fr),
+			(Pair(bl, fl), Neutral(right)) =>
+				self.can_convert(&**bl, &Neutral(StaticNeutral::Project(right.clone().into(), Field::Base)))
+					&& self
+						.can_convert(&**fl, &Neutral(StaticNeutral::Project(right.clone().into(), Field::Fiber))),
+
 			// Enumerated numbers.
 			(Enum(left), Enum(right)) => left == right,
 			(EnumValue(_, left), EnumValue(_, right)) => left == right,
@@ -327,11 +377,15 @@ impl Conversion<StaticNeutral> for Level {
 			// Repeated programs.
 			(LetExp { scrutinee: sl, grade: gl, tail: tl }, LetExp { scrutinee: sr, grade: gr, tail: tr }) =>
 				self.can_convert(&**sl, sr)
-					&& gl == gr && self.can_convert(&tl.autolyze(self), &tr.autolyze(self)),
+					&& gl == gr && (self + 1).can_convert(&tl.autolyze(self), &tr.autolyze(self)),
 
 			// Dependent functions.
 			(Apply(left, left_argument), Apply(right, right_argument)) =>
 				self.can_convert(&**left, &right) && self.can_convert(&**left_argument, &right_argument),
+
+			// Dependent pairs.
+			(Project(left, left_projection), Project(right, right_projection)) =>
+				left_projection == right_projection && self.can_convert(&**left, right),
 
 			// Enumerated numbers.
 			(
@@ -404,6 +458,32 @@ impl Conversion<DynamicValue> for Level {
 				}),
 			),
 
+			// Dependent pairs.
+			// NOTE: Annotation conversion not implemented, as it's unclear if it gives any useful advantages.
+			(
+				IndexedSum { base: left_base, family: left_family, .. },
+				IndexedSum { base: right_base, family: right_family, .. },
+			) =>
+				self.can_convert(&**left_base, &right_base)
+					&& (self + 1).can_convert(&left_family.autolyze(self), &right_family.autolyze(self)),
+			(Pair(left_bp, left_fp), Pair(right_bp, right_fp)) =>
+				self.can_convert(&**left_bp, &right_bp) && self.can_convert(&**left_fp, &right_fp),
+			(Neutral(left), Pair(right_bp, right_fp)) =>
+				self
+					.can_convert(&Neutral(Project { scrutinee: left.clone().into(), projection: Base }), &right_bp)
+					&& self.can_convert(
+						&Neutral(Project { scrutinee: left.clone().into(), projection: Fiber }),
+						&right_fp,
+					),
+			(Pair(left_bp, left_fp), Neutral(right)) =>
+				self.can_convert(
+					&**left_bp,
+					&Neutral(Project { scrutinee: right.clone().into(), projection: Base }),
+				) && self.can_convert(
+					&**left_fp,
+					&Neutral(Project { scrutinee: right.clone().into(), projection: Fiber }),
+				),
+
 			// Enumerated numbers.
 			(Enum(left), Enum(right)) => left == right,
 			(EnumValue(_, left), EnumValue(_, right)) => left == right,
@@ -438,7 +518,7 @@ impl Conversion<DynamicNeutral> for Level {
 			// Repeated programs.
 			(LetExp { scrutinee: sl, grade: gl, tail: tl }, LetExp { scrutinee: sr, grade: gr, tail: tr }) =>
 				self.can_convert(&**sl, sr)
-					&& gl == gr && self.can_convert(&tl.autolyze(self), &tr.autolyze(self)),
+					&& gl == gr && (self + 1).can_convert(&tl.autolyze(self), &tr.autolyze(self)),
 
 			// Dependent functions.
 			(
