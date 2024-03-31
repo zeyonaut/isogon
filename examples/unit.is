@@ -1,2 +1,2 @@
-let! x : |A : * c0 rnone| -> A -> A = |_| |a| a;
+let x : |[0] A : * c0 rnone| -> A -> A = |_| |a| a;
 x

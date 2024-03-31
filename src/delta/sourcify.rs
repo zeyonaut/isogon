@@ -3,7 +3,7 @@ use std::fmt::Write;
 use lasso::Rodeo;
 
 use super::{
-	common::{Copyability, Field, Name, ReprAtom},
+	common::{Cpy, Field, Name, ReprAtom},
 	ir::syntax::{DynamicTerm, StaticTerm},
 };
 
@@ -11,7 +11,7 @@ fn write_static_spine(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -
 	use StaticTerm::*;
 	match term {
 		// Any case which is not already covered by write_static_atom.
-		Apply { .. } | MaxCopyability(..) | CaseEnum { .. } => write_static(term, f, interner),
+		Apply { .. } | CpyMax(..) | CaseEnum { .. } => write_static(term, f, interner),
 		_ => write_static_atom(term, f, interner),
 	}
 }
@@ -23,8 +23,9 @@ fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) ->
 		| Universe
 		| Lift { .. }
 		| Quote(_)
-		| Copyability(..)
-		| CopyabilityType
+		| Cpy
+		| CpyValue(..)
+		| CpyMax(..)
 		| ReprType
 		| ReprAtom(_)
 		| Repeat(..)
@@ -34,7 +35,6 @@ fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) ->
 		| Lambda { .. }
 		| Apply { .. }
 		| Pi { .. }
-		| MaxCopyability(..)
 		| Exp(..)
 		| ReprExp(..)
 		| LetExp { .. }
@@ -57,7 +57,7 @@ fn resolve<'a>(interner: &'a Rodeo, name: &Option<Name>) -> &'a str {
 fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use StaticTerm::*;
 
-	use self::Copyability as C;
+	use self::Cpy as C;
 	match term {
 		Variable(name, ..) => write!(f, "{}", resolve(interner, name)),
 
@@ -77,10 +77,10 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			write_static(&tail.body, f, interner)
 		}
 
-		CopyabilityType => write!(f, "copy"),
-		Copyability(C::Trivial) => write!(f, "c0"),
-		Copyability(C::Nontrivial) => write!(f, "c1"),
-		MaxCopyability(a, b) => {
+		Cpy => write!(f, "copy"),
+		CpyValue(C::Tr) => write!(f, "c0"),
+		CpyValue(C::Nt) => write!(f, "c1"),
+		CpyMax(a, b) => {
 			write!(f, "cmax ")?;
 			write_static_atom(a, f, interner)?;
 			write!(f, " ")?;
@@ -131,7 +131,7 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			f,
 			"{}",
 			match r {
-				// self::ReprAtom::Pointer => "rpointer",
+				self::ReprAtom::Ptr => "rptr",
 				self::ReprAtom::Byte => "rbyte",
 				// self::ReprAtom::Nat => "rnat",
 				self::ReprAtom::Fun => "rfun",
@@ -173,14 +173,26 @@ fn write_dynamic_atom(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) 
 		Variable(..) | Universe { .. } | Splice(_) | Repeat(..) | Enum(..) | EnumValue(..) | Refl =>
 			write_dynamic(term, f, interner),
 		Let { .. }
+		// Dependent functions.
 		| Function { .. }
-		| Apply { .. }
 		| Pi { .. }
-		| LetExp { .. }
+		| Apply { .. }
+		// Repeated programs.
 		| Exp(..)
 		| CaseEnum { .. }
+		| LetExp { .. }
+		// Paths.
 		| Id { .. }
-		| CasePath { .. } => {
+		| CasePath { .. }
+		// Wrappers.
+		| Bx { .. }
+		| BxValue(_)
+		| BxProject { .. }
+		| Wrap { .. }
+		| WrapValue(_)
+		| WrapProject { .. }
+		//
+		=> {
 			write!(f, "(")?;
 			write_dynamic(term, f, interner)?;
 			write!(f, ")")
@@ -298,6 +310,32 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write!(f, " {{refl -> ")?;
 			write_dynamic(case_refl, f, interner)?;
 			write!(f, "}}")
+		}
+
+		// Wrappers.
+		Bx { inner: x, .. } => {
+			write!(f, "RC ")?;
+			write_dynamic_atom(x, f, interner)
+		}
+		BxValue(x) => {
+			write!(f, "rc ")?;
+			write_dynamic_atom(x, f, interner)
+		}
+		BxProject { scrutinee: x, .. } => {
+			write_dynamic_spine(x, f, interner)?;
+			write!(f, " unrc")
+		}
+		Wrap { inner: x, .. } => {
+			write!(f, "Wrap ")?;
+			write_dynamic_atom(x, f, interner)
+		}
+		WrapValue(x) => {
+			write!(f, "wrap ")?;
+			write_dynamic_atom(x, f, interner)
+		}
+		WrapProject { scrutinee: x, .. } => {
+			write_dynamic_spine(x, f, interner)?;
+			write!(f, " unwrap")
 		}
 	}
 }

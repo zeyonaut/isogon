@@ -2,9 +2,9 @@ use std::ops::{Deref, DerefMut};
 
 use crate::{
 	delta::{
-		common::{bind, Binder, Closure, Copyability, Field, Index, Level, Name, ReprAtom},
+		common::{bind, Binder, Closure, Cpy, Field, Index, Level, Name, ReprAtom},
 		ir::{
-			presyntax::{Constructor, Expression, Former, Pattern, Preterm},
+			presyntax::{Constructor, Expression, Former, Pattern, Preterm, Projector},
 			semantics::{
 				Conversion, DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue, Value,
 			},
@@ -103,9 +103,9 @@ pub struct AmplifiedContext<'c> {
 }
 
 impl<'c> AmplifiedContext<'c> {
-	fn new(context: &'c mut Context, amplifier: Option<usize>) -> Self {
-		context.amplifiers.push((context.len().0, amplifier));
-		Self { context }
+	fn new(ctx: &'c mut Context, amplifier: Option<usize>) -> Self {
+		ctx.amplifiers.push((ctx.len().0, amplifier));
+		Self { context: ctx }
 	}
 }
 
@@ -128,10 +128,10 @@ pub struct ExtendedContext<'c> {
 }
 
 impl<'c> ExtendedContext<'c> {
-	fn new(context: &'c mut Context, name: Option<Name>, entry: ContextEntry, value: Value) -> Self {
-		context.tys.push((name, entry));
-		context.environment.push(value);
-		Self { context }
+	fn new(ctx: &'c mut Context, name: Option<Name>, entry: ContextEntry, value: Value) -> Self {
+		ctx.tys.push((name, entry));
+		ctx.environment.push(value);
+		Self { context: ctx }
 	}
 
 	#[must_use]
@@ -276,18 +276,18 @@ impl Context {
 }
 
 fn synthesize_static(
-	context: &mut Context,
+	ctx: &mut Context,
 	expr: Expression,
 	fragment: u8,
 ) -> Result<(StaticTerm, StaticValue), ElaborationError> {
 	Ok(match expr.preterm {
 		// Variables.
 		Preterm::Variable(name) => 'var: loop {
-			for (i, (name_1, entry)) in context.tys.iter().rev().enumerate() {
+			for (i, (name_1, entry)) in ctx.tys.iter().rev().enumerate() {
 				if &Some(name) == name_1 {
 					if let ContextType::Static(ty) = &entry.ty {
 						let result = (StaticTerm::Variable(Some(name), Index(i)), ty.clone());
-						context.take_index(i, fragment).map_err(|e| e.at(expr.range))?;
+						ctx.take_index(i, fragment).map_err(|e| e.at(expr.range))?;
 						break 'var result;
 					} else {
 						return Err(ElaborationErrorKind::ExpectedStaticFoundDynamicVariable.at(expr.range));
@@ -299,24 +299,20 @@ fn synthesize_static(
 
 		// Let-expressions.
 		Preterm::Let { grade, ty, argument, tail } => {
-			let ty = verify_static(context, *ty, 0, StaticValue::Universe)?;
-			let ty_value = ty.clone().evaluate_in(&context.environment);
+			let ty = verify_static(ctx, *ty, 0, StaticValue::Universe)?;
+			let ty_value = ty.clone().evaluate_in(&ctx.environment);
 			let argument = verify_static(
-				&mut context.amplify(grade),
+				&mut ctx.amplify(grade),
 				*argument,
 				fragment * (grade > 0) as u8,
 				ty_value.clone(),
 			)?;
 			// TODO: Lazy evaluation.
-			let argument_value = argument.clone().evaluate_in(&context.environment);
+			let argument_value = argument.clone().evaluate_in(&ctx.environment);
 			let parameters = tail.parameters;
 			let (tail, tail_ty) = {
-				let mut context = context.extend_static(
-					parameters[0],
-					(grade * fragment as usize).into(),
-					ty_value,
-					argument_value,
-				);
+				let mut context =
+					ctx.extend_static(parameters[0], (grade * fragment as usize).into(), ty_value, argument_value);
 				let result = synthesize_static(&mut context, *tail.body, fragment)?;
 				context.free().map_err(|e| e.at(expr.range))?;
 				result
@@ -329,7 +325,7 @@ fn synthesize_static(
 
 		// Quoting.
 		Preterm::SwitchLevel(quotee) => {
-			let (quotee, quotee_ty, copy, repr) = synthesize_dynamic(context, *quotee, fragment)?;
+			let (quotee, quotee_ty, copy, repr) = synthesize_dynamic(ctx, *quotee, fragment)?;
 			(
 				StaticTerm::Quote(bx!(quotee)),
 				StaticValue::Lift { ty: quotee_ty.into(), copy: copy.into(), repr: repr.into() },
@@ -338,11 +334,11 @@ fn synthesize_static(
 
 		// Dependent functions.
 		Preterm::Pi { grade, base, family } if fragment == 0 => {
-			let base = verify_static(context, *base, 0, StaticValue::Universe)?;
-			let base_value = base.clone().evaluate_in(&context.environment);
+			let base = verify_static(ctx, *base, 0, StaticValue::Universe)?;
+			let base_value = base.clone().evaluate_in(&ctx.environment);
 			let [parameter] = family.parameters;
 			let family = {
-				let mut context = context.bind_static(parameter, 0.into(), base_value);
+				let mut context = ctx.bind_static(parameter, 0.into(), base_value);
 				let family = verify_static(&mut context, *family.body, 0, StaticValue::Universe)?;
 				context.free().map_err(|e| e.at(expr.range))?;
 				family
@@ -351,19 +347,15 @@ fn synthesize_static(
 		}
 		Preterm::Lambda { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
 		Preterm::Call { callee, argument } => {
-			let (callee, scrutinee_ty) = synthesize_static(context, *callee, fragment)?;
+			let (callee, scrutinee_ty) = synthesize_static(ctx, *callee, fragment)?;
 			let StaticValue::IndexedProduct(grade, base, family) = scrutinee_ty else {
 				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
 			};
-			let argument = verify_static(
-				&mut context.amplify(grade),
-				*argument,
-				fragment * (grade > 0) as u8,
-				(*base).clone(),
-			)?;
+			let argument =
+				verify_static(&mut ctx.amplify(grade), *argument, fragment * (grade > 0) as u8, (*base).clone())?;
 			(
 				StaticTerm::Apply { scrutinee: bx!(callee), argument: bx!(argument.clone()) },
-				family.evaluate_with([argument.evaluate_in(&context.environment)]),
+				family.evaluate_with([argument.evaluate_in(&ctx.environment)]),
 			)
 		}
 
@@ -372,20 +364,19 @@ fn synthesize_static(
 			// Types and universe indices.
 			Former::Universe if fragment == 0 && arguments.is_empty() =>
 				(StaticTerm::Universe, StaticValue::Universe),
-			Former::Copy if fragment == 0 && arguments.is_empty() =>
-				(StaticTerm::CopyabilityType, StaticValue::Universe),
+			Former::Copy if fragment == 0 && arguments.is_empty() => (StaticTerm::Cpy, StaticValue::Universe),
 			Former::Repr if fragment == 0 && arguments.is_empty() =>
 				(StaticTerm::ReprType, StaticValue::Universe),
 
 			// Quoting.
 			Former::Lift => {
 				let [liftee] = arguments.try_into().unwrap();
-				let (liftee, copy, repr) = elaborate_dynamic_type(context, liftee)?;
+				let (liftee, copy, repr) = elaborate_dynamic_type(ctx, liftee)?;
 				(
 					StaticTerm::Lift {
 						liftee: liftee.into(),
-						copy: copy.unevaluate_in(context.len()).into(),
-						repr: repr.unevaluate_in(context.len()).into(),
+						copy: copy.unevaluate_in(ctx.len()).into(),
+						repr: repr.unevaluate_in(ctx.len()).into(),
 					},
 					StaticValue::Universe,
 				)
@@ -394,7 +385,7 @@ fn synthesize_static(
 			// Repeated programs.
 			Former::Exp(grade) => {
 				let [ty] = arguments.try_into().unwrap();
-				let ty = verify_static(context, ty, 0, StaticValue::Universe)?;
+				let ty = verify_static(ctx, ty, 0, StaticValue::Universe)?;
 				(StaticTerm::Exp(grade, ty.into()), StaticValue::Universe)
 			}
 
@@ -408,13 +399,13 @@ fn synthesize_static(
 		// Generic term constructors.
 		Preterm::Constructor(constructor, arguments) => match constructor {
 			// Universe indices.
-			Constructor::Copyability(c) if fragment == 0 && arguments.is_empty() =>
-				(StaticTerm::Copyability(c), StaticValue::CopyabilityType),
-			Constructor::CopyMax if fragment == 0 => {
+			Constructor::Cpy(c) if fragment == 0 && arguments.is_empty() =>
+				(StaticTerm::CpyValue(c), StaticValue::Cpy),
+			Constructor::CpyMax if fragment == 0 => {
 				let [a, b] = arguments.try_into().unwrap();
-				let a = verify_static(context, a, 0, StaticValue::CopyabilityType)?;
-				let b = verify_static(context, b, 0, StaticValue::CopyabilityType)?;
-				(StaticTerm::MaxCopyability(bx!(a), bx!(b)), StaticValue::CopyabilityType)
+				let a = verify_static(ctx, a, 0, StaticValue::Cpy)?;
+				let b = verify_static(ctx, b, 0, StaticValue::Cpy)?;
+				(StaticTerm::CpyMax(bx!(a), bx!(b)), StaticValue::Cpy)
 			}
 			Constructor::ReprAtom(r) if fragment == 0 && arguments.is_empty() =>
 				(StaticTerm::ReprAtom(r), StaticValue::ReprType),
@@ -422,7 +413,7 @@ fn synthesize_static(
 			// Repeated programs.
 			Constructor::Exp(grade) => {
 				let [tm] = arguments.try_into().unwrap();
-				let (tm, ty) = synthesize_static(context, tm, 0)?;
+				let (tm, ty) = synthesize_static(ctx, tm, 0)?;
 				(StaticTerm::Exp(grade, tm.into()), StaticValue::Exp(grade, ty.into()))
 			}
 
@@ -436,8 +427,8 @@ fn synthesize_static(
 
 		// Generic case splits.
 		Preterm::Split { scrutinee, motive, cases } => {
-			let (scrutinee, scrutinee_ty) = synthesize_static(context, *scrutinee, fragment)?;
-			let scrutinee_value = scrutinee.clone().evaluate_in(&context.environment);
+			let (scrutinee, scrutinee_ty) = synthesize_static(ctx, *scrutinee, fragment)?;
+			let scrutinee_value = scrutinee.clone().evaluate_in(&ctx.environment);
 			match scrutinee_ty {
 				StaticValue::Enum(card) => {
 					let [motive_parameter] = (*motive.parameters).try_into().unwrap();
@@ -445,13 +436,13 @@ fn synthesize_static(
 						.then_some(())
 						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
 					let motive_term = verify_static(
-						&mut context.bind_static(motive_parameter, 0.into(), StaticValue::Enum(card)),
+						&mut ctx.bind_static(motive_parameter, 0.into(), StaticValue::Enum(card)),
 						*motive.body,
 						0,
 						StaticValue::Universe,
 					)?;
 					let motive_value =
-						Closure::new(context.environment.clone(), [motive_parameter], motive_term.clone());
+						Closure::new(ctx.environment.clone(), [motive_parameter], motive_term.clone());
 					// TODO: Avoid cloning.
 					let mut new_cases = Vec::new();
 					for v in 0..card {
@@ -470,7 +461,7 @@ fn synthesize_static(
 						.1
 						.clone();
 						new_cases.push(verify_static(
-							context,
+							ctx,
 							case,
 							fragment,
 							motive_value.evaluate_with([StaticValue::EnumValue(card, v)]),
@@ -497,7 +488,7 @@ fn synthesize_static(
 }
 
 fn verify_static(
-	context: &mut Context,
+	ctx: &mut Context,
 	expr: Expression,
 	fragment: u8,
 	ty: StaticValue,
@@ -508,7 +499,7 @@ fn verify_static(
 			let StaticValue::Lift { ty: liftee, .. } = ty else {
 				return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Lift).at(expr.range));
 			};
-			let quotee = verify_dynamic(context, *quotee, fragment, liftee)?;
+			let quotee = verify_dynamic(ctx, *quotee, fragment, liftee)?;
 			StaticTerm::Quote(bx!(quotee))
 		}
 
@@ -519,7 +510,7 @@ fn verify_static(
 				.ok_or_else(|| ElaborationErrorKind::LambdaGradeMismatch(grade, grade_v).at(expr.range))?;
 			let parameters = body.parameters;
 			let mut context =
-				context.bind_static(parameters[0], (grade * fragment as usize).into(), base.as_ref().clone());
+				ctx.bind_static(parameters[0], (grade * fragment as usize).into(), base.as_ref().clone());
 			let basepoint_level = context.len().index(0);
 			let body = verify_static(
 				&mut context,
@@ -533,14 +524,14 @@ fn verify_static(
 
 		// Synthesize and conversion-check.
 		(term, ty) => {
-			let (term, synthesized_ty) = synthesize_static(context, term.at(expr.range), fragment)?;
-			if context.len().can_convert(&synthesized_ty, &ty) {
+			let (term, synthesized_ty) = synthesize_static(ctx, term.at(expr.range), fragment)?;
+			if ctx.len().can_convert(&synthesized_ty, &ty) {
 				term
 			} else {
 				return Err(
 					ElaborationErrorKind::StaticBidirectionalMismatch {
-						synthesized: synthesized_ty.unevaluate_in(context.len()),
-						expected: ty.unevaluate_in(context.len()),
+						synthesized: synthesized_ty.unevaluate_in(ctx.len()),
+						expected: ty.unevaluate_in(ctx.len()),
 					}
 					.at(expr.range),
 				);
@@ -552,19 +543,19 @@ fn verify_static(
 // TODO: Refactor to centralize assigning copy/repr to each type to prevent potential mistakes.
 // Term, type, copyability, representation
 fn synthesize_dynamic(
-	context: &mut Context,
+	ctx: &mut Context,
 	expr: Expression,
 	fragment: u8,
 ) -> Result<(DynamicTerm, DynamicValue, StaticValue, StaticValue), ElaborationError> {
 	Ok(match expr.preterm {
 		// Variables.
 		Preterm::Variable(name) => 'var: loop {
-			for (i, (name_1, entry)) in context.tys.iter().rev().enumerate() {
+			for (i, (name_1, entry)) in ctx.tys.iter().rev().enumerate() {
 				if &Some(name) == name_1 {
 					if let ContextType::Dynamic(ty, copy, repr) = &entry.ty {
 						let result =
 							(DynamicTerm::Variable(Some(name), Index(i)), ty.clone(), copy.clone(), repr.clone());
-						context.take_index(i, fragment).map_err(|e| e.at(expr.range))?;
+						ctx.take_index(i, fragment).map_err(|e| e.at(expr.range))?;
 						break 'var result;
 					} else {
 						return Err(ElaborationErrorKind::ExpectedDynamicFoundStaticVariable.at(expr.range));
@@ -576,19 +567,19 @@ fn synthesize_dynamic(
 
 		// Let-expressions.
 		Preterm::Let { grade, ty, argument, tail } => {
-			let (ty, base_copy, base_repr) = elaborate_dynamic_type(context, *ty)?;
-			let ty_value = ty.clone().evaluate_in(&context.environment);
+			let (ty, base_copy, base_repr) = elaborate_dynamic_type(ctx, *ty)?;
+			let ty_value = ty.clone().evaluate_in(&ctx.environment);
 			let argument = verify_dynamic(
-				&mut context.amplify(grade),
+				&mut ctx.amplify(grade),
 				*argument,
 				fragment * (grade > 0) as u8,
 				ty_value.clone(),
 			)?;
 			// TODO: Lazy evaluation.
-			let argument_value = argument.clone().evaluate_in(&context.environment);
+			let argument_value = argument.clone().evaluate_in(&ctx.environment);
 			let parameters = tail.parameters;
 			let (tail, tail_ty, tail_copy, tail_repr) = {
-				let mut context = context.extend_dynamic(
+				let mut context = ctx.extend_dynamic(
 					parameters[0],
 					(grade * fragment as usize).into(),
 					ty_value,
@@ -612,7 +603,7 @@ fn synthesize_dynamic(
 		// Splicing.
 		Preterm::SwitchLevel(splicee) => {
 			let (splicee, StaticValue::Lift { ty: liftee, copy, repr }) =
-				synthesize_static(context, *splicee, fragment)?
+				synthesize_static(ctx, *splicee, fragment)?
 			else {
 				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Lift).at(expr.range));
 			};
@@ -621,11 +612,11 @@ fn synthesize_dynamic(
 
 		// Dependent functions.
 		Preterm::Pi { grade, base, family } if fragment == 0 => {
-			let (base, base_copyability, base_representation) = elaborate_dynamic_type(context, *base)?;
-			let base_value = base.clone().evaluate_in(&context.environment);
+			let (base, base_copyability, base_representation) = elaborate_dynamic_type(ctx, *base)?;
+			let base_value = base.clone().evaluate_in(&ctx.environment);
 			let parameters = family.parameters;
 			let (family, family_copyability, family_representation) = {
-				let mut context = context.bind_dynamic(
+				let mut context = ctx.bind_dynamic(
 					parameters[0],
 					0.into(),
 					base_value,
@@ -639,8 +630,8 @@ fn synthesize_dynamic(
 
 			// Ensure that the inferred fiber axes are independent of the basepoint, or error otherwise.
 			let (Ok(family_copyability), Ok(family_representation)) = (
-				family_copyability.try_unevaluate_in(context.len()).into(),
-				family_representation.try_unevaluate_in(context.len()).into(),
+				family_copyability.try_unevaluate_in(ctx.len()).into(),
+				family_representation.try_unevaluate_in(ctx.len()).into(),
 			) else {
 				return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
 			};
@@ -648,25 +639,25 @@ fn synthesize_dynamic(
 			(
 				DynamicTerm::Pi {
 					grade: grade.into(),
-					base_copyability: base_copyability.unevaluate_in(context.len()).into(),
-					base_representation: base_representation.unevaluate_in(context.len()).into(),
+					base_copyability: base_copyability.unevaluate_in(ctx.len()).into(),
+					base_representation: base_representation.unevaluate_in(ctx.len()).into(),
 					base: base.into(),
 					family_copyability: family_copyability.into(),
 					family_representation: family_representation.into(),
 					family: bind(parameters, family),
 				},
 				DynamicValue::Universe {
-					copyability: StaticValue::Copyability(Copyability::Nontrivial).into(),
-					representation: StaticValue::ReprAtom(ReprAtom::Fun).into(),
+					copy: StaticValue::CpyValue(Cpy::Nt).into(),
+					repr: StaticValue::ReprAtom(ReprAtom::Fun).into(),
 				},
 				// TODO: Factor this out; this is common for all types.
-				StaticValue::Copyability(Copyability::Trivial).into(),
+				StaticValue::CpyValue(Cpy::Tr).into(),
 				StaticValue::ReprNone.into(),
 			)
 		}
 		Preterm::Lambda { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
 		Preterm::Call { callee, argument } => {
-			let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *callee, fragment)?;
+			let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(ctx, *callee, fragment)?;
 			let DynamicValue::IndexedProduct {
 				grade,
 				base,
@@ -679,20 +670,20 @@ fn synthesize_dynamic(
 				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
 			};
 			let argument = verify_dynamic(
-				&mut context.amplify(grade),
+				&mut ctx.amplify(grade),
 				*argument,
 				fragment * (grade > 0) as u8,
 				(*base).clone(),
 			)?;
-			let argument_value = argument.clone().evaluate_in(&context.environment);
+			let argument_value = argument.clone().evaluate_in(&ctx.environment);
 			(
 				DynamicTerm::Apply {
 					scrutinee: scrutinee.into(),
 					argument: argument.into(),
-					fiber_copyability: family_copyability.unevaluate_in(context.len()).into(),
-					fiber_representation: family_representation.unevaluate_in(context.len()).into(),
-					base: base.unevaluate_in(context.len()).into(),
-					family: family.unevaluate_in(context.len()),
+					fiber_copyability: family_copyability.unevaluate_in(ctx.len()).into(),
+					fiber_representation: family_representation.unevaluate_in(ctx.len()).into(),
+					base: base.unevaluate_in(ctx.len()).into(),
+					family: family.unevaluate_in(ctx.len()),
 				},
 				family.evaluate_with([argument_value]),
 				(*family_copyability).clone(),
@@ -705,9 +696,9 @@ fn synthesize_dynamic(
 			// Types.
 			Former::Universe if fragment == 0 => {
 				let [copyability, representation] = arguments.try_into().unwrap();
-				let copyability = verify_static(context, copyability, 0, StaticValue::CopyabilityType)?;
-				let copyability_value = copyability.clone().evaluate_in(&context.environment);
-				let representation = verify_static(context, representation, 0, StaticValue::ReprType)?;
+				let copyability = verify_static(ctx, copyability, 0, StaticValue::Cpy)?;
+				let copyability_value = copyability.clone().evaluate_in(&ctx.environment);
+				let representation = verify_static(ctx, representation, 0, StaticValue::ReprType)?;
 
 				(
 					DynamicTerm::Universe {
@@ -715,11 +706,11 @@ fn synthesize_dynamic(
 						representation: bx!(representation),
 					},
 					DynamicValue::Universe {
-						copyability: StaticValue::Copyability(Copyability::Trivial).into(),
-						representation: StaticValue::ReprNone.into(),
+						copy: StaticValue::CpyValue(Cpy::Tr).into(),
+						repr: StaticValue::ReprNone.into(),
 					},
 					// TODO: Factor out this, this is common for all types.
-					StaticValue::Copyability(Copyability::Trivial),
+					StaticValue::CpyValue(Cpy::Tr),
 					StaticValue::ReprNone.into(),
 				)
 			}
@@ -727,14 +718,14 @@ fn synthesize_dynamic(
 			// Repeated programs.
 			Former::Exp(grade) => {
 				let [ty] = arguments.try_into().unwrap();
-				let (ty, copy, repr) = elaborate_dynamic_type(context, ty)?;
+				let (ty, copy, repr) = elaborate_dynamic_type(ctx, ty)?;
 				(
 					DynamicTerm::Exp(grade, ty.into()),
 					DynamicValue::Universe {
-						copyability: copy.into(),
-						representation: StaticValue::ReprExp(grade, repr.into()).into(),
+						copy: copy.into(),
+						repr: StaticValue::ReprExp(grade, repr.into()).into(),
 					},
-					StaticValue::Copyability(Copyability::Trivial),
+					StaticValue::CpyValue(Cpy::Tr),
 					StaticValue::ReprNone.into(),
 				)
 			}
@@ -743,33 +734,69 @@ fn synthesize_dynamic(
 			Former::Enum(card) if arguments.is_empty() => (
 				DynamicTerm::Enum(card),
 				DynamicValue::Universe {
-					copyability: StaticValue::Copyability(Copyability::Trivial).into(),
-					representation: StaticValue::ReprAtom(ReprAtom::Byte).into(),
+					copy: StaticValue::CpyValue(Cpy::Tr).into(),
+					repr: StaticValue::ReprAtom(ReprAtom::Byte).into(),
 				},
-				StaticValue::Copyability(Copyability::Trivial),
+				StaticValue::CpyValue(Cpy::Tr),
 				StaticValue::ReprNone,
 			),
 
 			// Paths.
 			Former::Id => {
 				let [ty, x, y] = arguments.try_into().unwrap();
-				let (ty, c, r) = elaborate_dynamic_type(context, ty)?;
-				let ty_value = ty.clone().evaluate_in(&context.environment);
-				let x = verify_dynamic(context, x, 0, ty_value.clone())?;
-				let y = verify_dynamic(context, y, 0, ty_value.clone())?;
+				let (ty, c, r) = elaborate_dynamic_type(ctx, ty)?;
+				let ty_value = ty.clone().evaluate_in(&ctx.environment);
+				let x = verify_dynamic(ctx, x, 0, ty_value.clone())?;
+				let y = verify_dynamic(ctx, y, 0, ty_value.clone())?;
 				(
 					DynamicTerm::Id {
-						copy: c.unevaluate_in(context.len()).into(),
-						repr: r.unevaluate_in(context.len()).into(),
+						copy: c.unevaluate_in(ctx.len()).into(),
+						repr: r.unevaluate_in(ctx.len()).into(),
 						space: ty.into(),
 						left: x.into(),
 						right: y.into(),
 					},
 					DynamicValue::Universe {
-						copyability: StaticValue::Copyability(Copyability::Trivial).into(),
-						representation: StaticValue::ReprNone.into(),
+						copy: StaticValue::CpyValue(Cpy::Tr).into(),
+						repr: StaticValue::ReprNone.into(),
 					},
-					StaticValue::Copyability(Copyability::Trivial),
+					StaticValue::CpyValue(Cpy::Tr),
+					StaticValue::ReprNone,
+				)
+			}
+
+			// Wrappers.
+			Former::Bx => {
+				let [ty] = arguments.try_into().unwrap();
+				let (ty, copy, repr) = elaborate_dynamic_type(ctx, ty)?;
+				(
+					DynamicTerm::Bx {
+						inner: ty.into(),
+						copy: copy.unevaluate_in(ctx.len()).into(),
+						repr: repr.unevaluate_in(ctx.len()).into(),
+					},
+					DynamicValue::Universe {
+						copy: StaticValue::CpyValue(Cpy::Nt).into(),
+						repr: StaticValue::ReprAtom(ReprAtom::Ptr).into(),
+					},
+					StaticValue::CpyValue(Cpy::Tr),
+					StaticValue::ReprNone,
+				)
+			}
+			Former::Wrap => {
+				let [ty] = arguments.try_into().unwrap();
+				let (ty, copy, repr) = elaborate_dynamic_type(ctx, ty)?;
+				(
+					DynamicTerm::Wrap {
+						inner: ty.into(),
+						copy: copy.unevaluate_in(ctx.len()).into(),
+						repr: repr.unevaluate_in(ctx.len()).into(),
+					},
+					DynamicValue::Universe {
+						copy: StaticValue::CpyValue(Cpy::Nt).clone().into(),
+						repr: repr.into(),
+					},
+					StaticValue::CpyValue(Cpy::Tr),
 					StaticValue::ReprNone,
 				)
 			}
@@ -778,12 +805,12 @@ fn synthesize_dynamic(
 			_ => return Err(ElaborationErrorKind::InvalidFormer.at(expr.range)),
 		},
 
-		// Generic type constructors.
+		// Generic term constructors.
 		Preterm::Constructor(constructor, arguments) => match constructor {
 			// Repeated programs.
 			Constructor::Exp(grade) => {
 				let [tm] = arguments.try_into().unwrap();
-				let (tm, ty, c, r) = synthesize_dynamic(context, tm, fragment)?;
+				let (tm, ty, c, r) = synthesize_dynamic(ctx, tm, fragment)?;
 				(
 					DynamicTerm::Exp(grade, tm.into()),
 					DynamicValue::Exp(grade, ty.into()),
@@ -796,18 +823,82 @@ fn synthesize_dynamic(
 			Constructor::Enum(k, v) if arguments.is_empty() => (
 				DynamicTerm::EnumValue(k, v),
 				DynamicValue::Enum(k),
-				StaticValue::Copyability(Copyability::Trivial),
+				StaticValue::CpyValue(Cpy::Tr),
 				StaticValue::ReprAtom(ReprAtom::Byte),
 			),
+
+			// Wrappers.
+			Constructor::Bx => {
+				let [tm] = arguments.try_into().unwrap();
+				let (tm, ty, copy, repr) = synthesize_dynamic(ctx, tm, fragment)?;
+				(
+					DynamicTerm::BxValue(bx!(tm)),
+					DynamicValue::Bx { inner: ty.into(), copy: copy.into(), repr: repr.into() },
+					StaticValue::CpyValue(Cpy::Nt),
+					StaticValue::ReprAtom(ReprAtom::Ptr),
+				)
+			}
+			Constructor::Wrap => {
+				let [tm] = arguments.try_into().unwrap();
+				let (tm, ty, copy, repr) = synthesize_dynamic(ctx, tm, fragment)?;
+				(
+					DynamicTerm::WrapValue(bx!(tm)),
+					DynamicValue::Wrap { inner: ty.into(), copy: copy.into(), repr: repr.clone().into() },
+					StaticValue::CpyValue(Cpy::Nt),
+					repr,
+				)
+			}
 
 			// Invalid constructor.
 			_ => return Err(ElaborationErrorKind::InvalidConstructor.at(expr.range)),
 		},
 
+		// Generic projectors.
+		Preterm::Project(scrutinee, projector) => match projector {
+			// Dependent pairs.
+			Projector::Field(_) => unimplemented!(),
+
+			// Wrappers.
+			Projector::Bx => {
+				let (tm, DynamicValue::Bx { inner: ty, copy, repr }, _, _) =
+					synthesize_dynamic(ctx, *scrutinee, fragment)?
+				else {
+					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Rc).at(expr.range));
+				};
+				(
+					DynamicTerm::BxProject {
+						scrutinee: tm.into(),
+						copy: copy.unevaluate_in(ctx.len()).into(),
+						repr: repr.unevaluate_in(ctx.len()).into(),
+					},
+					ty.as_ref().clone(),
+					(*copy).clone(),
+					(*repr).clone(),
+				)
+			}
+			Projector::Wrap => {
+				let (tm, DynamicValue::Wrap { inner: ty, copy, repr }, _, _) =
+					synthesize_dynamic(ctx, *scrutinee, fragment)?
+				else {
+					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Wrap).at(expr.range));
+				};
+				(
+					DynamicTerm::WrapProject {
+						scrutinee: bx!(tm),
+						copy: copy.unevaluate_in(ctx.len()).into(),
+						repr: repr.unevaluate_in(ctx.len()).into(),
+					},
+					ty.as_ref().clone(),
+					(*copy).clone(),
+					(*repr).clone(),
+				)
+			}
+		},
+
 		// Generic case splits.
 		Preterm::Split { scrutinee, motive, cases } => {
-			let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(context, *scrutinee, fragment)?;
-			let scrutinee_value = scrutinee.clone().evaluate_in(&context.environment);
+			let (scrutinee, scrutinee_ty, _, _) = synthesize_dynamic(ctx, *scrutinee, fragment)?;
+			let scrutinee_value = scrutinee.clone().evaluate_in(&ctx.environment);
 			match scrutinee_ty {
 				// Enumerated numbers.
 				DynamicValue::Enum(card) => {
@@ -818,17 +909,16 @@ fn synthesize_dynamic(
 						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
 					// TODO: Throw specific error if copy/repr depend on the motive.
 					let (motive_term, fiber_copy, fiber_repr) = elaborate_dynamic_type(
-						&mut context.bind_dynamic(
+						&mut ctx.bind_dynamic(
 							motive_parameter,
 							0.into(),
 							DynamicValue::Enum(card),
-							StaticValue::Copyability(Copyability::Trivial),
+							StaticValue::CpyValue(Cpy::Tr),
 							StaticValue::ReprAtom(ReprAtom::Byte),
 						),
 						*motive.body,
 					)?;
-					let motive =
-						Closure::new(context.environment.clone(), [motive_parameter], motive_term.clone());
+					let motive = Closure::new(ctx.environment.clone(), [motive_parameter], motive_term.clone());
 					// TODO: Avoid cloning.
 					let mut new_cases = Vec::new();
 					for v in 0..card {
@@ -847,7 +937,7 @@ fn synthesize_dynamic(
 						.1
 						.clone();
 						new_cases.push(verify_dynamic(
-							context,
+							ctx,
 							case,
 							fragment,
 							motive.evaluate_with([DynamicValue::EnumValue(card, v)]),
@@ -857,8 +947,8 @@ fn synthesize_dynamic(
 						DynamicTerm::CaseEnum {
 							scrutinee: bx!(scrutinee),
 							cases: new_cases,
-							fiber_copyability: fiber_copy.unevaluate_in(context.len()).into(),
-							fiber_representation: fiber_repr.unevaluate_in(context.len()).into(),
+							fiber_copyability: fiber_copy.unevaluate_in(ctx.len()).into(),
+							fiber_representation: fiber_repr.unevaluate_in(ctx.len()).into(),
 							motive: bind([motive_parameter], motive_term),
 						},
 						motive.evaluate_with([scrutinee_value]),
@@ -886,7 +976,7 @@ fn synthesize_dynamic(
 					// TODO: Throw specific error if copy/repr depend on the motive.
 					let (motive_term, fiber_copy, fiber_repr) = {
 						let mut context =
-							context.bind_dynamic(v, 0.into(), (*space).clone(), (*copy).clone(), (*repr).clone());
+							ctx.bind_dynamic(v, 0.into(), (*space).clone(), (*copy).clone(), (*repr).clone());
 						let index_level = context.len().index(0);
 						let mut context = context.bind_dynamic(
 							p,
@@ -899,15 +989,15 @@ fn synthesize_dynamic(
 								right: DynamicValue::Neutral(DynamicNeutral::Variable(v, index_level)).into(),
 							},
 							// TODO: Refactor into a better place.
-							StaticValue::Copyability(Copyability::Trivial),
+							StaticValue::CpyValue(Cpy::Tr),
 							StaticValue::ReprNone,
 						);
 						elaborate_dynamic_type(&mut context, *motive.body)?
 					};
-					let motive = Closure::new(context.environment.clone(), [v, p], motive_term.clone());
+					let motive = Closure::new(ctx.environment.clone(), [v, p], motive_term.clone());
 
 					let case_refl = verify_dynamic(
-						context,
+						ctx,
 						case_refl,
 						fragment,
 						motive.evaluate_with([(*left).clone(), DynamicValue::Refl]),
@@ -936,7 +1026,7 @@ fn synthesize_dynamic(
 }
 
 fn verify_dynamic(
-	context: &mut Context,
+	ctx: &mut Context,
 	expr: Expression,
 	fragment: u8,
 	ty: DynamicValue,
@@ -958,16 +1048,16 @@ fn verify_dynamic(
 			(grade * fragment as usize == grade_t * fragment as usize)
 				.then_some(())
 				.ok_or_else(|| ElaborationErrorKind::LambdaGradeMismatch(grade, grade_t).at(expr.range))?;
-			let fiber = family.autolyze(context.len());
+			let fiber = family.autolyze(ctx.len());
 			// TODO: Is this necessary?
 			let parameters = body.parameters;
 			// NOTE: Since this is the autolyzed fiber, this family has the right index but the wrong name.
 			// Not sure if this is significant, as we only use indices in debugging/pretty-printing.
 			// The alternatives seem to be evaluating twice (shudders) or doing find-and-replace for variables.
 			// Maybe we can do the latter at some point?
-			let family = bind(parameters, fiber.unevaluate_in(context.len() + 1));
+			let family = bind(parameters, fiber.unevaluate_in(ctx.len() + 1));
 			let body = {
-				let mut context = context.bind_dynamic(
+				let mut context = ctx.bind_dynamic(
 					parameters[0],
 					(grade * fragment as usize).into(),
 					base.as_ref().clone(),
@@ -981,7 +1071,7 @@ fn verify_dynamic(
 
 			DynamicTerm::Function {
 				grade,
-				base: base.unevaluate_in(context.len()).into(),
+				base: base.unevaluate_in(ctx.len()).into(),
 				family,
 				body: bind(parameters, body),
 			}
@@ -992,7 +1082,7 @@ fn verify_dynamic(
 			let DynamicValue::Id { left, right, .. } = ty else {
 				return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Id).at(expr.range));
 			};
-			assert!(context.len().can_convert(&*left, &right));
+			assert!(ctx.len().can_convert(&*left, &right));
 
 			let [] = tms.try_into().unwrap();
 			DynamicTerm::Refl
@@ -1000,14 +1090,14 @@ fn verify_dynamic(
 
 		// Synthesize and conversion-check.
 		(term, ty) => {
-			let (term, synthesized_ty, _, _) = synthesize_dynamic(context, term.at(expr.range), fragment)?;
-			if context.len().can_convert(&synthesized_ty, &ty) {
+			let (term, synthesized_ty, _, _) = synthesize_dynamic(ctx, term.at(expr.range), fragment)?;
+			if ctx.len().can_convert(&synthesized_ty, &ty) {
 				term
 			} else {
 				return Err(
 					ElaborationErrorKind::DynamicBidirectionalMismatch {
-						synthesized: synthesized_ty.unevaluate_in(context.len()),
-						expected: ty.unevaluate_in(context.len()),
+						synthesized: synthesized_ty.unevaluate_in(ctx.len()),
+						expected: ty.unevaluate_in(ctx.len()),
 					}
 					.at(expr.range),
 				);
@@ -1017,13 +1107,13 @@ fn verify_dynamic(
 }
 
 fn elaborate_dynamic_type(
-	context: &mut Context,
+	ctx: &mut Context,
 	expr: Expression,
 ) -> Result<(DynamicTerm, /* copyability */ StaticValue, /* representation */ StaticValue), ElaborationError>
 {
 	let expr_range = expr.range;
-	let (term, DynamicValue::Universe { copyability, representation }, _, _) =
-		synthesize_dynamic(context, expr, 0)?
+	let (term, DynamicValue::Universe { copy: copyability, repr: representation }, _, _) =
+		synthesize_dynamic(ctx, expr, 0)?
 	else {
 		return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::DynamicUniverse).at(expr_range));
 	};

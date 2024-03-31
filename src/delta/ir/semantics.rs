@@ -3,7 +3,7 @@ use std::rc::Rc;
 use super::syntax::{DynamicTerm, StaticTerm};
 use crate::{
 	delta::{
-		common::{Closure, Copyability, Field, Index, Level, Name, Repr, ReprAtom},
+		common::{Closure, Cpy, Field, Index, Level, Name, Repr, ReprAtom},
 		transform::autolyze::Autolyze,
 	},
 	utility::rc,
@@ -17,8 +17,8 @@ pub enum StaticValue {
 	// Types and universe indices.
 	Universe,
 
-	CopyabilityType,
-	Copyability(Copyability),
+	Cpy,
+	CpyValue(Cpy),
 
 	ReprType,
 	ReprNone,
@@ -54,7 +54,7 @@ pub enum StaticNeutral {
 	Apply(Rc<Self>, Rc<StaticValue>),
 
 	// Hacks.
-	MaxCopyability(Rc<Self>, Rc<Self>),
+	CpyMax(Rc<Self>, Rc<Self>),
 
 	// Enumerated numbers.
 	CaseEnum { scrutinee: Rc<Self>, motive: Rc<Closure<Environment, StaticTerm>>, cases: Vec<StaticValue> },
@@ -84,8 +84,8 @@ pub enum DynamicValue {
 
 	// Types.
 	Universe {
-		copyability: Rc<StaticValue>,
-		representation: Rc<StaticValue>,
+		copy: Rc<StaticValue>,
+		repr: Rc<StaticValue>,
 	},
 
 	// Repeated programs.
@@ -122,6 +122,20 @@ pub enum DynamicValue {
 		right: Rc<Self>,
 	},
 	Refl,
+
+	// Wrappers.
+	Bx {
+		inner: Rc<Self>,
+		copy: Rc<StaticValue>,
+		repr: Rc<StaticValue>,
+	},
+	BxValue(Rc<Self>),
+	Wrap {
+		inner: Rc<Self>,
+		copy: Rc<StaticValue>,
+		repr: Rc<StaticValue>,
+	},
+	WrapValue(Rc<Self>),
 }
 
 #[derive(Clone, Debug)]
@@ -165,17 +179,29 @@ pub enum DynamicNeutral {
 		motive: Rc<Closure<Environment, DynamicTerm, 2>>,
 		case_refl: Rc<DynamicValue>,
 	},
+
+	// Wrappers.
+	BxProject {
+		scrutinee: Rc<Self>,
+		copyability: Rc<StaticValue>,
+		representation: Rc<StaticValue>,
+	},
+	WrapProject {
+		scrutinee: Rc<Self>,
+		copyability: Rc<StaticValue>,
+		representation: Rc<StaticValue>,
+	},
 }
 
 impl StaticValue {
 	pub fn max_copyability(a: Self, b: Self) -> Self {
-		use Copyability as C;
+		use Cpy as C;
 		match (a, b) {
-			(Self::Copyability(C::Nontrivial), _) => Self::Copyability(C::Nontrivial),
-			(Self::Copyability(C::Trivial), b) => b,
-			(_, Self::Copyability(C::Nontrivial)) => Self::Copyability(C::Nontrivial),
-			(a, Self::Copyability(C::Trivial)) => a,
-			(Self::Neutral(a), Self::Neutral(b)) => Self::Neutral(StaticNeutral::MaxCopyability(rc!(a), rc!(b))),
+			(Self::CpyValue(C::Nt), _) => Self::CpyValue(C::Nt),
+			(Self::CpyValue(C::Tr), b) => b,
+			(_, Self::CpyValue(C::Nt)) => Self::CpyValue(C::Nt),
+			(a, Self::CpyValue(C::Tr)) => a,
+			(Self::Neutral(a), Self::Neutral(b)) => Self::Neutral(StaticNeutral::CpyMax(rc!(a), rc!(b))),
 			_ => panic!(),
 		}
 	}
@@ -246,11 +272,8 @@ impl Conversion<StaticValue> for Level {
 			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
 
 			// Types and universe indidces.
-			(Universe, Universe)
-			| (CopyabilityType, CopyabilityType)
-			| (ReprType, ReprType)
-			| (ReprNone, ReprNone) => true,
-			(Copyability(left), Copyability(right)) => left == right,
+			(Universe, Universe) | (Cpy, Cpy) | (ReprType, ReprType) | (ReprNone, ReprNone) => true,
+			(CpyValue(left), CpyValue(right)) => left == right,
 			(ReprAtom(left), ReprAtom(right)) => left == right,
 
 			// Quoted programs.
@@ -298,7 +321,7 @@ impl Conversion<StaticNeutral> for Level {
 			(Variable(_, left), Variable(_, right)) => left == right,
 
 			// Universe indices.
-			(MaxCopyability(a_left, b_left), MaxCopyability(a_right, b_right)) =>
+			(CpyMax(a_left, b_left), CpyMax(a_right, b_right)) =>
 				self.can_convert(&**a_left, a_right) && self.can_convert(&**b_left, b_right),
 
 			// Repeated programs.
@@ -338,8 +361,8 @@ impl Conversion<DynamicValue> for Level {
 
 			// Universes.
 			(
-				Universe { copyability: left_copyability, representation: left_representation },
-				Universe { copyability: right_copyability, representation: right_representation },
+				Universe { copy: left_copyability, repr: left_representation },
+				Universe { copy: right_copyability, repr: right_representation },
 			) =>
 				self.can_convert(&**left_copyability, right_copyability)
 					&& self.can_convert(&**left_representation, right_representation),
@@ -390,6 +413,12 @@ impl Conversion<DynamicValue> for Level {
 				self.can_convert(&**left_l, left_r) && self.can_convert(&**right_l, right_r),
 			(Refl, Refl) => true,
 
+			// Wrappers.
+			(Bx { inner: left, .. }, Bx { inner: right, .. })
+			| (BxValue(left), BxValue(right))
+			| (Wrap { inner: left, .. }, Wrap { inner: right, .. })
+			| (WrapValue(left), WrapValue(right)) => self.can_convert(&**left, right),
+
 			// Inconvertible.
 			_ => false,
 		}
@@ -433,6 +462,11 @@ impl Conversion<DynamicNeutral> for Level {
 				CasePath { scrutinee: scrutinee_l, case_refl: case_l, .. },
 				CasePath { scrutinee: scrutinee_r, case_refl: case_r, .. },
 			) => self.can_convert(&**scrutinee_l, scrutinee_r) && self.can_convert(&**case_l, &case_r),
+
+			// Wrappers.
+			(BxProject { scrutinee: left, .. }, BxProject { scrutinee: right, .. })
+			| (WrapProject { scrutinee: left, .. }, WrapProject { scrutinee: right, .. }) =>
+				self.can_convert(&**left, right),
 
 			// Inconvertible.
 			_ => false,

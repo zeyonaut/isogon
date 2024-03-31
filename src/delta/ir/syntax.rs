@@ -1,4 +1,4 @@
-use crate::delta::common::{Binder, Copyability, Field, Index, Name, Repr, ReprAtom};
+use crate::delta::common::{Binder, Cpy, Field, Index, Name, Repr, ReprAtom};
 
 #[derive(Clone, Debug)]
 pub enum StaticTerm {
@@ -12,9 +12,9 @@ pub enum StaticTerm {
 	Universe,
 
 	// Universe indices.
-	CopyabilityType,
-	Copyability(Copyability),
-	MaxCopyability(Box<Self>, Box<Self>),
+	Cpy,
+	CpyValue(Cpy),
+	CpyMax(Box<Self>, Box<Self>),
 
 	ReprType,
 	ReprAtom(Option<ReprAtom>),
@@ -137,5 +137,29 @@ pub enum DynamicTerm {
 		scrutinee: Box<Self>,
 		motive: Binder<Box<Self>, 2>,
 		case_refl: Box<Self>,
+	},
+
+	// Wrappers.
+	Bx {
+		inner: Box<Self>,
+		copy: Box<StaticTerm>,
+		repr: Box<StaticTerm>,
+	},
+	BxValue(Box<Self>),
+	BxProject {
+		scrutinee: Box<Self>,
+		copy: Box<StaticTerm>,
+		repr: Box<StaticTerm>,
+	},
+	Wrap {
+		inner: Box<Self>,
+		copy: Box<StaticTerm>,
+		repr: Box<StaticTerm>,
+	},
+	WrapValue(Box<Self>),
+	WrapProject {
+		scrutinee: Box<Self>,
+		copy: Box<StaticTerm>,
+		repr: Box<StaticTerm>,
 	},
 }

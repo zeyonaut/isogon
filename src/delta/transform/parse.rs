@@ -1,9 +1,9 @@
 use lasso::Rodeo;
 
 use crate::delta::{
-	common::{any_bind, bind, AnyBinder, Copyability, Name, ReprAtom},
+	common::{any_bind, bind, AnyBinder, Cpy, Name, ReprAtom},
 	ir::{
-		presyntax::{Constructor, Expression, Former, Pattern, Preterm},
+		presyntax::{Constructor, Expression, Former, Pattern, Preterm, Projector},
 		source::{Keyword, LexError, LexErrorKind, LexedSource, Token},
 	},
 };
@@ -150,12 +150,15 @@ peg::parser! {
 			/ [Token::Hash] card:number() { assert!(card <= 256); Former::Enum(card as u16)}
 			// Paths.
 			/ [Token::Keyword(Keyword::Id)] {Former::Id}
+			// Wrappers.
+			/ [Token::Keyword(Keyword::Bx)] {Former::Bx}
+			/ [Token::Keyword(Keyword::Wrap)] {Former::Wrap}
 
 		rule constructor() -> Constructor
-			= [Token::Keyword(Keyword::C0)] {Constructor::Copyability(Copyability::Trivial)}
-			/ [Token::Keyword(Keyword::C1)] {Constructor::Copyability(Copyability::Nontrivial)}
-			/ [Token::Keyword(Keyword::CMax)] {Constructor::CopyMax}
-			// / [Token::Keyword(Keyword::RPointer)] {Constructor::ReprAtom(Some(ReprAtom::Pointer))}
+			= [Token::Keyword(Keyword::C0)] {Constructor::Cpy(Cpy::Tr)}
+			/ [Token::Keyword(Keyword::C1)] {Constructor::Cpy(Cpy::Nt)}
+			/ [Token::Keyword(Keyword::CMax)] {Constructor::CpyMax}
+			/ [Token::Keyword(Keyword::RPtr)] {Constructor::ReprAtom(Some(ReprAtom::Ptr))}
 			/ [Token::Keyword(Keyword::RByte)] {Constructor::ReprAtom(Some(ReprAtom::Byte))}
 			// / [Token::Keyword(Keyword::RNat)] {Constructor::ReprAtom(Some(ReprAtom::Nat))}
 			/ [Token::Keyword(Keyword::RFun)] {Constructor::ReprAtom(Some(ReprAtom::Fun))}
@@ -169,6 +172,14 @@ peg::parser! {
 			/ [Token::Keyword(Keyword::True)] {Constructor::Enum(2, 1)}
 			// Paths.
 			/ [Token::Keyword(Keyword::Refl)] {Constructor::Refl}
+			// Wrappers.
+			/ [Token::Keyword(Keyword::BxValue)] {Constructor::Bx}
+			/ [Token::Keyword(Keyword::WrapValue)] {Constructor::Wrap}
+
+		rule projector() -> Projector
+			= [Token::Keyword(Keyword::BxProject)] {Projector::Bx}
+			/ [Token::Keyword(Keyword::WrapProject)] {Projector::Wrap}
+			/ [Token::Project(projection)] {Projector::Field(projection)}
 
 		rule atom() -> Expression
 			= [Token::ParenL] _ preterm:preterm() _ [Token::ParenR] {preterm}
@@ -207,6 +218,8 @@ peg::parser! {
 				// Case splits.
 				/ scrutinee:spine() _ [Token::TwoColon] _ motive:bound_spine_headed() _ [Token::CurlyL] (_ [Token::Pipe])? _ cases:case()**(_ [Token::Pipe] _) _ [Token::CurlyR]
 					{ Preterm::Split { scrutinee: scrutinee.into(), motive, cases} }
+				// Projections.
+				/ spine:spine() _ projector:projector() { Preterm::Project(spine.into(), projector) }
 			) fini:position!() {preterm.at((init, fini))}
 			/ atom()
 

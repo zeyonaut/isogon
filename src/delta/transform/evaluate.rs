@@ -42,10 +42,9 @@ impl Evaluate for StaticTerm {
 
 			// Types and universe indices.
 			Universe => StaticValue::Universe,
-			CopyabilityType => StaticValue::CopyabilityType,
-			Copyability(c) => StaticValue::Copyability(c),
-			MaxCopyability(a, b) =>
-				StaticValue::max_copyability(a.evaluate_in(environment), b.evaluate_in(environment)),
+			Cpy => StaticValue::Cpy,
+			CpyValue(c) => StaticValue::CpyValue(c),
+			CpyMax(a, b) => StaticValue::max_copyability(a.evaluate_in(environment), b.evaluate_in(environment)),
 			ReprType => StaticValue::ReprType,
 			ReprAtom(r) => r.map(StaticValue::ReprAtom).unwrap_or(StaticValue::ReprNone),
 			ReprExp(grade, repr) => StaticValue::ReprExp(grade, repr.evaluate_in(environment).into()),
@@ -116,8 +115,8 @@ impl Evaluate for DynamicTerm {
 
 			// Types.
 			Universe { copyability, representation } => DynamicValue::Universe {
-				copyability: rc!(copyability.evaluate_in(environment)),
-				representation: rc!(representation.evaluate_in(environment)),
+				copy: rc!(copyability.evaluate_in(environment)),
+				repr: rc!(representation.evaluate_in(environment)),
 			},
 
 			// Quoted programs.
@@ -213,6 +212,40 @@ impl Evaluate for DynamicTerm {
 				}),
 				_ => panic!(),
 			},
+
+			// Wrappers.
+			Bx { inner, copy: copyability, repr: representation } => DynamicValue::Bx {
+				inner: inner.evaluate_in(environment).into(),
+				copy: copyability.evaluate_in(environment).into(),
+				repr: representation.evaluate_in(environment).into(),
+			},
+			BxValue(tm) => DynamicValue::BxValue(rc!(tm.evaluate_in(environment))),
+			BxProject { scrutinee, copy: copyability, repr: representation } =>
+				match scrutinee.evaluate_in(environment) {
+					DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::BxProject {
+						scrutinee: n.into(),
+						copyability: copyability.evaluate_in(environment).into(),
+						representation: representation.evaluate_in(environment).into(),
+					}),
+					DynamicValue::BxValue(v) => v.as_ref().clone(),
+					_ => panic!(),
+				},
+			Wrap { inner, copy: copyability, repr: representation } => DynamicValue::Wrap {
+				inner: inner.evaluate_in(environment).into(),
+				copy: copyability.evaluate_in(environment).into(),
+				repr: representation.evaluate_in(environment).into(),
+			},
+			WrapValue(tm) => DynamicValue::WrapValue(rc!(tm.evaluate_in(environment))),
+			WrapProject { scrutinee, copy: copyability, repr: representation } =>
+				match scrutinee.evaluate_in(environment) {
+					DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::WrapProject {
+						scrutinee: n.into(),
+						copyability: copyability.evaluate_in(environment).into(),
+						representation: representation.evaluate_in(environment).into(),
+					}),
+					DynamicValue::WrapValue(v) => v.as_ref().clone(),
+					_ => panic!(),
+				},
 		}
 	}
 }

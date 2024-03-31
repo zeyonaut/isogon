@@ -94,14 +94,15 @@ impl<E, T> Closure<E, T, 1> {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
-pub enum Copyability {
-	Trivial = 0,
-	Nontrivial = 1,
+pub enum Cpy {
+	Tr = 0,
+	Nt = 1,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub enum ReprAtom {
 	Byte,
+	Ptr,
 	Fun,
 }
 
@@ -111,4 +112,4 @@ pub enum Repr {
 }
 
 #[derive(Clone, Debug)]
-pub struct UniverseKind(pub Copyability, pub Option<Repr>);
+pub struct UniverseKind(pub Cpy, pub Option<Repr>);

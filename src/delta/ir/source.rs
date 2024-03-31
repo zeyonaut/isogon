@@ -38,22 +38,14 @@ pub enum Token {
 pub enum Keyword {
 	Def,
 	Let,
-	Nat,
-	Suc,
-	Bool,
-	True,
-	False,
-	CMax,
+
+	Copy,
 	C0,
 	C1,
-	Copy,
-	WrapNew,
-	Unwrap,
-	WrapType,
-	RcNew,
-	UnRc,
-	RcType,
-	RPointer,
+	CMax,
+
+	Repr,
+	RPtr,
 	RByte,
 	RNat,
 	RFun,
@@ -61,9 +53,24 @@ pub enum Keyword {
 	RMax,
 	RExp,
 	RNone,
-	Repr,
+
+	// Wrappers.
+	Bx,
+	BxValue,
+	BxProject,
+	Wrap,
+	WrapValue,
+	WrapProject,
+
+	Bool,
+	True,
+	False,
+
 	Id,
 	Refl,
+
+	Nat,
+	Suc,
 }
 
 pub struct LexError(pub usize, pub LexErrorKind);
@@ -117,7 +124,7 @@ impl LexedSource {
 
 			"repr" => Keyword(Repr),
 			"rnone" => Keyword(RNone),
-			"rpointer" => Keyword(RPointer),
+			"rptr" => Keyword(RPtr),
 			"rbyte" => Keyword(RByte),
 			"rnat" => Keyword(RNat),
 			"rfun" => Keyword(RFun),
@@ -125,13 +132,13 @@ impl LexedSource {
 			"rmax" => Keyword(RMax),
 			"rexp" => Keyword(RExp),
 
-			"rc" => Keyword(RcNew),
-			"unrc" => Keyword(UnRc),
-			"RC" => Keyword(RcType),
+			"Box" => Keyword(Bx),
+			"box" => Keyword(BxValue),
+			"unbox" => Keyword(BxProject),
 
-			"wrap" => Keyword(WrapNew),
-			"unwrap" => Keyword(Unwrap),
-			"Wrap" => Keyword(WrapType),
+			"Wrap" => Keyword(Wrap),
+			"wrap" => Keyword(WrapValue),
+			"unwrap" => Keyword(WrapProject),
 
 			"bool" => Keyword(Bool),
 			"true" => Keyword(True),

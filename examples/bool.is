@@ -1,13 +1,13 @@
-let! T : bool -> * c1 rpointer
-	= |b| b :: |_| (* c1 rpointer) {
-		| false -> RC (nat  & bool)
-		| true  -> RC (bool & nat)
+let [0] T : bool -> * c1 rptr
+	= |b| b :: |_| (* c1 rptr) {
+		| false -> Box #4 % (nat  & bool)
+		| true  -> Box #3 % (bool & nat)
 	};
 
-let! test : |b : bool| -> T b
+let test : |b : bool| -> T b
 	= |b| b :: |x| T x {
-		| false -> rc (0, false)
-		| true  -> rc (true, 1)
+		| false -> box 3_4 % (0, false)
+		| true  -> box 2_3 % (true, 1)
 	};
 
-test false unrc
+test false unbox

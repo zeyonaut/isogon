@@ -1,4 +1,4 @@
-use crate::delta::common::{AnyBinder, Binder, Copyability, Field, Name, ReprAtom};
+use crate::delta::common::{AnyBinder, Binder, Cpy, Field, Name, ReprAtom};
 
 #[derive(Debug, Clone)]
 pub struct Expression {
@@ -10,18 +10,19 @@ pub struct Expression {
 pub enum Preterm {
 	Variable(Name),
 
+	Let { grade: usize, ty: Box<Expression>, argument: Box<Expression>, tail: Binder<Box<Expression>> },
+
 	SwitchLevel(Box<Expression>),
 
-	Let { grade: usize, ty: Box<Expression>, argument: Box<Expression>, tail: Binder<Box<Expression>> },
 	LetExp { grade: usize, grade_argument: usize, argument: Box<Expression>, tail: Binder<Box<Expression>> },
 
 	Pi { grade: usize, base: Box<Expression>, family: Binder<Box<Expression>> },
 	Lambda { grade: usize, body: Binder<Box<Expression>> },
+	Call { callee: Box<Expression>, argument: Box<Expression> },
 
 	Former(Former, Vec<Expression>),
 	Constructor(Constructor, Vec<Expression>),
-
-	Call { callee: Box<Expression>, argument: Box<Expression> },
+	Project(Box<Expression>, Projector),
 	Split { scrutinee: Box<Expression>, motive: AnyBinder<Box<Expression>>, cases: Vec<(Pattern, Expression)> },
 }
 
@@ -43,13 +44,17 @@ pub enum Former {
 
 	// Paths.
 	Id,
+
+	// Wrappers.
+	Bx,
+	Wrap,
 }
 
 #[derive(Debug, Clone)]
 pub enum Constructor {
 	// Universe indices.
-	Copyability(Copyability),
-	CopyMax,
+	Cpy(Cpy),
+	CpyMax,
 
 	ReprAtom(Option<ReprAtom>),
 	ReprExp(usize),
@@ -64,6 +69,17 @@ pub enum Constructor {
 
 	// Paths.
 	Refl,
+
+	// Wrappers.
+	Bx,
+	Wrap,
+}
+
+#[derive(Debug, Clone)]
+pub enum Projector {
+	Bx,
+	Wrap,
+	Field(Field),
 }
 
 #[derive(Debug, Clone)]
