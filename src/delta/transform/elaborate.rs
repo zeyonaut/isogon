@@ -366,7 +366,7 @@ fn synthesize_static(
 				(StaticTerm::Universe, StaticValue::Universe),
 			Former::Copy if fragment == 0 && arguments.is_empty() => (StaticTerm::Cpy, StaticValue::Universe),
 			Former::Repr if fragment == 0 && arguments.is_empty() =>
-				(StaticTerm::ReprType, StaticValue::Universe),
+				(StaticTerm::Repr, StaticValue::Universe),
 
 			// Quoting.
 			Former::Lift => {
@@ -519,7 +519,7 @@ fn verify_static(
 				family.evaluate_with([(parameters[0], basepoint_level).into()]),
 			)?;
 			context.free().map_err(|e| e.at(expr.range))?;
-			StaticTerm::Lambda(grade, bind(parameters, body))
+			StaticTerm::Function(grade, bind(parameters, body))
 		}
 
 		// Synthesize and conversion-check.

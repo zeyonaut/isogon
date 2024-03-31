@@ -16,7 +16,7 @@ pub enum StaticTerm {
 	CpyValue(Cpy),
 	CpyMax(Box<Self>, Box<Self>),
 
-	ReprType,
+	Repr,
 	ReprAtom(Option<ReprAtom>),
 	ReprExp(usize, Box<Self>),
 
@@ -31,7 +31,7 @@ pub enum StaticTerm {
 
 	// Dependent functions.
 	Pi(usize, Box<Self>, Binder<Box<Self>>),
-	Lambda(usize, Binder<Box<Self>>),
+	Function(usize, Binder<Box<Self>>),
 	Apply { scrutinee: Box<Self>, argument: Box<Self> },
 
 	// Enumerated numbers.

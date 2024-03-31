@@ -26,13 +26,13 @@ fn write_static_atom(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) ->
 		| Cpy
 		| CpyValue(..)
 		| CpyMax(..)
-		| ReprType
+		| Repr
 		| ReprAtom(_)
 		| Repeat(..)
 		| Enum(..)
 		| EnumValue(..) => write_static(term, f, interner),
 		Let { .. }
-		| Lambda { .. }
+		| Function { .. }
 		| Apply { .. }
 		| Pi { .. }
 		| Exp(..)
@@ -54,28 +54,33 @@ fn resolve<'a>(interner: &'a Rodeo, name: &Option<Name>) -> &'a str {
 	}
 }
 
+fn optional_grade_prefix(grade: usize, parameter: &str) -> String {
+	if (grade == 0 && parameter == "_") || (grade == 1 && parameter != "_")  { "".to_owned() } else {
+		format!("[{grade}] ")
+	}
+}
+
 fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	use StaticTerm::*;
 
 	use self::Cpy as C;
 	match term {
+		// Variables.
 		Variable(name, ..) => write!(f, "{}", resolve(interner, name)),
 
-		Exp(grade, ty) => {
-			write!(f, "![{grade}] ")?;
-			write_static_atom(ty, f, interner)
-		}
-		Repeat(grade, tm) => {
-			write!(f, "@[{grade}] {{")?;
-			write_static(tm, f, interner)?;
-			write!(f, "}}")
-		}
-		LetExp { grade, argument, tail } => {
-			write!(f, "let [{grade}] {{{}}} = ", resolve(interner, &tail.parameter()))?;
+		// Let-expressions.
+		Let { grade, ty, argument, tail } => {
+			let parameter = resolve(interner, &tail.parameter());
+			write!(f, "let {}{parameter} : ", optional_grade_prefix(*grade, parameter))?;
+			write_static(ty, f, interner)?;
+			write!(f, " = ")?;
 			write_static(argument, f, interner)?;
 			write!(f, "; ")?;
 			write_static(&tail.body, f, interner)
 		}
+
+		// Types and universe indices.
+		Universe => write!(f, "*"),
 
 		Cpy => write!(f, "copy"),
 		CpyValue(C::Tr) => write!(f, "c0"),
@@ -86,46 +91,8 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			write!(f, " ")?;
 			write_static_atom(b, f, interner)
 		}
-		Pi(grade, base, family) => {
-			let parameter = resolve(interner, &family.parameter());
-			if parameter != "_" {
-				write!(f, "|{parameter} @ {grade:?} : ")?;
-				write_static(base, f, interner)?;
-				write!(f, "| -> ")?;
-			} else {
-				write_static_spine(base, f, interner)?;
-				write!(f, " -> ")?;
-			}
-			write_static(&family.body, f, interner)
-		}
-		Lambda(grade, function) => {
-			write!(f, "|[{grade}] {}| ", resolve(interner, &function.parameter()))?;
-			write_static(&function.body, f, interner)
-		}
-		Apply { scrutinee, argument } => {
-			write_static_spine(scrutinee, f, interner)?;
-			write!(f, " ")?;
-			write_static_atom(argument, f, interner)
-		}
-		Let { grade, ty, argument, tail } => {
-			write!(f, "let [{grade}] {} : ", resolve(interner, &tail.parameter()))?;
-			write_static(ty, f, interner)?;
-			write!(f, " = ")?;
-			write_static(argument, f, interner)?;
-			write!(f, "; ")?;
-			write_static(&tail.body, f, interner)
-		}
-		Universe => write!(f, "*"),
-		Lift { liftee, .. } => {
-			write!(f, "'")?;
-			write_dynamic_atom(liftee, f, interner)
-		}
-		Quote(quotee) => {
-			write!(f, "<")?;
-			write_dynamic(quotee, f, interner)?;
-			write!(f, ">")
-		}
-		ReprType => write!(f, "repr"),
+		
+		Repr => write!(f, "repr"),
 		ReprAtom(None) => write!(f, "rnone"),
 		ReprAtom(Some(r)) => write!(
 			f,
@@ -141,6 +108,61 @@ fn write_static(term: &StaticTerm, f: &mut impl Write, interner: &Rodeo) -> std:
 			write!(f, "rexp[{grade}] ")?;
 			write_static_atom(r, f, interner)
 		}
+
+		// Quoted programs.
+		Lift { liftee, .. } => {
+			write!(f, "'")?;
+			write_dynamic_atom(liftee, f, interner)
+		}
+		Quote(quotee) => {
+			write!(f, "<")?;
+			write_dynamic(quotee, f, interner)?;
+			write!(f, ">")
+		}
+
+		// Repeated programs.
+		Exp(grade, ty) => {
+			write!(f, "![{grade}] ")?;
+			write_static_atom(ty, f, interner)
+		}
+		Repeat(grade, tm) => {
+			write!(f, "@[{grade}] {{")?;
+			write_static(tm, f, interner)?;
+			write!(f, "}}")
+		}
+		LetExp { grade, argument, tail } => {
+			let parameter = resolve(interner, &tail.parameter());
+			write!(f, "let {}{{{parameter}}} = ", optional_grade_prefix(*grade, parameter))?;
+			write_static(argument, f, interner)?;
+			write!(f, "; ")?;
+			write_static(&tail.body, f, interner)
+		}
+
+		// Dependent functions.
+		Pi(grade, base, family) => {
+			let parameter = resolve(interner, &family.parameter());
+			if parameter != "_" {
+				write!(f, "|{}{parameter} : ", optional_grade_prefix(*grade, parameter))?;
+				write_static(base, f, interner)?;
+				write!(f, "| -> ")?;
+			} else {
+				write_static_spine(base, f, interner)?;
+				write!(f, " {}-> ", optional_grade_prefix(*grade, parameter))?;
+			}
+			write_static(&family.body, f, interner)
+		}
+		Function(grade, function) => {
+			let parameter = resolve(interner, &function.parameter());
+			write!(f, "|{}{parameter}| ", optional_grade_prefix(*grade, parameter))?;
+			write_static(&function.body, f, interner)
+		}
+		Apply { scrutinee, argument } => {
+			write_static_spine(scrutinee, f, interner)?;
+			write!(f, " ")?;
+			write_static_atom(argument, f, interner)
+		}
+
+		// Enumerated numbers.
 		Enum(k) => write!(f, "#{k}"),
 		EnumValue(k, v) => write!(f, "{v}_{k}"),
 		CaseEnum { scrutinee, motive, cases } => {
@@ -208,7 +230,8 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 
 		// Let-expressions.
 		Let { grade, ty, argument, tail } => {
-			write!(f, "let [{grade}] {} : ", resolve(interner, &tail.parameter()))?;
+			let parameter = resolve(interner, &tail.parameter());
+			write!(f, "let {}{parameter} : ", optional_grade_prefix(*grade, parameter))?;
 			write_dynamic(ty, f, interner)?;
 			write!(f, " = ")?;
 			write_dynamic(argument, f, interner)?;
@@ -226,9 +249,9 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 
 		// Quoted programs.
 		Splice(splicee) => {
-			write!(f, "[")?;
+			write!(f, "<")?;
 			write_static(splicee, f, interner)?;
-			write!(f, "]")
+			write!(f, ">")
 		}
 
 		// Repeated programs.
@@ -242,7 +265,8 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 			write!(f, "}}")
 		}
 		LetExp { grade, argument, tail } => {
-			write!(f, "let [{grade}] {{{}}} = ", resolve(interner, &tail.parameter()))?;
+			let parameter = resolve(interner, &tail.parameter());
+			write!(f, "let {}{{{parameter}}} = ", optional_grade_prefix(*grade, parameter))?;
 			write_dynamic(argument, f, interner)?;
 			write!(f, "; ")?;
 			write_dynamic(&tail.body, f, interner)
@@ -252,17 +276,18 @@ pub fn write_dynamic(term: &DynamicTerm, f: &mut impl Write, interner: &Rodeo) -
 		Pi { grade, base, family, .. } => {
 			let parameter = resolve(interner, &family.parameter());
 			if parameter != "_" {
-				write!(f, "|[{grade}] {parameter} : ")?;
+				write!(f, "|{}{parameter} : ", optional_grade_prefix(*grade, parameter))?;
 				write_dynamic(base, f, interner)?;
 				write!(f, "| -> ")?;
 			} else {
 				write_dynamic_spine(base, f, interner)?;
-				write!(f, " [{grade}] -> ")?;
+				write!(f, " {}-> ", optional_grade_prefix(*grade, parameter))?;
 			}
 			write_dynamic(&family.body, f, interner)
 		}
 		Function { grade, body, .. } => {
-			write!(f, "|[{grade}] {}| ", resolve(interner, &body.parameter()))?;
+			let parameter = resolve(interner, &body.parameter());
+			write!(f, "|{}{parameter}| ", optional_grade_prefix(*grade, parameter))?;
 			write_dynamic(&body.body, f, interner)
 		}
 		Apply { scrutinee, argument, .. } => {

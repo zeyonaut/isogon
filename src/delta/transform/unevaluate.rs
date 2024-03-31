@@ -47,7 +47,7 @@ impl Unevaluate for StaticValue {
 			Cpy => StaticTerm::Cpy,
 			CpyValue(c) => StaticTerm::CpyValue(*c),
 
-			ReprType => StaticTerm::ReprType,
+			ReprType => StaticTerm::Repr,
 			ReprNone => StaticTerm::ReprAtom(None),
 			ReprAtom(r) => StaticTerm::ReprAtom(Some(*r)),
 			ReprExp(grade, r) => StaticTerm::ReprExp(*grade, r.unevaluate_in(level).into()),
@@ -67,7 +67,7 @@ impl Unevaluate for StaticValue {
 			// Dependent functions.
 			IndexedProduct(grade, base, family) =>
 				StaticTerm::Pi(*grade, base.try_unevaluate_in(level)?.into(), family.try_unevaluate_in(level)?),
-			Function(grade, function) => StaticTerm::Lambda(*grade, function.try_unevaluate_in(level)?),
+			Function(grade, function) => StaticTerm::Function(*grade, function.try_unevaluate_in(level)?),
 
 			// Enumerated values.
 			Enum(k) => StaticTerm::Enum(*k),

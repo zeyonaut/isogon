@@ -45,7 +45,7 @@ impl Evaluate for StaticTerm {
 			Cpy => StaticValue::Cpy,
 			CpyValue(c) => StaticValue::CpyValue(c),
 			CpyMax(a, b) => StaticValue::max_copyability(a.evaluate_in(environment), b.evaluate_in(environment)),
-			ReprType => StaticValue::ReprType,
+			Repr => StaticValue::ReprType,
 			ReprAtom(r) => r.map(StaticValue::ReprAtom).unwrap_or(StaticValue::ReprNone),
 			ReprExp(grade, repr) => StaticValue::ReprExp(grade, repr.evaluate_in(environment).into()),
 
@@ -76,7 +76,7 @@ impl Evaluate for StaticTerm {
 				rc!(base.evaluate_in(environment)),
 				rc!(family.evaluate_in(environment)),
 			),
-			Lambda(grade, function) => StaticValue::Function(grade, rc!(function.evaluate_in(environment))),
+			Function(grade, function) => StaticValue::Function(grade, rc!(function.evaluate_in(environment))),
 			Apply { scrutinee, argument } => match scrutinee.evaluate_in(environment) {
 				StaticValue::Function(_, function) => function.evaluate_with([argument.evaluate_in(environment)]),
 				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::Apply(
