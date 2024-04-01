@@ -3,8 +3,9 @@ use std::{
 	rc::Rc,
 };
 
-use lasso::{Rodeo};
+use lasso::Rodeo;
 
+use super::{unelaborate::Unelaborate, unparse::print};
 use crate::{
 	delta::{
 		common::{bind, Closure, Field, Index, Level, Name},
@@ -28,8 +29,6 @@ use crate::{
 	utility::bx,
 };
 
-use super::{unelaborate::Unelaborate, unparse::print};
-
 /// Elaborates a dynamic preterm to a dynamic term and synthesizes its type.
 pub fn elaborate(
 	source: &str,
@@ -51,20 +50,20 @@ pub fn elaborate(
 	}
 }
 
-pub fn display_error(kind: ElaborationErrorKind, interner: &Rodeo) -> String {
+fn display_error(kind: ElaborationErrorKind, interner: &Rodeo) -> String {
 	match kind {
 		ElaborationErrorKind::StaticBidirectionalMismatch { synthesized, expected } => {
 			let mut ty_sy = String::new();
-			print(&synthesized.unelaborate(), &mut ty_sy, interner);
+			print(&synthesized.unelaborate(), &mut ty_sy, interner).unwrap();
 			let mut ty_ex = String::new();
-			print(&expected.unelaborate(), &mut ty_ex, interner);
+			print(&expected.unelaborate(), &mut ty_ex, interner).unwrap();
 			format!("elaboration error: type mismatch\nexpected: {}\nfound: {}", ty_ex, ty_sy)
 		}
 		ElaborationErrorKind::DynamicBidirectionalMismatch { synthesized, expected } => {
 			let mut ty_sy = String::new();
-			print(&synthesized.unelaborate(), &mut ty_sy, interner);
+			print(&synthesized.unelaborate(), &mut ty_sy, interner).unwrap();
 			let mut ty_ex = String::new();
-			print(&expected.unelaborate(), &mut ty_ex, interner);
+			print(&expected.unelaborate(), &mut ty_ex, interner).unwrap();
 			format!("elaboration error: type mismatch\nexpected: {}\nfound: {}", ty_ex, ty_sy)
 		}
 		_ => format!("elaboration error: {:#?}", kind),
