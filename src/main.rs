@@ -3,6 +3,8 @@ mod alpha;
 // Non-staged; with unification.
 //mod beta;
 // Staged.
+// FIXME: Silence warnings for clarity during development.
+#[allow(warnings, unused)]
 mod gamma;
 // Experimental.
 mod delta;

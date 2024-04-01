@@ -38,8 +38,7 @@ impl Unelaborate for StaticTerm {
 			StaticTerm::ReprPair(a, b) =>
 				Preterm::Constructor(Constructor::ReprPair, vec![a.unelaborate(), b.unelaborate()]),
 
-			StaticTerm::Lift { liftee, copy: _, repr: _ } =>
-				Preterm::Former(Former::Lift, vec![liftee.unelaborate()]),
+			StaticTerm::Lift { liftee, kind: _ } => Preterm::Former(Former::Lift, vec![liftee.unelaborate()]),
 			StaticTerm::Quote(q) => Preterm::SwitchLevel(q.unelaborate().into()),
 
 			StaticTerm::Exp(n, t) => Preterm::Former(Former::Exp(n), vec![t.unelaborate()]),
@@ -101,8 +100,8 @@ impl Unelaborate for DynamicTerm {
 				tail: tail.unelaborate(),
 			},
 
-			DynamicTerm::Universe { copyability, representation } =>
-				Preterm::Former(Former::Universe, vec![copyability.unelaborate(), representation.unelaborate()]),
+			DynamicTerm::Universe { kind } =>
+				Preterm::Former(Former::Universe, vec![kind.copy.unelaborate(), kind.repr.unelaborate()]),
 
 			DynamicTerm::Splice(s) => Preterm::SwitchLevel(s.unelaborate().into()),
 
@@ -115,28 +114,14 @@ impl Unelaborate for DynamicTerm {
 				tail: tail.unelaborate(),
 			},
 
-			DynamicTerm::Pi {
-				grade,
-				base_copyability: _,
-				base_representation: _,
-				base,
-				family_copyability: _,
-				family_representation: _,
-				family,
-			} => Preterm::Pi { grade, base: base.unelaborate().into(), family: family.unelaborate().into() },
+			DynamicTerm::Pi { grade, base_kind: _, base, family_kind: _, family } =>
+				Preterm::Pi { grade, base: base.unelaborate().into(), family: family.unelaborate().into() },
 			DynamicTerm::Function { grade, base: _, family: _, body } =>
 				Preterm::Lambda { grade, body: body.unelaborate().into() },
-			DynamicTerm::Apply {
-				scrutinee,
-				argument,
-				fiber_copyability: _,
-				fiber_representation: _,
-				base: _,
-				family: _,
-			} =>
+			DynamicTerm::Apply { scrutinee, argument, family_kind: _, base: _, family: _ } =>
 				Preterm::Call { callee: scrutinee.unelaborate().into(), argument: argument.unelaborate().into() },
 
-			DynamicTerm::Sg { base_copy: _, base_repr: _, base, family_copy: _, family_repr: _, family } =>
+			DynamicTerm::Sg { base_kind: _, base, family_kind: _, family } =>
 				Preterm::Sg { base: base.unelaborate().into(), family: family.unelaborate().into() },
 			DynamicTerm::Pair { basepoint, fiberpoint } => Preterm::Pair {
 				basepoint: basepoint.unelaborate().into(),
@@ -149,13 +134,7 @@ impl Unelaborate for DynamicTerm {
 
 			DynamicTerm::Enum(n) => Preterm::Former(Former::Enum(n), vec![]),
 			DynamicTerm::EnumValue(k, v) => Preterm::Constructor(Constructor::Enum(k, v), vec![]),
-			DynamicTerm::CaseEnum {
-				scrutinee,
-				cases,
-				fiber_copyability: _,
-				fiber_representation: _,
-				motive,
-			} => {
+			DynamicTerm::CaseEnum { scrutinee, cases, motive_kind: _, motive } => {
 				let card = cases.len() as u16;
 				Preterm::Split {
 					scrutinee: scrutinee.unelaborate().into(),
@@ -170,7 +149,7 @@ impl Unelaborate for DynamicTerm {
 				}
 			}
 
-			DynamicTerm::Id { copy: _, repr: _, space, left, right } =>
+			DynamicTerm::Id { kind: _, space, left, right } =>
 				Preterm::Former(Former::Id, vec![space.unelaborate(), left.unelaborate(), right.unelaborate()]),
 			DynamicTerm::Refl => Preterm::Constructor(Constructor::Refl, vec![]),
 			DynamicTerm::CasePath { scrutinee, motive, case_refl } => Preterm::Split {
@@ -179,16 +158,14 @@ impl Unelaborate for DynamicTerm {
 				cases: vec![(Pattern::Construction(Constructor::Refl, vec![]), case_refl.unelaborate())],
 			},
 
-			DynamicTerm::Bx { inner, copy: _, repr: _ } =>
-				Preterm::Former(Former::Bx, vec![inner.unelaborate()]),
+			DynamicTerm::Bx { inner, kind: _ } => Preterm::Former(Former::Bx, vec![inner.unelaborate()]),
 			DynamicTerm::BxValue(v) => Preterm::Constructor(Constructor::Bx, vec![v.unelaborate()]),
-			DynamicTerm::BxProject { scrutinee, copy: _, repr: _ } =>
+			DynamicTerm::BxProject { scrutinee, kind: _ } =>
 				Preterm::Project(scrutinee.unelaborate().into(), Projector::Bx),
 
-			DynamicTerm::Wrap { inner, copy: _, repr: _ } =>
-				Preterm::Former(Former::Wrap, vec![inner.unelaborate()]),
+			DynamicTerm::Wrap { inner, kind: _ } => Preterm::Former(Former::Wrap, vec![inner.unelaborate()]),
 			DynamicTerm::WrapValue(v) => Preterm::Constructor(Constructor::Wrap, vec![v.unelaborate()]),
-			DynamicTerm::WrapProject { scrutinee, copy: _, repr: _ } =>
+			DynamicTerm::WrapProject { scrutinee, kind: _ } =>
 				Preterm::Project(scrutinee.unelaborate().into(), Projector::Wrap),
 		})
 	}

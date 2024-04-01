@@ -2,8 +2,8 @@ use super::autolyze::Autolyze;
 use crate::delta::{
 	common::{bind, Binder, Closure, Index, Level},
 	ir::{
-		semantics::{DynamicNeutral, DynamicValue, Environment, StaticNeutral, StaticValue},
-		syntax::{DynamicTerm, StaticTerm},
+		semantics::{DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue},
+		syntax::{DynamicTerm, KindTerm, StaticTerm},
 	},
 };
 
@@ -32,6 +32,12 @@ impl<const N: usize> Unevaluate for Closure<Environment, DynamicTerm, N> {
 	}
 }
 
+impl Unevaluate for KindValue {
+	type Term = KindTerm;
+	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
+		Ok(KindTerm { copy: self.copy.unevaluate_in(level), repr: self.repr.unevaluate_in(level) })
+	}
+}
 impl Unevaluate for StaticValue {
 	type Term = StaticTerm;
 	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
@@ -54,10 +60,9 @@ impl Unevaluate for StaticValue {
 			ReprExp(grade, r) => StaticTerm::ReprExp(*grade, r.unevaluate_in(level).into()),
 
 			// Quoted programs.
-			Lift { ty: liftee, copy, repr } => StaticTerm::Lift {
+			Lift { ty: liftee, kind } => StaticTerm::Lift {
 				liftee: liftee.try_unevaluate_in(level)?.into(),
-				copy: copy.try_unevaluate_in(level)?.into(),
-				repr: repr.try_unevaluate_in(level)?.into(),
+				kind: kind.try_unevaluate_in(level)?.into(),
 			},
 			Quote(quotee) => StaticTerm::Quote(quotee.try_unevaluate_in(level)?.into()),
 
@@ -99,14 +104,7 @@ impl Unevaluate for StaticNeutral {
 				StaticTerm::CpyMax(a.try_unevaluate_in(level)?.into(), b.try_unevaluate_in(level)?.into()),
 
 			// Repeated programs.
-			LetExp { scrutinee, grade, tail } => StaticTerm::LetExp {
-				argument: scrutinee.unevaluate_in(level).into(),
-				grade: *grade,
-				// NOTE: It seems like we're converging towards not having LetExp in the domain at all!
-				// So, we'll probably just remove it instead of implement it.
-				grade_argument: unimplemented!(),
-				tail: tail.unevaluate_in(level),
-			},
+			ExpProject(scrutinee) => unimplemented!(),
 
 			// Dependent functions.
 			Apply(callee, argument) => StaticTerm::Apply {
@@ -137,54 +135,32 @@ impl Unevaluate for DynamicValue {
 			Neutral(neutral) => neutral.try_unevaluate_in(level)?,
 
 			// Types.
-			Universe { copy: copyability, repr: representation } => DynamicTerm::Universe {
-				copyability: copyability.try_unevaluate_in(level)?.into(),
-				representation: representation.try_unevaluate_in(level)?.into(),
-			},
+			Universe { kind } => DynamicTerm::Universe { kind: kind.try_unevaluate_in(level)?.into() },
 
 			// Repeated programs.
 			Exp(grade, ty) => DynamicTerm::Exp(*grade, ty.unevaluate_in(level).into()),
 			Repeat(grade, value) => DynamicTerm::Repeat(*grade, value.unevaluate_in(level).into()),
 
 			// Dependent functions.
-			IndexedProduct {
-				grade,
-				base_copyability,
-				base_representation,
-				base,
-				family_copyability: _,
-				family_representation: _,
-				family,
-			} => DynamicTerm::Pi {
+			IndexedProduct { grade, base_kind, base, family_kind, family } => DynamicTerm::Pi {
 				grade: *grade,
-				base_copyability: base_copyability.try_unevaluate_in(level)?.into(),
-				base_representation: base_representation.try_unevaluate_in(level)?.into(),
+				base_kind: base_kind.try_unevaluate_in(level)?.into(),
 				base: base.try_unevaluate_in(level)?.into(),
-				family_copyability: base_copyability.try_unevaluate_in(level)?.into(),
-				family_representation: base_representation.try_unevaluate_in(level)?.into(),
+				family_kind: family_kind.try_unevaluate_in(level)?.into(),
 				family: family.try_unevaluate_in(level)?,
 			},
-			Function { grade, base, family, body } => DynamicTerm::Function {
+			Function { grade, body } => DynamicTerm::Function {
 				grade: *grade,
-				base: base.try_unevaluate_in(level)?.into(),
-				family: family.try_unevaluate_in(level)?.into(),
 				body: body.try_unevaluate_in(level)?.into(),
+				base: None,
+				family: None,
 			},
 
 			// Dependent pairs.
-			IndexedSum {
-				base_copyability,
-				base_representation,
-				base,
-				family_copyability,
-				family_representation,
-				family,
-			} => DynamicTerm::Sg {
-				base_copy: base_copyability.try_unevaluate_in(level)?.into(),
-				base_repr: base_representation.try_unevaluate_in(level)?.into(),
+			IndexedSum { base_kind, base, family_kind, family } => DynamicTerm::Sg {
+				base_kind: base_kind.try_unevaluate_in(level)?.into(),
 				base: base.try_unevaluate_in(level)?.into(),
-				family_copy: family_copyability.try_unevaluate_in(level)?.into(),
-				family_repr: family_representation.try_unevaluate_in(level)?.into(),
+				family_kind: family_kind.try_unevaluate_in(level)?.into(),
 				family: family.try_unevaluate_in(level)?,
 			},
 			Pair(basepoint, fiberpoint) => DynamicTerm::Pair {
@@ -197,9 +173,8 @@ impl Unevaluate for DynamicValue {
 			EnumValue(k, v) => DynamicTerm::EnumValue(*k, *v),
 
 			// Paths.
-			Id { copy, repr, space, left, right } => DynamicTerm::Id {
-				copy: copy.try_unevaluate_in(level)?.into(),
-				repr: repr.try_unevaluate_in(level)?.into(),
+			Id { kind, space, left, right } => DynamicTerm::Id {
+				kind: kind.try_unevaluate_in(level)?.into(),
 				space: space.try_unevaluate_in(level)?.into(),
 				left: left.try_unevaluate_in(level)?.into(),
 				right: right.try_unevaluate_in(level)?.into(),
@@ -207,16 +182,14 @@ impl Unevaluate for DynamicValue {
 			Refl => DynamicTerm::Refl,
 
 			// Wrappers.
-			Bx { inner, copy: copyability, repr: representation } => DynamicTerm::Bx {
+			Bx { kind, inner } => DynamicTerm::Bx {
+				kind: kind.try_unevaluate_in(level)?.into(),
 				inner: inner.try_unevaluate_in(level)?.into(),
-				copy: copyability.try_unevaluate_in(level)?.into(),
-				repr: representation.try_unevaluate_in(level)?.into(),
 			},
 			BxValue(x) => DynamicTerm::BxValue(x.try_unevaluate_in(level)?.into()),
-			Wrap { inner, copy: copyability, repr: representation } => DynamicTerm::Wrap {
+			Wrap { kind, inner } => DynamicTerm::Wrap {
+				kind: kind.try_unevaluate_in(level)?.into(),
 				inner: inner.try_unevaluate_in(level)?.into(),
-				copy: copyability.try_unevaluate_in(level)?.into(),
-				repr: representation.try_unevaluate_in(level)?.into(),
 			},
 			WrapValue(x) => DynamicTerm::WrapValue(x.try_unevaluate_in(level)?.into()),
 		})
@@ -236,40 +209,28 @@ impl Unevaluate for DynamicNeutral {
 			Splice(splicee) => DynamicTerm::Splice(splicee.try_unevaluate_in(level)?.into()),
 
 			// Repeated programs.
-			LetExp { scrutinee, grade, tail } => DynamicTerm::LetExp {
-				argument: scrutinee.unevaluate_in(level).into(),
-				grade: *grade,
-				grade_argument: unimplemented!(),
-				tail: tail.unevaluate_in(level),
-			},
+			ExpProject(scrutinee) => unimplemented!(),
 
 			// Dependent functions.
-			Apply { scrutinee, argument, fiber_copyability, fiber_representation, base, family } =>
-				DynamicTerm::Apply {
-					scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
-					argument: argument.try_unevaluate_in(level)?.into(),
-					fiber_copyability: fiber_copyability.as_ref().unwrap().try_unevaluate_in(level)?.into(),
-					fiber_representation: fiber_representation.as_ref().unwrap().try_unevaluate_in(level)?.into(),
-					base: base.as_ref().unwrap().try_unevaluate_in(level)?.into(),
-					family: family.as_ref().unwrap().try_unevaluate_in(level)?,
-				},
+			Apply { scrutinee, argument } => DynamicTerm::Apply {
+				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
+				argument: argument.try_unevaluate_in(level)?.into(),
+				base: None,
+				family: None,
+				family_kind: None,
+			},
 
 			// Dependent pairs.
 			Project { scrutinee, projection } =>
 				DynamicTerm::SgField { scrutinee: scrutinee.try_unevaluate_in(level)?.into(), field: *projection },
 
 			// Enumerated numbers.
-			CaseEnum { scrutinee, cases, fiber_copyability, fiber_representation, motive } =>
-				DynamicTerm::CaseEnum {
-					scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
-					cases: cases
-						.into_iter()
-						.map(|case| case.try_unevaluate_in(level))
-						.collect::<Result<_, _>>()?,
-					fiber_copyability: fiber_copyability.try_unevaluate_in(level)?.into(),
-					fiber_representation: fiber_representation.try_unevaluate_in(level)?.into(),
-					motive: motive.try_unevaluate_in(level)?,
-				},
+			CaseEnum { scrutinee, cases, motive } => DynamicTerm::CaseEnum {
+				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
+				cases: cases.into_iter().map(|case| case.try_unevaluate_in(level)).collect::<Result<_, _>>()?,
+				motive: motive.try_unevaluate_in(level)?,
+				motive_kind: None,
+			},
 
 			// Paths.
 			CasePath { scrutinee, motive, case_refl } => DynamicTerm::CasePath {
@@ -279,16 +240,10 @@ impl Unevaluate for DynamicNeutral {
 			},
 
 			// Wrappers.
-			BxProject { scrutinee, copyability, representation } => DynamicTerm::BxProject {
-				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
-				copy: copyability.try_unevaluate_in(level)?.into(),
-				repr: representation.try_unevaluate_in(level)?.into(),
-			},
-			WrapProject { scrutinee, copyability, representation } => DynamicTerm::WrapProject {
-				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
-				copy: copyability.try_unevaluate_in(level)?.into(),
-				repr: representation.try_unevaluate_in(level)?.into(),
-			},
+			BxProject(scrutinee) =>
+				DynamicTerm::BxProject { scrutinee: scrutinee.try_unevaluate_in(level)?.into(), kind: None },
+			WrapProject(scrutinee) =>
+				DynamicTerm::WrapProject { scrutinee: scrutinee.try_unevaluate_in(level)?.into(), kind: None },
 		})
 	}
 }

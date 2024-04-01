@@ -1,6 +1,12 @@
 use crate::delta::common::{Binder, Cpy, Field, Index, Name, Repr, ReprAtom};
 
 #[derive(Clone, Debug)]
+pub struct KindTerm {
+	pub copy: StaticTerm,
+	pub repr: StaticTerm,
+}
+
+#[derive(Clone, Debug)]
 pub enum StaticTerm {
 	// Variables.
 	Variable(Option<Name>, Index),
@@ -22,7 +28,7 @@ pub enum StaticTerm {
 	ReprPair(Box<Self>, Box<Self>),
 
 	// Quoted programs.
-	Lift { liftee: Box<DynamicTerm>, copy: Box<Self>, repr: Box<Self> },
+	Lift { liftee: Box<DynamicTerm>, kind: Box<KindTerm> },
 	Quote(Box<DynamicTerm>),
 
 	// Repeated programs.
@@ -81,8 +87,7 @@ pub enum DynamicTerm {
 
 	// Types.
 	Universe {
-		copyability: Box<StaticTerm>,
-		representation: Box<StaticTerm>,
+		kind: Box<KindTerm>,
 	},
 
 	// Quoted programs.
@@ -101,35 +106,30 @@ pub enum DynamicTerm {
 	// Dependent functions.
 	Pi {
 		grade: usize,
-		base_copyability: Box<StaticTerm>,
-		base_representation: Box<StaticTerm>,
+		base_kind: Box<KindTerm>,
 		base: Box<Self>,
-		family_copyability: Box<StaticTerm>,
-		family_representation: Box<StaticTerm>,
+		family_kind: Box<KindTerm>,
 		family: Binder<Box<Self>>,
 	},
 	Function {
 		grade: usize,
-		base: Box<Self>,
-		family: Binder<Box<Self>>,
 		body: Binder<Box<Self>>,
+		base: Option<Box<Self>>,
+		family: Option<Binder<Box<Self>>>,
 	},
 	Apply {
 		scrutinee: Box<Self>,
 		argument: Box<Self>,
-		fiber_copyability: Box<StaticTerm>,
-		fiber_representation: Box<StaticTerm>,
-		base: Box<Self>,
-		family: Binder<Box<Self>>,
+		base: Option<Box<Self>>,
+		family_kind: Option<Box<KindTerm>>,
+		family: Option<Binder<Box<Self>>>,
 	},
 
 	// Dependent pairs.
 	Sg {
-		base_copy: Box<StaticTerm>,
-		base_repr: Box<StaticTerm>,
+		base_kind: Box<KindTerm>,
 		base: Box<Self>,
-		family_copy: Box<StaticTerm>,
-		family_repr: Box<StaticTerm>,
+		family_kind: Box<KindTerm>,
 		family: Binder<Box<Self>>,
 	},
 	Pair {
@@ -152,15 +152,13 @@ pub enum DynamicTerm {
 	CaseEnum {
 		scrutinee: Box<Self>,
 		cases: Vec<Self>,
-		fiber_copyability: Box<StaticTerm>,
-		fiber_representation: Box<StaticTerm>,
 		motive: Binder<Box<Self>>,
+		motive_kind: Option<Box<KindTerm>>,
 	},
 
 	// Paths.
 	Id {
-		copy: Box<StaticTerm>,
-		repr: Box<StaticTerm>,
+		kind: Box<KindTerm>,
 		space: Box<Self>,
 		left: Box<Self>,
 		right: Box<Self>,
@@ -174,25 +172,21 @@ pub enum DynamicTerm {
 
 	// Wrappers.
 	Bx {
+		kind: Box<KindTerm>,
 		inner: Box<Self>,
-		copy: Box<StaticTerm>,
-		repr: Box<StaticTerm>,
 	},
 	BxValue(Box<Self>),
 	BxProject {
+		kind: Option<Box<KindTerm>>,
 		scrutinee: Box<Self>,
-		copy: Box<StaticTerm>,
-		repr: Box<StaticTerm>,
 	},
 	Wrap {
+		kind: Box<KindTerm>,
 		inner: Box<Self>,
-		copy: Box<StaticTerm>,
-		repr: Box<StaticTerm>,
 	},
 	WrapValue(Box<Self>),
 	WrapProject {
+		kind: Option<Box<KindTerm>>,
 		scrutinee: Box<Self>,
-		copy: Box<StaticTerm>,
-		repr: Box<StaticTerm>,
 	},
 }
