@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use lasso::Rodeo;
 
-use super::{
+use crate::delta::{
 	common::{Cpy, Field, Name, ReprAtom},
 	ir::presyntax::{Constructor, Former, Pattern, Preterm, Projector, PurePreterm},
 };
