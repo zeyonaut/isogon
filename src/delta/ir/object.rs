@@ -1,18 +1,29 @@
 use std::{fmt::Debug, rc::Rc};
 
 use super::syntax::{DynamicTerm, StaticTerm};
-use crate::delta::common::{Closure, Copyability, Field, Index, Level, Name, Repr, UniverseKind};
+use crate::delta::common::{Closure, Cpy, Field, Index, Level, Name, Repr, UniverseKind};
 
 #[derive(Clone)]
 pub enum StaticValue {
+	// Types and universe indices.
 	Type,
+	CpyValue(Cpy),
+	ReprValue(Option<Repr>),
+
+	// Quoted programs.
 	Quote(Rc<DynamicValue>),
+
+	// Dependent functions.
 	Function(Closure<Environment, StaticTerm>),
+
+	// Dependent pairs.
 	Pair(Rc<Self>, Rc<Self>),
-	Num(usize),
+
+	// Enumerated numbers.
 	EnumValue(u8),
-	Copyability(Copyability),
-	Repr(Option<Repr>),
+
+	// Natural numbers.
+	NatValue(usize),
 }
 
 impl Debug for StaticValue {
@@ -59,65 +70,69 @@ impl Environment {
 
 #[derive(Clone, Debug)]
 pub enum DynamicValue {
+	// Variables.
 	Variable(Option<Name>, Level),
+
+	// Let-expressions.
 	Let {
+		grade: usize,
 		ty: Rc<Self>,
 		argument: Rc<Self>,
 		tail: Closure<Environment, DynamicTerm>,
 	},
+
+	// Types.
 	Universe(UniverseKind),
+
+	// Repeated programs.
+
+	// Dependent functions.
 	Pi {
-		base_universe: UniverseKind,
+		grade: usize,
+		base_kind: UniverseKind,
 		base: Rc<Self>,
-		family_universe: UniverseKind,
+		family_kind: UniverseKind,
 		family: Closure<Environment, DynamicTerm>,
 	},
 	Function {
-		// TODO: This is kind of redundant, since binders store parameter names and arity,
-		// and family and body should have the same of both; the single parameter is also
-		// associated with the base. Is it possible to have a more generic binder type that
-		// can accommodate this extra data, but without significantly affecting existing binder code?
-		base: Rc<Self>,
-		family: Closure<Environment, DynamicTerm>,
+		grade: usize,
 		body: Closure<Environment, DynamicTerm>,
 	},
 	Apply {
 		scrutinee: Rc<Self>,
 		argument: Rc<Self>,
-		fiber_universe: UniverseKind,
-		base: Rc<Self>,
-		family: Closure<Environment, DynamicTerm>,
+		family_kind: Option<UniverseKind>,
 	},
-	Sigma {
-		base_universe: UniverseKind,
+
+	// Dependent pairs.
+	Sg {
+		base_kind: UniverseKind,
 		base: Rc<Self>,
-		family_universe: UniverseKind,
+		family_kind: UniverseKind,
 		family: Closure<Environment, DynamicTerm>,
 	},
 	Pair {
 		basepoint: Rc<Self>,
 		fiberpoint: Rc<Self>,
 	},
-	// TODO: Is this enough information? We might want more information for fiber projections (e.g. the repr of the base.)
-	Project(Rc<Self>, Field, UniverseKind),
-	Nat,
-	Num(usize),
-	Suc(Rc<Self>),
-	CaseNat {
-		scrutinee: Rc<Self>,
-		case_nil: Rc<Self>,
-		case_suc: Closure<Environment, DynamicTerm, 2>,
-		fiber_universe: UniverseKind,
-		motive: Closure<Environment, DynamicTerm>,
+	SgLet {
+		grade: usize,
+		argument: Box<Self>,
+		tail: Closure<Environment, DynamicTerm, 2>,
 	},
+	SgField(Rc<Self>, Field),
+
+	// Enumerated numbers.
 	Enum(u16),
 	EnumValue(u16, u8),
 	CaseEnum {
 		scrutinee: Rc<Self>,
-		cases: Vec<Self>,
-		fiber_universe: UniverseKind,
+		motive_kind: Option<UniverseKind>,
 		motive: Closure<Environment, DynamicTerm>,
+		cases: Vec<Self>,
 	},
+
+	// Paths.
 	Id {
 		kind: UniverseKind,
 		space: Rc<Self>,
@@ -130,10 +145,25 @@ pub enum DynamicValue {
 		motive: Closure<Environment, DynamicTerm, 2>,
 		case_refl: Rc<Self>,
 	},
-	WrapType(Rc<Self>, UniverseKind),
-	WrapNew(Rc<Self>),
-	Unwrap(Rc<Self>, UniverseKind),
-	RcType(Rc<Self>, UniverseKind),
-	RcNew(Rc<Self>),
-	UnRc(Rc<Self>, UniverseKind),
+
+	// Natural numbers.
+	Nat,
+	Num(usize),
+	Suc(Rc<Self>),
+	CaseNat {
+		scrutinee: Rc<Self>,
+		motive_kind: Option<UniverseKind>,
+		motive: Closure<Environment, DynamicTerm>,
+		case_nil: Rc<Self>,
+		case_suc: Closure<Environment, DynamicTerm, 2>,
+	},
+
+	// Wrappers.
+	Bx(Rc<Self>, UniverseKind),
+	BxValue(Rc<Self>),
+	BxProject(Rc<Self>, Option<UniverseKind>),
+
+	Wrap(Rc<Self>, UniverseKind),
+	WrapValue(Rc<Self>),
+	WrapProject(Rc<Self>, Option<UniverseKind>),
 }

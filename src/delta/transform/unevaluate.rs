@@ -162,12 +162,8 @@ impl Unevaluate for DynamicValue {
 				family_kind: family_kind.try_unevaluate_in(level)?.into(),
 				family: family.try_unevaluate_in(level)?,
 			},
-			Function { grade, body } => DynamicTerm::Function {
-				grade: *grade,
-				body: body.try_unevaluate_in(level)?.into(),
-				base: None,
-				family: None,
-			},
+			Function { grade, body } =>
+				DynamicTerm::Function { grade: *grade, body: body.try_unevaluate_in(level)?.into() },
 
 			// Dependent pairs.
 			IndexedSum { base_kind, base, family_kind, family } => DynamicTerm::Sg {
@@ -232,9 +228,7 @@ impl Unevaluate for DynamicNeutral {
 			Apply { scrutinee, argument } => DynamicTerm::Apply {
 				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
 				argument: argument.try_unevaluate_in(level)?.into(),
-				base: None,
 				family_kind: None,
-				family: None,
 			},
 
 			// Dependent pairs.

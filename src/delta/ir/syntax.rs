@@ -1,12 +1,6 @@
 use crate::delta::common::{Binder, Cpy, Field, Index, Name, Repr, ReprAtom};
 
 #[derive(Clone, Debug)]
-pub struct KindTerm {
-	pub copy: StaticTerm,
-	pub repr: StaticTerm,
-}
-
-#[derive(Clone, Debug)]
 pub enum StaticTerm {
 	// Variables.
 	Variable(Option<Name>, Index),
@@ -91,25 +85,6 @@ pub enum StaticTerm {
 	},
 }
 
-impl From<&Repr> for StaticTerm {
-	fn from(value: &Repr) -> Self {
-		match value {
-			Repr::Atom(atom) => Self::ReprAtom(Some(*atom)),
-			Repr::Pair(l, r) => Self::ReprPair(Self::from(&**l).into(), Self::from(&**r).into()),
-			Repr::Exp(n, r) => Self::ReprExp(*n, Self::from(&**r).into()),
-		}
-	}
-}
-
-impl From<Option<&Repr>> for StaticTerm {
-	fn from(value: Option<&Repr>) -> Self {
-		match value {
-			Some(repr) => repr.into(),
-			None => Self::ReprAtom(None),
-		}
-	}
-}
-
 #[derive(Clone, Debug)]
 pub enum DynamicTerm {
 	// Variables.
@@ -152,15 +127,11 @@ pub enum DynamicTerm {
 	Function {
 		grade: usize,
 		body: Binder<Box<Self>>,
-		base: Option<Box<Self>>,
-		family: Option<Binder<Box<Self>>>,
 	},
 	Apply {
 		scrutinee: Box<Self>,
 		argument: Box<Self>,
-		base: Option<Box<Self>>,
 		family_kind: Option<Box<KindTerm>>,
-		family: Option<Binder<Box<Self>>>,
 	},
 
 	// Dependent pairs.
@@ -239,4 +210,29 @@ pub enum DynamicTerm {
 		kind: Option<Box<KindTerm>>,
 		scrutinee: Box<Self>,
 	},
+}
+
+#[derive(Clone, Debug)]
+pub struct KindTerm {
+	pub copy: StaticTerm,
+	pub repr: StaticTerm,
+}
+
+impl From<&Repr> for StaticTerm {
+	fn from(value: &Repr) -> Self {
+		match value {
+			Repr::Atom(atom) => Self::ReprAtom(Some(*atom)),
+			Repr::Pair(l, r) => Self::ReprPair(Self::from(&**l).into(), Self::from(&**r).into()),
+			Repr::Exp(n, r) => Self::ReprExp(*n, Self::from(&**r).into()),
+		}
+	}
+}
+
+impl From<Option<&Repr>> for StaticTerm {
+	fn from(value: Option<&Repr>) -> Self {
+		match value {
+			Some(repr) => repr.into(),
+			None => Self::ReprAtom(None),
+		}
+	}
 }

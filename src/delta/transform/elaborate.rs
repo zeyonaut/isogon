@@ -879,9 +879,7 @@ fn synthesize_dynamic(
 				DynamicTerm::Apply {
 					scrutinee: scrutinee.into(),
 					argument: argument.into(),
-					base: Some(base.unevaluate_in(ctx.len()).into()),
 					family_kind: Some(family_kind.unevaluate_in(ctx.len()).into()),
-					family: Some(family.unevaluate_in(ctx.len())),
 				},
 				family.evaluate_with([argument_value]),
 				(*family_kind).clone(),
@@ -1374,6 +1372,7 @@ fn verify_dynamic(
 			(grade * fragment as usize == grade_t * fragment as usize)
 				.then_some(())
 				.ok_or_else(|| ElaborationErrorKind::LambdaGradeMismatch(grade, grade_t).at(expr.range))?;
+			// FIXME: Autolyze in elaboration? This doesn't seem right.
 			let fiber = family.autolyze(ctx.len());
 			// TODO: Is this necessary?
 			let parameters = body.parameters;
@@ -1381,7 +1380,6 @@ fn verify_dynamic(
 			// Not sure if this is significant, as we only use indices in debugging/pretty-printing.
 			// The alternatives seem to be evaluating twice (shudders) or doing find-and-replace for variables.
 			// Maybe we can do the latter at some point?
-			let family = bind(parameters, fiber.unevaluate_in(ctx.len() + 1));
 			let body = {
 				let mut context = ctx.bind_dynamic(
 					parameters[0],
@@ -1395,12 +1393,7 @@ fn verify_dynamic(
 				body
 			};
 
-			DynamicTerm::Function {
-				grade,
-				body: bind(parameters, body),
-				base: Some(base.unevaluate_in(ctx.len()).into()),
-				family: Some(family),
-			}
+			DynamicTerm::Function { grade, body: bind(parameters, body) }
 		}
 
 		// Dependent pairs.

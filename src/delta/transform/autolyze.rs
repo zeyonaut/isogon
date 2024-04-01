@@ -1,7 +1,7 @@
-use super::evaluate::EvaluateWith;
+use super::{evaluate::EvaluateWith, stage::StageWith};
 use crate::delta::{
 	common::{Closure, Level},
-	ir::{semantics, syntax},
+	ir::{object, semantics, syntax},
 };
 
 pub trait Autolyze {
@@ -33,7 +33,7 @@ impl<const N: usize> Autolyze for Closure<semantics::Environment, syntax::Dynami
 		}))
 	}
 }
-/*
+
 impl<const N: usize> Autolyze for Closure<object::Environment, syntax::DynamicTerm, N> {
 	type Value = object::DynamicValue;
 	fn autolyze(&self, context_len: Level) -> Self::Value {
@@ -45,4 +45,3 @@ impl<const N: usize> Autolyze for Closure<object::Environment, syntax::DynamicTe
 		}))
 	}
 }
-*/

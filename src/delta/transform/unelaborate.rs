@@ -140,9 +140,8 @@ impl Unelaborate for DynamicTerm {
 
 			DynamicTerm::Pi { grade, base_kind: _, base, family_kind: _, family } =>
 				Preterm::Pi { grade, base: base.unelaborate().into(), family: family.unelaborate().into() },
-			DynamicTerm::Function { grade, base: _, family: _, body } =>
-				Preterm::Lambda { grade, body: body.unelaborate().into() },
-			DynamicTerm::Apply { scrutinee, argument, family_kind: _, base: _, family: _ } =>
+			DynamicTerm::Function { grade, body } => Preterm::Lambda { grade, body: body.unelaborate().into() },
+			DynamicTerm::Apply { scrutinee, argument, family_kind: _ } =>
 				Preterm::Call { callee: scrutinee.unelaborate().into(), argument: argument.unelaborate().into() },
 
 			DynamicTerm::Sg { base_kind: _, base, family_kind: _, family } =>

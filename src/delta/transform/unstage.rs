@@ -6,7 +6,7 @@ use crate::{
 		common::{bind, Binder, Closure, Index, Level, Repr, UniverseKind},
 		ir::{
 			object::{DynamicValue, Environment},
-			syntax::{DynamicTerm, StaticTerm},
+			syntax::{DynamicTerm, KindTerm, StaticTerm},
 		},
 	},
 	utility::bx,
@@ -22,9 +22,128 @@ pub trait Unstage {
 		self.unstage_in(Level(0))
 	}
 
-	fn unstage_in(&self, context_len: Level) -> Self::CoreTerm;
+	fn unstage_in(&self, level: Level) -> Self::CoreTerm;
 }
 
+impl Unstage for DynamicValue {
+	type CoreTerm = DynamicTerm;
+	fn unstage_in(&self, level @ Level(context_len): Level) -> Self::CoreTerm {
+		use DynamicValue::*;
+		match self {
+			// Variables.
+			Variable(name, v) => DynamicTerm::Variable(*name, Index(context_len - (v.0 + 1))),
+
+			// Let-expressions.
+			Let { grade, ty, argument, tail } => DynamicTerm::Let {
+				grade: *grade,
+				ty: ty.unstage_in(level).into(),
+				argument: argument.unstage_in(level).into(),
+				tail: tail.unstage_in(level),
+			},
+
+			// Types.
+			Universe(kind) => DynamicTerm::Universe { kind: kind.unstage_in(level).into() },
+
+			// Quoted programs.
+
+			// Repeated programs.
+
+			// Dependent functions.
+			Pi { grade, base_kind, base, family_kind, family } => DynamicTerm::Pi {
+				grade: *grade,
+				base_kind: base_kind.unstage_in(level).into(),
+				base: base.unstage_in(level).into(),
+				family_kind: family_kind.unstage_in(level).into(),
+				family: family.unstage_in(level),
+			},
+			Function { grade, body } => DynamicTerm::Function { grade: *grade, body: body.unstage_in(level) },
+			Apply { scrutinee, argument, family_kind } => DynamicTerm::Apply {
+				scrutinee: scrutinee.unstage_in(level).into(),
+				argument: argument.unstage_in(level).into(),
+				family_kind: family_kind.as_ref().map(|kind| kind.unstage_in(level).into()),
+			},
+
+			// Dependent pairs.
+			Sg { base_kind, base, family_kind, family } => DynamicTerm::Sg {
+				base_kind: base_kind.unstage_in(level).into(),
+				base: base.unstage_in(level).into(),
+				family_kind: family_kind.unstage_in(level).into(),
+				family: family.unstage_in(level),
+			},
+			Pair { basepoint, fiberpoint } => DynamicTerm::Pair {
+				basepoint: basepoint.unstage_in(level).into(),
+				fiberpoint: fiberpoint.unstage_in(level).into(),
+			},
+			SgLet { grade, argument, tail } => DynamicTerm::SgLet {
+				grade: *grade,
+				argument: argument.unstage_in(level).into(),
+				tail: tail.unstage_in(level),
+			},
+			SgField(scrutinee, field) =>
+				DynamicTerm::SgField { scrutinee: scrutinee.unstage_in(level).into(), field: *field },
+
+			// Enumerated numbers.
+			Enum(k) => DynamicTerm::Enum(*k),
+			EnumValue(k, v) => DynamicTerm::EnumValue(*k, *v),
+			CaseEnum { scrutinee, cases, motive_kind, motive } => DynamicTerm::CaseEnum {
+				scrutinee: scrutinee.unstage_in(level).into(),
+				cases: cases.into_iter().map(|case| case.unstage_in(level)).collect(),
+				motive_kind: motive_kind.as_ref().map(|kind| kind.unstage_in(level).into()),
+				motive: motive.unstage_in(level),
+			},
+
+			// Paths.
+			Id { kind, space, left, right } => DynamicTerm::Id {
+				kind: kind.unstage_in(level).into(),
+				space: space.unstage_in(level).into(),
+				left: left.unstage_in(level).into(),
+				right: right.unstage_in(level).into(),
+			},
+			Refl => DynamicTerm::Refl,
+			CasePath { scrutinee, motive, case_refl } => DynamicTerm::CasePath {
+				scrutinee: scrutinee.unstage_in(level).into(),
+				motive: motive.unstage_in(level),
+				case_refl: case_refl.unstage_in(level).into(),
+			},
+
+			// Natural numbers.
+			Nat => DynamicTerm::Nat,
+			Num(n) => DynamicTerm::Num(*n),
+			Suc(prev) => DynamicTerm::Suc(prev.unstage_in(level).into()),
+			CaseNat { scrutinee, case_nil, case_suc, motive_kind, motive } => DynamicTerm::CaseNat {
+				scrutinee: scrutinee.unstage_in(level).into(),
+				motive_kind: motive_kind.as_ref().map(|kind| kind.unstage_in(level).into()),
+				motive: motive.unstage_in(level),
+				case_nil: case_nil.unstage_in(level).into(),
+				case_suc: case_suc.unstage_in(level),
+			},
+
+			// Wrappers.
+			Bx(inner, kind) =>
+				DynamicTerm::Bx { inner: inner.unstage_in(level).into(), kind: kind.unstage_in(level).into() },
+			BxValue(x) => DynamicTerm::BxValue(x.unstage_in(level).into()),
+			BxProject(scrutinee, kind) => DynamicTerm::BxProject {
+				scrutinee: scrutinee.unstage_in(level).into(),
+				kind: kind.as_ref().map(|kind| kind.unstage_in(level).into()),
+			},
+
+			Wrap(inner, kind) =>
+				DynamicTerm::Bx { inner: inner.unstage_in(level).into(), kind: kind.unstage_in(level).into() },
+			WrapValue(x) => DynamicTerm::WrapValue(x.unstage_in(level).into()),
+			WrapProject(scrutinee, kind) => DynamicTerm::BxProject {
+				scrutinee: scrutinee.unstage_in(level).into(),
+				kind: kind.as_ref().map(|kind| kind.unstage_in(level).into()),
+			},
+		}
+	}
+}
+
+impl Unstage for UniverseKind {
+	type CoreTerm = KindTerm;
+	fn unstage_in(&self, _: Level) -> Self::CoreTerm {
+		KindTerm { copy: StaticTerm::CpyValue(self.0), repr: StaticTerm::from(self.1.as_ref()) }
+	}
+}
 impl<const N: usize> Unstage for Closure<Environment, DynamicTerm, N> {
 	type CoreTerm = Binder<Box<DynamicTerm>, N>;
 	fn unstage_in(&self, level: Level) -> Self::CoreTerm {
@@ -37,124 +156,8 @@ impl Unstage for Repr {
 	fn unstage_in(&self, level: Level) -> Self::CoreTerm {
 		match self {
 			Repr::Atom(r) => StaticTerm::ReprAtom(Some(*r)),
-			Repr::Pair(r0, r1) => StaticTerm::ReprPair(bx!(r0.unstage_in(level)), bx!(r1.unstage_in(level))),
-			Repr::Max(r0, r1) => StaticTerm::ReprMax(bx!(r0.unstage_in(level)), bx!(r1.unstage_in(level))),
-		}
-	}
-}
-
-impl Unstage for DynamicValue {
-	type CoreTerm = DynamicTerm;
-	fn unstage_in(&self, level @ Level(context_len): Level) -> Self::CoreTerm {
-		use DynamicValue::*;
-		match self {
-			Variable(name, v) => DynamicTerm::Variable(*name, Index(context_len - (v.0 + 1))),
-			Function { base, family, body } => DynamicTerm::Function {
-				base: base.unstage_in(level).into(),
-				family: family.unstage_in(level),
-				body: body.unstage_in(level),
-			},
-			Pair { basepoint, fiberpoint } => DynamicTerm::Pair {
-				basepoint: bx!(basepoint.unstage_in(level)),
-				fiberpoint: bx!(fiberpoint.unstage_in(level)),
-			},
-			Apply { scrutinee, argument, fiber_universe, base, family } => DynamicTerm::Apply {
-				scrutinee: bx!(scrutinee.unstage_in(level)),
-				argument: bx!(argument.unstage_in(level)),
-				fiber_copyability: StaticTerm::Copyability(fiber_universe.0).into(),
-				fiber_representation: StaticTerm::from(fiber_universe.1.as_ref()).into(),
-				base: base.unstage_in(level).into(),
-				family: family.unstage_in(level),
-			},
-			Project(scrutinee, projection, universe) => DynamicTerm::Project {
-				scrutinee: scrutinee.unstage_in(level).into(),
-				projection: *projection,
-				projection_copyability: StaticTerm::Copyability(universe.0).into(),
-				projection_representation: StaticTerm::from(universe.1.as_ref()).into(),
-			},
-			Pi { base_universe, base, family_universe, family } => DynamicTerm::Pi {
-				base_copyability: StaticTerm::Copyability(base_universe.0).into(),
-				base_representation: StaticTerm::from(base_universe.1.as_ref()).into(),
-				base: bx!(base.unstage_in(level)),
-				family: family.unstage_in(level),
-				family_copyability: StaticTerm::Copyability(family_universe.0).into(),
-				family_representation: StaticTerm::from(family_universe.1.as_ref()).into(),
-			},
-			Sigma { base_universe, base, family_universe, family } => DynamicTerm::Sigma {
-				base_copyability: StaticTerm::Copyability(base_universe.0).into(),
-				base_representation: StaticTerm::from(base_universe.1.as_ref()).into(),
-				base: bx!(base.unstage_in(level)),
-				family: family.unstage_in(level),
-				family_copyability: StaticTerm::Copyability(family_universe.0).into(),
-				family_representation: StaticTerm::from(family_universe.1.as_ref()).into(),
-			},
-			Let { ty, argument, tail } => DynamicTerm::Let {
-				ty: bx!(ty.unstage_in(level)),
-				argument: bx!(argument.unstage_in(level)),
-				tail: tail.unstage_in(level),
-			},
-			Universe(UniverseKind(copyability, representation)) => DynamicTerm::Universe {
-				copyability: bx!(StaticTerm::Copyability(*copyability)),
-				representation: bx!(representation
-					.clone()
-					.map(|representation| representation.unstage_in(level))
-					.unwrap_or(StaticTerm::ReprAtom(None))),
-			},
-			Nat => DynamicTerm::Nat,
-			Num(n) => DynamicTerm::Num(*n),
-			Suc(prev) => DynamicTerm::Suc(bx!(prev.unstage_in(level))),
-			CaseNat { scrutinee, case_nil, case_suc, fiber_universe, motive } => DynamicTerm::CaseNat {
-				scrutinee: bx!(scrutinee.unstage_in(level)),
-				case_nil: bx!(case_nil.unstage_in(level)),
-				case_suc: case_suc.unstage_in(level),
-				fiber_copyability: StaticTerm::Copyability(fiber_universe.0).into(),
-				fiber_representation: StaticTerm::from(fiber_universe.1.as_ref()).into(),
-				motive: motive.unstage_in(level),
-			},
-			Enum(k) => DynamicTerm::Enum(*k),
-			EnumValue(k, v) => DynamicTerm::EnumValue(*k, *v),
-			CaseEnum { scrutinee, cases, fiber_universe, motive } => DynamicTerm::CaseEnum {
-				scrutinee: bx!(scrutinee.unstage_in(level)),
-				cases: cases.into_iter().map(|case| case.unstage_in(level)).collect(),
-				fiber_copyability: StaticTerm::Copyability(fiber_universe.0).into(),
-				fiber_representation: StaticTerm::from(fiber_universe.1.as_ref()).into(),
-				motive: motive.unstage_in(level),
-			},
-			Id { kind, space, left, right } => DynamicTerm::Id {
-				copy: StaticTerm::Copyability(kind.0).into(),
-				repr: StaticTerm::from(kind.1.as_ref()).into(),
-				space: space.unstage_in(level).into(),
-				left: left.unstage_in(level).into(),
-				right: right.unstage_in(level).into(),
-			},
-			Refl => DynamicTerm::Refl,
-			CasePath { scrutinee, motive, case_refl } => DynamicTerm::CasePath {
-				scrutinee: scrutinee.unstage_in(level).into(),
-				motive: motive.unstage_in(level),
-				case_refl: case_refl.unstage_in(level).into(),
-			},
-			WrapType(inner, universe) => DynamicTerm::WrapType {
-				inner: inner.unstage_in(level).into(),
-				copyability: StaticTerm::Copyability(universe.0).into(),
-				representation: StaticTerm::from(universe.1.as_ref()).into(),
-			},
-			WrapNew(x) => DynamicTerm::WrapNew(bx!(x.unstage_in(level))),
-			Unwrap(scrutinee, universe) => DynamicTerm::Unwrap {
-				scrutinee: scrutinee.unstage_in(level).into(),
-				copyability: StaticTerm::Copyability(universe.0).into(),
-				representation: StaticTerm::from(universe.1.as_ref()).into(),
-			},
-			RcType(inner, universe) => DynamicTerm::RcType {
-				inner: inner.unstage_in(level).into(),
-				copyability: StaticTerm::Copyability(universe.0).into(),
-				representation: StaticTerm::from(universe.1.as_ref()).into(),
-			},
-			RcNew(x) => DynamicTerm::RcNew(bx!(x.unstage_in(level))),
-			UnRc(scrutinee, universe) => DynamicTerm::UnRc {
-				scrutinee: scrutinee.unstage_in(level).into(),
-				copyability: StaticTerm::Copyability(universe.0).into(),
-				representation: StaticTerm::from(universe.1.as_ref()).into(),
-			},
+			Repr::Pair(r0, r1) => StaticTerm::ReprPair(r0.unstage_in(level).into(), r1.unstage_in(level).into()),
+			Repr::Exp(n, r) => StaticTerm::ReprExp(*n, r.unstage_in(level).into()),
 		}
 	}
 }

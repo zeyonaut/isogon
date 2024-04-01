@@ -1,4 +1,4 @@
-//pub mod object;
+pub mod object;
 pub mod presyntax;
 pub mod semantics;
 pub mod source;

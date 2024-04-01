@@ -198,17 +198,16 @@ impl Evaluate for DynamicTerm {
 			},
 
 			// Dependent functions.
-			Function { grade, body, base: _, family: _ } =>
+			Function { grade, body } =>
 				DynamicValue::Function { grade, body: body.evaluate_in(environment).into() },
-			Apply { scrutinee, argument, base: _, family_kind: _, family: _ } =>
-				match scrutinee.evaluate_in(environment) {
-					DynamicValue::Function { body, .. } => body.evaluate_with([argument.evaluate_in(environment)]),
-					DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Apply {
-						scrutinee: rc!(neutral),
-						argument: rc!(argument.evaluate_in(environment)),
-					}),
-					_ => panic!(),
-				},
+			Apply { scrutinee, argument, family_kind: _ } => match scrutinee.evaluate_in(environment) {
+				DynamicValue::Function { body, .. } => body.evaluate_with([argument.evaluate_in(environment)]),
+				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Apply {
+					scrutinee: rc!(neutral),
+					argument: rc!(argument.evaluate_in(environment)),
+				}),
+				_ => panic!(),
+			},
 			Pi { grade, base_kind, base, family_kind, family } => DynamicValue::IndexedProduct {
 				grade,
 				base_kind: base_kind.evaluate_in(environment).into(),
