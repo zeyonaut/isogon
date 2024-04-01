@@ -5,6 +5,7 @@ pub mod parse;
 pub mod stage;
 pub mod unelaborate;
 pub mod unevaluate;
+pub mod unparse;
 pub mod unstage;
 
 pub use elaborate::elaborate;

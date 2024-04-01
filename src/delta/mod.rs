@@ -1,13 +1,14 @@
 mod common;
 mod ir;
 mod op;
-mod sourcify;
 
 use lasso::Rodeo;
 use op::{elaborate, evaluate::Evaluate, parse::parse};
 
-use self::{ir::presyntax::PurePreterm, sourcify::print};
-use crate::delta::op::{stage::Stage, unelaborate::Unelaborate, unevaluate::Unevaluate, unstage::Unstage};
+use self::ir::presyntax::PurePreterm;
+use crate::delta::op::{
+	stage::Stage, unelaborate::Unelaborate, unevaluate::Unevaluate, unparse::print, unstage::Unstage,
+};
 
 pub fn run(source: &str) {
 	// Parsing.
