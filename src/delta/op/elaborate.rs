@@ -3,6 +3,8 @@ use std::{
 	rc::Rc,
 };
 
+use lasso::{Rodeo};
+
 use crate::{
 	delta::{
 		common::{bind, Closure, Field, Index, Level, Name},
@@ -26,11 +28,14 @@ use crate::{
 	utility::bx,
 };
 
+use super::{unelaborate::Unelaborate, unparse::print};
+
 /// Elaborates a dynamic preterm to a dynamic term and synthesizes its type.
 pub fn elaborate(
 	source: &str,
 	lexed_source: &LexedSource,
 	program: ParsedProgram,
+	interner: &Rodeo,
 ) -> (DynamicTerm, DynamicValue) {
 	// TODO: Offer option to choose fragment, rather than force fragment to be 1.
 	match synthesize_dynamic(&mut Context::empty(), program.expr, program.fragment) {
@@ -39,10 +44,30 @@ pub fn elaborate(
 			report_line_error(
 				source,
 				lexed_source.ranges.get(error.range.0).copied().unwrap_or((source.len(), source.len() + 1)),
-				&format!("elaboration error: {:#?}", error.kind),
+				&display_error(error.kind, interner),
 			);
 			panic!();
 		}
+	}
+}
+
+pub fn display_error(kind: ElaborationErrorKind, interner: &Rodeo) -> String {
+	match kind {
+		ElaborationErrorKind::StaticBidirectionalMismatch { synthesized, expected } => {
+			let mut ty_sy = String::new();
+			print(&synthesized.unelaborate(), &mut ty_sy, interner);
+			let mut ty_ex = String::new();
+			print(&expected.unelaborate(), &mut ty_ex, interner);
+			format!("elaboration error: type mismatch\nexpected: {}\nfound: {}", ty_ex, ty_sy)
+		}
+		ElaborationErrorKind::DynamicBidirectionalMismatch { synthesized, expected } => {
+			let mut ty_sy = String::new();
+			print(&synthesized.unelaborate(), &mut ty_sy, interner);
+			let mut ty_ex = String::new();
+			print(&expected.unelaborate(), &mut ty_ex, interner);
+			format!("elaboration error: type mismatch\nexpected: {}\nfound: {}", ty_ex, ty_sy)
+		}
+		_ => format!("elaboration error: {:#?}", kind),
 	}
 }
 

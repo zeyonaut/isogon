@@ -12,13 +12,13 @@ use crate::delta::op::{
 
 pub fn run(source: &str) {
 	// Parsing.
-	let (lexed_source, preterm, interner) = parse(source);
+	let (lexed_source, parsed_program, interner) = parse(source);
 	println!("Parsing complete.");
 
 	println!();
 
 	// Elaboration.
-	let (term, ty) = elaborate(source, &lexed_source, preterm);
+	let (term, ty) = elaborate(source, &lexed_source, parsed_program, &interner);
 	println!("Elaboration complete.");
 	println!("Elaborated term: {}", pretty_print(&term.clone().unelaborate(), &interner));
 	println!("Synthesized type: {}", pretty_print(&ty.unevaluate().unelaborate(), &interner));
