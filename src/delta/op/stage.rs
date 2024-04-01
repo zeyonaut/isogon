@@ -1,8 +1,6 @@
-use std::rc::Rc;
-
 use crate::{
 	delta::{
-		common::{Binder, Closure, Cpy, Field, Index, Repr, ReprAtom, UniverseKind},
+		common::{Binder, Closure, Field, Level, Repr, UniverseKind},
 		ir::{
 			object::{DynamicValue, Environment, StaticValue, Value},
 			syntax::{DynamicTerm, KindTerm, StaticTerm},
@@ -300,5 +298,23 @@ impl<const N: usize> StageAt<N> for Binder<Box<StaticTerm>, N> {
 	type ObjectTerm = StaticValue;
 	fn stage_at(self, environment: &Environment, terms: [Self::ObjectTerm; N]) -> Self::ObjectTerm {
 		self.body.stage_in(&environment.extend(terms.map(Value::Static)))
+	}
+}
+
+pub trait StageAuto {
+	type Value;
+	/// Evaluates a closure on its own parameters by postulating them and passing them in.
+	fn stage_auto(&self, context_len: Level) -> Self::Value;
+}
+
+impl<const N: usize> StageAuto for Closure<Environment, DynamicTerm, N> {
+	type Value = DynamicValue;
+	fn stage_auto(&self, context_len: Level) -> Self::Value {
+		let mut x = 0;
+		self.stage_with(self.parameters.map(|parameter| {
+			let y = context_len + x;
+			x += 1;
+			DynamicValue::Variable(parameter, y)
+		}))
 	}
 }

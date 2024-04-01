@@ -1,6 +1,6 @@
 use crate::{
 	delta::{
-		common::{Binder, Closure, Field},
+		common::{Binder, Closure, Field, Level},
 		ir::{
 			semantics::{
 				DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue, Value,
@@ -372,5 +372,35 @@ impl<const N: usize> EvaluateAt<N> for &Binder<Box<DynamicTerm>, N> {
 	type Value = DynamicValue;
 	fn evaluate_at(self, environment: &Environment, arguments: [Self::Value; N]) -> Self::Value {
 		self.body.clone().evaluate_in(&environment.extend(arguments.map(Value::Dynamic)))
+	}
+}
+
+pub trait EvaluateAuto {
+	type Value;
+	/// Evaluates a closure on its own parameters by postulating them and passing them in.
+	fn evaluate_auto(&self, context_len: Level) -> Self::Value;
+}
+
+impl<const N: usize> EvaluateAuto for Closure<Environment, StaticTerm, N> {
+	type Value = StaticValue;
+	fn evaluate_auto(&self, context_len: Level) -> Self::Value {
+		let mut x = 0;
+		self.evaluate_with(self.parameters.map(|parameter| {
+			let y = context_len + x;
+			x += 1;
+			(parameter, y).into()
+		}))
+	}
+}
+
+impl<const N: usize> EvaluateAuto for Closure<Environment, DynamicTerm, N> {
+	type Value = DynamicValue;
+	fn evaluate_auto(&self, context_len: Level) -> Self::Value {
+		let mut x = 0;
+		self.evaluate_with(self.parameters.map(|parameter| {
+			let y = context_len + x;
+			x += 1;
+			(parameter, y).into()
+		}))
 	}
 }

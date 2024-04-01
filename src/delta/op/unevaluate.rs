@@ -1,4 +1,4 @@
-use super::autolyze::Autolyze;
+use super::evaluate::EvaluateAuto;
 use crate::delta::{
 	common::{bind, Binder, Closure, Index, Level},
 	ir::{
@@ -21,14 +21,14 @@ pub trait Unevaluate {
 impl<const N: usize> Unevaluate for Closure<Environment, StaticTerm, N> {
 	type Term = Binder<Box<StaticTerm>, N>;
 	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
-		Ok(bind(self.parameters, self.autolyze(level).try_unevaluate_in(level + N)?))
+		Ok(bind(self.parameters, self.evaluate_auto(level).try_unevaluate_in(level + N)?))
 	}
 }
 
 impl<const N: usize> Unevaluate for Closure<Environment, DynamicTerm, N> {
 	type Term = Binder<Box<DynamicTerm>, N>;
 	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
-		Ok(bind(self.parameters, self.autolyze(level).try_unevaluate_in(level + N)?))
+		Ok(bind(self.parameters, self.evaluate_auto(level).try_unevaluate_in(level + N)?))
 	}
 }
 

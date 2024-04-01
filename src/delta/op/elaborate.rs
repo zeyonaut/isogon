@@ -11,14 +11,13 @@ use crate::{
 				Constructor, Expression, Former, ParsedPreterm, ParsedProgram, Pattern, Preterm, Projector,
 			},
 			semantics::{
-				Conversion, DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue,
-				Value,
+				DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue, Value,
 			},
 			source::LexedSource,
 			syntax::{DynamicTerm, KindTerm, StaticTerm},
 		},
-		transform::{
-			autolyze::Autolyze,
+		op::{
+			conversion::Conversion,
 			evaluate::{Evaluate, EvaluateWith},
 			parse::report_line_error,
 			unevaluate::Unevaluate,
@@ -1368,31 +1367,25 @@ fn verify_dynamic(
 			Preterm::Lambda { grade, body },
 			DynamicValue::IndexedProduct { grade: grade_t, base, base_kind, family, .. },
 		) => {
-			// FIXME: Error handle
 			(grade * fragment as usize == grade_t * fragment as usize)
 				.then_some(())
 				.ok_or_else(|| ElaborationErrorKind::LambdaGradeMismatch(grade, grade_t).at(expr.range))?;
-			// FIXME: Autolyze in elaboration? This doesn't seem right.
-			let fiber = family.autolyze(ctx.len());
-			// TODO: Is this necessary?
 			let parameters = body.parameters;
-			// NOTE: Since this is the autolyzed fiber, this family has the right index but the wrong name.
-			// Not sure if this is significant, as we only use indices in debugging/pretty-printing.
-			// The alternatives seem to be evaluating twice (shudders) or doing find-and-replace for variables.
-			// Maybe we can do the latter at some point?
-			let body = {
-				let mut context = ctx.bind_dynamic(
-					parameters[0],
-					false,
-					(grade * fragment as usize).into(),
-					base.as_ref().clone(),
-					(*base_kind).clone(),
-				);
-				let body = verify_dynamic(&mut context, *body.body, fragment, fiber)?;
-				context.free().map_err(|e| e.at(expr.range))?;
-				body
-			};
-
+			let mut context = ctx.bind_dynamic(
+				parameters[0],
+				false,
+				(grade * fragment as usize).into(),
+				base.as_ref().clone(),
+				(*base_kind).clone(),
+			);
+			let basepoint_level = context.len().index(0);
+			let body = verify_dynamic(
+				&mut context,
+				*body.body,
+				fragment,
+				family.evaluate_with([(parameters[0], basepoint_level).into()]),
+			)?;
+			context.free().map_err(|e| e.at(expr.range))?;
 			DynamicTerm::Function { grade, body: bind(parameters, body) }
 		}
 

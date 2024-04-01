@@ -1,15 +1,10 @@
-use std::rc::Rc;
-
-use super::autolyze::Autolyze;
-use crate::{
-	delta::{
-		common::{bind, Binder, Closure, Index, Level, Repr, UniverseKind},
-		ir::{
-			object::{DynamicValue, Environment},
-			syntax::{DynamicTerm, KindTerm, StaticTerm},
-		},
+use super::stage::StageAuto;
+use crate::delta::{
+	common::{bind, Binder, Closure, Index, Level, Repr, UniverseKind},
+	ir::{
+		object::{DynamicValue, Environment},
+		syntax::{DynamicTerm, KindTerm, StaticTerm},
 	},
-	utility::bx,
 };
 
 pub trait Unstage {
@@ -43,8 +38,6 @@ impl Unstage for DynamicValue {
 
 			// Types.
 			Universe(kind) => DynamicTerm::Universe { kind: kind.unstage_in(level).into() },
-
-			// Quoted programs.
 
 			// Repeated programs.
 
@@ -147,7 +140,7 @@ impl Unstage for UniverseKind {
 impl<const N: usize> Unstage for Closure<Environment, DynamicTerm, N> {
 	type CoreTerm = Binder<Box<DynamicTerm>, N>;
 	fn unstage_in(&self, level: Level) -> Self::CoreTerm {
-		bind(self.parameters, self.autolyze(level).unstage_in(level + N))
+		bind(self.parameters, self.stage_auto(level).unstage_in(level + N))
 	}
 }
 

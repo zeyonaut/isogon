@@ -1,4 +1,4 @@
-pub mod autolyze;
+pub mod conversion;
 pub mod elaborate;
 pub mod evaluate;
 pub mod parse;
