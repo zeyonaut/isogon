@@ -86,6 +86,10 @@ impl Unevaluate for StaticValue {
 			// Enumerated values.
 			Enum(k) => StaticTerm::Enum(*k),
 			EnumValue(k, v) => StaticTerm::EnumValue(*k, *v),
+
+			// Natural numbers.
+			Nat => StaticTerm::Nat,
+			Num(n) => StaticTerm::Num(*n),
 		})
 	}
 }
@@ -104,7 +108,7 @@ impl Unevaluate for StaticNeutral {
 				StaticTerm::CpyMax(a.try_unevaluate_in(level)?.into(), b.try_unevaluate_in(level)?.into()),
 
 			// Repeated programs.
-			ExpProject(scrutinee) => unimplemented!(),
+			ExpProject(_) => unimplemented!(),
 
 			// Dependent functions.
 			Apply(callee, argument) => StaticTerm::Apply {
@@ -121,6 +125,15 @@ impl Unevaluate for StaticNeutral {
 				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
 				motive: motive.try_unevaluate_in(level)?,
 				cases: cases.into_iter().map(|case| case.try_unevaluate_in(level)).collect::<Result<_, _>>()?,
+			},
+
+			// Natural numbers.
+			Suc(prev) => StaticTerm::Suc(prev.try_unevaluate_in(level)?.into()),
+			CaseNat { scrutinee, motive, case_nil, case_suc } => StaticTerm::CaseNat {
+				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
+				motive: motive.try_unevaluate_in(level)?,
+				case_nil: case_nil.try_unevaluate_in(level)?.into(),
+				case_suc: case_suc.try_unevaluate_in(level)?,
 			},
 		})
 	}
@@ -181,6 +194,10 @@ impl Unevaluate for DynamicValue {
 			},
 			Refl => DynamicTerm::Refl,
 
+			// Natural numbers.
+			Nat => DynamicTerm::Nat,
+			Num(n) => DynamicTerm::Num(*n),
+
 			// Wrappers.
 			Bx { kind, inner } => DynamicTerm::Bx {
 				kind: kind.try_unevaluate_in(level)?.into(),
@@ -216,8 +233,8 @@ impl Unevaluate for DynamicNeutral {
 				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
 				argument: argument.try_unevaluate_in(level)?.into(),
 				base: None,
-				family: None,
 				family_kind: None,
+				family: None,
 			},
 
 			// Dependent pairs.
@@ -227,9 +244,9 @@ impl Unevaluate for DynamicNeutral {
 			// Enumerated numbers.
 			CaseEnum { scrutinee, cases, motive } => DynamicTerm::CaseEnum {
 				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
-				cases: cases.into_iter().map(|case| case.try_unevaluate_in(level)).collect::<Result<_, _>>()?,
-				motive: motive.try_unevaluate_in(level)?,
 				motive_kind: None,
+				motive: motive.try_unevaluate_in(level)?,
+				cases: cases.into_iter().map(|case| case.try_unevaluate_in(level)).collect::<Result<_, _>>()?,
 			},
 
 			// Paths.
@@ -237,6 +254,16 @@ impl Unevaluate for DynamicNeutral {
 				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
 				motive: motive.try_unevaluate_in(level)?,
 				case_refl: case_refl.try_unevaluate_in(level)?.into(),
+			},
+
+			// Natural numbers.
+			Suc(prev) => DynamicTerm::Suc(prev.try_unevaluate_in(level)?.into()),
+			CaseNat { scrutinee, motive, case_nil, case_suc } => DynamicTerm::CaseNat {
+				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
+				motive_kind: None,
+				motive: motive.try_unevaluate_in(level)?,
+				case_nil: case_nil.try_unevaluate_in(level)?.into(),
+				case_suc: case_suc.try_unevaluate_in(level)?,
 			},
 
 			// Wrappers.

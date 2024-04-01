@@ -83,6 +83,30 @@ impl Unelaborate for StaticTerm {
 						.collect(),
 				}
 			}
+
+			StaticTerm::Nat => Preterm::Former(Former::Nat, vec![]),
+			StaticTerm::Num(n) => Preterm::Constructor(Constructor::Num(n), vec![]),
+			StaticTerm::Suc(n) => Preterm::Constructor(Constructor::Suc, vec![n.unelaborate()]),
+			StaticTerm::CaseNat { scrutinee, motive, case_nil, case_suc } => {
+				let case_suc = case_suc.unelaborate();
+				Preterm::Split {
+					scrutinee: scrutinee.unelaborate().into(),
+					motive: AnyBinder::from(motive).unelaborate(),
+					cases: vec![
+						(Pattern::Construction(Constructor::Num(0), vec![]), case_nil.unelaborate()),
+						(
+							Pattern::Construction(
+								Constructor::Suc,
+								vec![Pattern::Witness {
+									index: case_suc.parameters[0],
+									witness: case_suc.parameters[1],
+								}],
+							),
+							*case_suc.body,
+						),
+					],
+				}
+			}
 		})
 	}
 }
@@ -157,6 +181,30 @@ impl Unelaborate for DynamicTerm {
 				motive: AnyBinder::from(motive).unelaborate(),
 				cases: vec![(Pattern::Construction(Constructor::Refl, vec![]), case_refl.unelaborate())],
 			},
+
+			DynamicTerm::Nat => Preterm::Former(Former::Nat, vec![]),
+			DynamicTerm::Num(n) => Preterm::Constructor(Constructor::Num(n), vec![]),
+			DynamicTerm::Suc(n) => Preterm::Constructor(Constructor::Suc, vec![n.unelaborate()]),
+			DynamicTerm::CaseNat { scrutinee, motive_kind: _, motive, case_nil, case_suc } => {
+				let case_suc = case_suc.unelaborate();
+				Preterm::Split {
+					scrutinee: scrutinee.unelaborate().into(),
+					motive: AnyBinder::from(motive).unelaborate(),
+					cases: vec![
+						(Pattern::Construction(Constructor::Num(0), vec![]), case_nil.unelaborate()),
+						(
+							Pattern::Construction(
+								Constructor::Suc,
+								vec![Pattern::Witness {
+									index: case_suc.parameters[0],
+									witness: case_suc.parameters[1],
+								}],
+							),
+							*case_suc.body,
+						),
+					],
+				}
+			}
 
 			DynamicTerm::Bx { inner, kind: _ } => Preterm::Former(Former::Bx, vec![inner.unelaborate()]),
 			DynamicTerm::BxValue(v) => Preterm::Constructor(Constructor::Bx, vec![v.unelaborate()]),

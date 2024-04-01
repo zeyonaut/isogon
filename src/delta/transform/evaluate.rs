@@ -130,6 +130,39 @@ impl Evaluate for StaticTerm {
 				}),
 				_ => panic!(),
 			},
+
+			// Natural numbers.
+			Nat => StaticValue::Nat,
+			Num(n) => StaticValue::Num(n),
+			Suc(prev) => match prev.evaluate_in(environment) {
+				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::Suc(rc!(neutral))),
+				StaticValue::Num(n) => StaticValue::Num(n + 1),
+				_ => panic!(),
+			},
+			CaseNat { scrutinee, motive, case_nil, case_suc } => match scrutinee.evaluate_in(environment) {
+				StaticValue::Num(n) => (0..n).fold(case_nil.evaluate_in(environment), |previous, i| {
+					case_suc.evaluate_at(environment, [StaticValue::Num(i), previous])
+				}),
+				StaticValue::Neutral(neutral) => {
+					let mut neutrals = vec![&neutral];
+					while let StaticNeutral::Suc(previous) = neutrals.last().unwrap() {
+						neutrals.push(&previous);
+					}
+					let result = StaticValue::Neutral(StaticNeutral::CaseNat {
+						scrutinee: rc!(neutrals.pop().unwrap().clone()),
+						motive: rc!(motive.evaluate_in(environment)),
+						case_nil: rc!(case_nil.evaluate_in(environment)),
+						case_suc: rc!(case_suc.clone().evaluate_in(environment)),
+					});
+					neutrals
+						.into_iter()
+						.rev()
+						.cloned()
+						.map(StaticValue::Neutral)
+						.fold(result, |previous, number| case_suc.evaluate_at(environment, [number, previous]))
+				}
+				_ => panic!(),
+			},
 		}
 	}
 }
@@ -243,6 +276,40 @@ impl Evaluate for DynamicTerm {
 				}),
 				_ => panic!(),
 			},
+
+			// Natural numbers.
+			Nat => DynamicValue::Nat,
+			Num(n) => DynamicValue::Num(n),
+			Suc(prev) => match prev.evaluate_in(environment) {
+				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Suc(rc!(neutral))),
+				DynamicValue::Num(n) => DynamicValue::Num(n + 1),
+				_ => panic!(),
+			},
+			CaseNat { scrutinee, motive_kind: _, motive, case_nil, case_suc } =>
+				match scrutinee.evaluate_in(environment) {
+					DynamicValue::Num(n) => (0..n).fold(case_nil.evaluate_in(environment), |previous, i| {
+						case_suc.evaluate_at(environment, [DynamicValue::Num(i), previous])
+					}),
+					DynamicValue::Neutral(neutral) => {
+						let mut neutrals = vec![&neutral];
+						while let DynamicNeutral::Suc(previous) = neutrals.last().unwrap() {
+							neutrals.push(&previous);
+						}
+						let result = DynamicValue::Neutral(DynamicNeutral::CaseNat {
+							scrutinee: rc!(neutrals.pop().unwrap().clone()),
+							motive: rc!(motive.evaluate_in(environment)),
+							case_nil: rc!(case_nil.evaluate_in(environment)),
+							case_suc: rc!(case_suc.clone().evaluate_in(environment)),
+						});
+						neutrals
+							.into_iter()
+							.rev()
+							.cloned()
+							.map(DynamicValue::Neutral)
+							.fold(result, |previous, number| case_suc.evaluate_at(environment, [number, previous]))
+					}
+					_ => panic!(),
+				},
 
 			// Wrappers.
 			Bx { kind, inner } => DynamicValue::Bx {

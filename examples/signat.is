@@ -1,13 +1,15 @@
-let! list : nat -> * c1 rpointer
-	= |n| n :: |_| * c1 rpointer {
-		| 0        -> RC #1
-		| suc @_.T -> RC (T & nat)
+#fragment 0
+
+let List : Nat -> * c1 rptr
+	= |n| n :: |_| * c1 rptr {
+		| 0        -> Box #1
+		| suc @_.T -> Box (T & Nat)
 	};
 
-let! make_list : |n : nat| -> list n
-	= |n| n :: |n| list n {
-		| 0        -> rc 0_1
-		| suc @n.k -> rc (k, n)
+let make_list : |n : Nat| -> List n
+	= |n| n :: |n| List n {
+		| 0        -> box 0_1
+		| suc @n.k -> box (k, n)
 	};
 
 make_list 10

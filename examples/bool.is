@@ -1,10 +1,10 @@
-let [0] T : bool -> * c1 rptr
+let [0] T : Bool -> * c1 rptr
 	= |b| b :: |_| (* c1 rptr) {
-		| false -> Box (#5  & bool) % (nat  & bool)
-		| true  -> Box (bool & #5) % (bool & nat)
+		| false -> Box (#5  & Bool) % (Nat  & Bool)
+		| true  -> Box (Bool & #5) % (Bool & Nat)
 	};
 
-let test : |b : bool| -> T b
+let test : |b : Bool| -> T b
 	= |b| b :: |x| T x {
 		| false -> box (0_5, false)
 		| true  -> box (true, 1_5)

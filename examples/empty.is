@@ -1,15 +1,24 @@
-let [0] empty : * c0 rbyte = #0;
+let [0] Empty : * c0 rbyte = #0;
 
-let [0] unit : * c0 rbyte = #1;
+let [0] Unit : * c0 rbyte = #1;
 
-let [0] tt : unit = 0_1;
+let [0] tt : Unit = 0_1;
 
-let [0] thunk_true : unit -> bool = |x|
-	x :: |_| bool {
+let [0] thunk_true : Unit -> Bool = |x|
+	x :: |_| Bool {
 		0_1 -> true
 	};
 
-let absurd : empty -> bool = |x|
-	x :: |_| bool {};
+let absurd : Empty -> Bool = |x|
+	x :: |_| Bool {};
 
-absurd
+let n : Nat = 4;
+
+let f : Nat -> Empty -> Bool = |n|
+	n :: |_| Empty -> Bool {
+		| 0 -> absurd
+		| suc @_.x -> x
+	}
+;
+
+f n

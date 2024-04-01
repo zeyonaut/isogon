@@ -1,6 +1,12 @@
 use crate::delta::common::{AnyBinder, Binder, Cpy, Field, Name, ReprAtom};
 
 #[derive(Debug, Clone)]
+pub struct ParsedProgram {
+	pub fragment: u8,
+	pub expr: Expression,
+}
+
+#[derive(Debug, Clone)]
 pub struct Expression {
 	pub range: (usize, usize),
 	pub preterm: ParsedPreterm,
@@ -54,6 +60,9 @@ pub enum Former {
 	// Paths.
 	Id,
 
+	// Natural numbers.
+	Nat,
+
 	// Wrappers.
 	Bx,
 	Wrap,
@@ -78,6 +87,10 @@ pub enum Constructor {
 
 	// Paths.
 	Refl,
+
+	// Natural numbers.
+	Num(usize),
+	Suc,
 
 	// Wrappers.
 	Bx,

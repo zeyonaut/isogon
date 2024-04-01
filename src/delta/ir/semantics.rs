@@ -28,6 +28,11 @@ impl KindValue {
 
 	pub const fn ty() -> Self { Self { copy: StaticValue::CpyValue(Cpy::Tr), repr: StaticValue::ReprNone } }
 
+	// TODO: Only consider nat to be trivial for slightly simpler implementation.
+	pub const fn nat() -> Self {
+		Self { copy: StaticValue::CpyValue(Cpy::Tr), repr: StaticValue::ReprAtom(ReprAtom::Nat) }
+	}
+
 	pub const fn ptr() -> Self {
 		Self { copy: StaticValue::CpyValue(Cpy::Nt), repr: StaticValue::ReprAtom(ReprAtom::Ptr) }
 	}
@@ -83,6 +88,10 @@ pub enum StaticValue {
 	// Enumerated numbers.
 	Enum(u16),
 	EnumValue(u16, u8),
+
+	// Natural numbers.
+	Nat,
+	Num(usize),
 }
 
 #[derive(Clone, Debug)]
@@ -103,7 +112,20 @@ pub enum StaticNeutral {
 	Project(Rc<Self>, Field),
 
 	// Enumerated numbers.
-	CaseEnum { scrutinee: Rc<Self>, motive: Rc<Closure<Environment, StaticTerm>>, cases: Vec<StaticValue> },
+	CaseEnum {
+		scrutinee: Rc<Self>,
+		motive: Rc<Closure<Environment, StaticTerm>>,
+		cases: Vec<StaticValue>,
+	},
+
+	// Natural numbers.
+	Suc(Rc<Self>),
+	CaseNat {
+		scrutinee: Rc<Self>,
+		motive: Rc<Closure<Environment, StaticTerm>>,
+		case_nil: Rc<StaticValue>,
+		case_suc: Rc<Closure<Environment, StaticTerm, 2>>,
+	},
 }
 
 impl From<&Repr> for StaticValue {
@@ -174,6 +196,10 @@ pub enum DynamicValue {
 	},
 	Refl,
 
+	// Natural numbers.
+	Nat,
+	Num(usize),
+
 	// Wrappers.
 	Bx {
 		kind: Rc<KindValue>,
@@ -223,6 +249,15 @@ pub enum DynamicNeutral {
 		scrutinee: Rc<Self>,
 		motive: Rc<Closure<Environment, DynamicTerm, 2>>,
 		case_refl: Rc<DynamicValue>,
+	},
+
+	// Natural numbers.
+	Suc(Rc<Self>),
+	CaseNat {
+		scrutinee: Rc<Self>,
+		case_nil: Rc<DynamicValue>,
+		case_suc: Rc<Closure<Environment, DynamicTerm, 2>>,
+		motive: Rc<Closure<Environment, DynamicTerm>>,
 	},
 
 	// Wrappers.
@@ -326,6 +361,8 @@ impl Conversion<StaticValue> for Level {
 			(Universe, Universe) | (Cpy, Cpy) | (ReprType, ReprType) | (ReprNone, ReprNone) => true,
 			(CpyValue(left), CpyValue(right)) => left == right,
 			(ReprAtom(left), ReprAtom(right)) => left == right,
+			(ReprExp(a, l), ReprExp(b, r)) => a == b && self.can_convert(&**l, r),
+			(ReprPair(a, b), ReprPair(s, t)) => self.can_convert(&**a, s) && self.can_convert(&**b, t),
 
 			// Quoted programs.
 			(Lift { ty: left, .. }, Lift { ty: right, .. }) | (Quote(left), Quote(right)) =>
@@ -372,6 +409,10 @@ impl Conversion<StaticValue> for Level {
 			(Enum(left), Enum(right)) => left == right,
 			(EnumValue(_, left), EnumValue(_, right)) => left == right,
 
+			// Natural numbers.
+			(Nat, Nat) => true,
+			(Num(l), Num(r)) => l == r,
+
 			// Inconvertible.
 			_ => false,
 		}
@@ -410,6 +451,17 @@ impl Conversion<StaticNeutral> for Level {
 						.iter()
 						.zip(r_cases.iter())
 						.fold(true, |acc, (left, right)| acc && self.can_convert(left, right)),
+
+			// Natural numbers.
+			(Suc(a), Suc(b)) => self.can_convert(&**a, b),
+			(
+				CaseNat { scrutinee: l_scrutinee, motive: l_motive, case_nil: l_case_nil, case_suc: l_case_suc },
+				CaseNat { scrutinee: r_scrutinee, motive: r_motive, case_nil: r_case_nil, case_suc: r_case_suc },
+			) =>
+				self.can_convert(&**l_scrutinee, r_scrutinee)
+					&& (self + 1).can_convert(&l_motive.autolyze(self), &r_motive.autolyze(self))
+					&& self.can_convert(&**l_case_nil, r_case_nil)
+					&& (self + 2).can_convert(&l_case_suc.autolyze(self), &r_case_suc.autolyze(self)),
 
 			// Inconvertible.
 			_ => false,
@@ -487,6 +539,10 @@ impl Conversion<DynamicValue> for Level {
 				self.can_convert(&**left_l, left_r) && self.can_convert(&**right_l, right_r),
 			(Refl, Refl) => true,
 
+			// Natural numbers.
+			(Nat, Nat) => true,
+			(Num(l), Num(r)) => l == r,
+
 			// Wrappers.
 			(Bx { inner: left, .. }, Bx { inner: right, .. })
 			| (BxValue(left), BxValue(right))
@@ -534,6 +590,17 @@ impl Conversion<DynamicNeutral> for Level {
 				CasePath { scrutinee: scrutinee_l, case_refl: case_l, .. },
 				CasePath { scrutinee: scrutinee_r, case_refl: case_r, .. },
 			) => self.can_convert(&**scrutinee_l, scrutinee_r) && self.can_convert(&**case_l, &case_r),
+
+			// Natural numbers.
+			(Suc(a), Suc(b)) => self.can_convert(&**a, b),
+			(
+				CaseNat { scrutinee: l_scrutinee, motive: l_motive, case_nil: l_case_nil, case_suc: l_case_suc },
+				CaseNat { scrutinee: r_scrutinee, motive: r_motive, case_nil: r_case_nil, case_suc: r_case_suc },
+			) =>
+				self.can_convert(&**l_scrutinee, r_scrutinee)
+					&& (self + 1).can_convert(&l_motive.autolyze(self), &r_motive.autolyze(self))
+					&& self.can_convert(&**l_case_nil, r_case_nil)
+					&& (self + 2).can_convert(&l_case_suc.autolyze(self), &r_case_suc.autolyze(self)),
 
 			// Wrappers.
 			(BxProject(left), BxProject(right)) | (WrapProject(left), WrapProject(right)) =>

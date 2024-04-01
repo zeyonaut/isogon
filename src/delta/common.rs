@@ -110,6 +110,7 @@ pub enum Cpy {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub enum ReprAtom {
 	Byte,
+	Nat,
 	Ptr,
 	Fun,
 }

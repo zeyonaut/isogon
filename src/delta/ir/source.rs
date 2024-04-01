@@ -6,6 +6,7 @@ use crate::delta::common::Field;
 pub enum Token {
 	Whitespace,
 	Keyword(Keyword),
+	Pragma(Pragma),
 	Identifier,
 	Number,
 	Project(Field),
@@ -32,6 +33,11 @@ pub enum Token {
 	Tick,
 	Arrow,
 	At,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Pragma {
+	Fragment,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -79,6 +85,7 @@ pub enum LexErrorKind {
 	UnrecognizedLexemePrefix,
 	UnexpectedCharacter(&'static [char]),
 	UnexpectedEnd(&'static [char]),
+	InvalidPragma,
 }
 
 struct Scanner<'s> {
@@ -109,6 +116,13 @@ pub struct LexedSource {
 }
 
 impl LexedSource {
+	fn pragma(string: &str) -> Option<Token> {
+		Some(Token::Pragma(match string {
+			"fragment" => Pragma::Fragment,
+			_ => return None,
+		}))
+	}
+
 	fn keyword_or_identifier(string: &str) -> Token {
 		use Token::*;
 
@@ -140,14 +154,14 @@ impl LexedSource {
 			"wrap" => Keyword(WrapValue),
 			"unwrap" => Keyword(WrapProject),
 
-			"bool" => Keyword(Bool),
+			"Bool" => Keyword(Bool),
 			"true" => Keyword(True),
 			"false" => Keyword(False),
 
 			"Id" => Keyword(Id),
 			"refl" => Keyword(Refl),
 
-			"nat" => Keyword(Nat),
+			"Nat" => Keyword(Nat),
 			"suc" => Keyword(Suc),
 
 			_ => Identifier,
@@ -203,7 +217,17 @@ impl LexedSource {
 				'&' => Amp,
 				'@' => At,
 				'!' => Bang,
-				'#' => Hash,
+				'#' => match scanner.peek() {
+					Some('a'..='z' | 'A'..='Z') => {
+						scanner.pop();
+						while let Some('a'..='z' | 'A'..='Z') = scanner.peek() {
+							scanner.pop();
+						}
+						Self::pragma(&source[start + 1..scanner.position()])
+							.ok_or_else(|| LexError(scanner.previous_position(), InvalidPragma))?
+					}
+					_ => Hash,
+				},
 				'|' => Pipe,
 				':' =>
 					if let Some(':') = scanner.peek() {

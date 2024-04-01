@@ -1,7 +1,9 @@
+#fragment 0
+
 let [0] A : * c1 rfun = |PA : * c0 rnone| -> PA;
-def [0] B : '(* c1 rfun) -> '(* c1 rfun) = |T| <A -> [T]>;
+def [0] B : '(* c1 rfun) -> '(* c1 rfun) = |T| <A -> <T>>;
 let [0] C : * c0 rnone = |PC : * c0 rnone| & PC;
 let [0] D : * c0 rnone = * c0 rnone & * c0 rnone;
 let [0] x : |T : * c0 rnone| & * c0 rnone -> * c0 rnone -> * c1 (rpair rfun rnone) = * c0 rnone, (|T| |K| A & T & K);
 
-0_1 % <B <x/! (x/.) C>>
+<B <x/! (x/.) C>>

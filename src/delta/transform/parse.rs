@@ -3,13 +3,13 @@ use lasso::Rodeo;
 use crate::delta::{
 	common::{any_bind, bind, AnyBinder, Cpy, Name, ReprAtom},
 	ir::{
-		presyntax::{Constructor, Expression, Former, Pattern, Preterm, Projector},
-		source::{Keyword, LexError, LexErrorKind, LexedSource, Token},
+		presyntax::{Constructor, Expression, Former, ParsedProgram, Pattern, Preterm, Projector},
+		source::{Keyword, LexError, LexErrorKind, LexedSource, Pragma, Token},
 	},
 };
 
 /// Parses a dynamic preterm from a source string.
-pub fn parse(source: &str) -> (LexedSource, Expression, Rodeo) {
+pub fn parse(source: &str) -> (LexedSource, ParsedProgram, Rodeo) {
 	let lexed_source = match LexedSource::new(source) {
 		Ok(lexed_source) => lexed_source,
 		Err(lex_error) => {
@@ -23,7 +23,7 @@ pub fn parse(source: &str) -> (LexedSource, Expression, Rodeo) {
 		// TODO: Remove this clone.
 		ranges: lexed_source.ranges.clone(),
 	};
-	let preterm = match presyntax_parse::program(&lexed_source.tokens, &mut parser) {
+	let program = match presyntax_parse::program(&lexed_source.tokens, &mut parser) {
 		Ok(preterm) => preterm,
 		Err(error) => {
 			report_line_error(
@@ -35,7 +35,7 @@ pub fn parse(source: &str) -> (LexedSource, Expression, Rodeo) {
 		}
 	};
 
-	(lexed_source, preterm, parser.interner)
+	(lexed_source, program, parser.interner)
 }
 pub fn format_lex_error(source: &str, LexError(location, kind): LexError) -> String {
 	fn char_list_string(chars: &[char]) -> String {
@@ -62,6 +62,9 @@ pub fn format_lex_error(source: &str, LexError(location, kind): LexError) -> Str
 		),
 		LexErrorKind::UnexpectedEnd(expected) => {
 			format!("lex error: expected one of {}; found end of input", char_list_string(expected))
+		}
+		LexErrorKind::InvalidPragma => {
+			format!("invalid pragma")
 		}
 	}
 }
@@ -147,12 +150,16 @@ peg::parser! {
 			= [Token::Tick] {Former::Lift}
 			/ [Token::Keyword(Keyword::Copy)] {Former::Copy}
 			/ [Token::Keyword(Keyword::Repr)] {Former::Repr}
+			// Repeated programs.
 			/ [Token::Ast] {Former::Universe}
 			/ [Token::Bang] grade:finite_grade_annotation() {Former::Exp(grade)}
+			// Enumerated numbers.
 			/ [Token::Keyword(Keyword::Bool)] {Former::Enum(2)}
 			/ [Token::Hash] card:number() { assert!(card <= 256); Former::Enum(card as u16)}
 			// Paths.
 			/ [Token::Keyword(Keyword::Id)] {Former::Id}
+			// Natural numbers.
+			/ [Token::Keyword(Keyword::Nat)] {Former::Nat}
 			// Wrappers.
 			/ [Token::Keyword(Keyword::Bx)] {Former::Bx}
 			/ [Token::Keyword(Keyword::Wrap)] {Former::Wrap}
@@ -163,18 +170,23 @@ peg::parser! {
 			/ [Token::Keyword(Keyword::CMax)] {Constructor::CpyMax}
 			/ [Token::Keyword(Keyword::RPtr)] {Constructor::ReprAtom(Some(ReprAtom::Ptr))}
 			/ [Token::Keyword(Keyword::RByte)] {Constructor::ReprAtom(Some(ReprAtom::Byte))}
-			// / [Token::Keyword(Keyword::RNat)] {Constructor::ReprAtom(Some(ReprAtom::Nat))}
+			/ [Token::Keyword(Keyword::RNat)] {Constructor::ReprAtom(Some(ReprAtom::Nat))}
 			/ [Token::Keyword(Keyword::RFun)] {Constructor::ReprAtom(Some(ReprAtom::Fun))}
 			/ [Token::Keyword(Keyword::RNone)] {Constructor::ReprAtom(None)}
 			/ [Token::Keyword(Keyword::RPair)] {Constructor::ReprPair}
 			/ [Token::Keyword(Keyword::RMax)] {Constructor::ReprMax}
+			// Repeated programs.
 			/ [Token::Keyword(Keyword::RExp)] grade:finite_grade_annotation() {Constructor::ReprExp(grade)}
 			/ [Token::At] grade:finite_grade_annotation() {Constructor::Exp(grade)}
+			// Enumerated numbers.
 			/ number:number() [Token::LowDash] card:number() {assert!(card <= 256 && number < card); Constructor::Enum(card as _, number as _)}
 			/ [Token::Keyword(Keyword::False)] {Constructor::Enum(2, 0)}
 			/ [Token::Keyword(Keyword::True)] {Constructor::Enum(2, 1)}
 			// Paths.
 			/ [Token::Keyword(Keyword::Refl)] {Constructor::Refl}
+			// Natural numbers.
+			/ number:number() {Constructor::Num(number)}
+			/ [Token::Keyword(Keyword::Suc)] {Constructor::Suc}
 			// Wrappers.
 			/ [Token::Keyword(Keyword::BxValue)] {Constructor::Bx}
 			/ [Token::Keyword(Keyword::WrapValue)] {Constructor::Wrap}
@@ -187,8 +199,7 @@ peg::parser! {
 		rule atom() -> Expression
 			= [Token::ParenL] _ preterm:preterm() _ [Token::ParenR] {preterm}
 			/ init:position!() preterm:(
-				  [Token::SquareL] _ preterm:preterm() _ [Token::SquareR] {Preterm::SwitchLevel(preterm.into())}
-				/ [Token::AngleL] _ preterm:preterm() _ [Token::AngleR] {Preterm::SwitchLevel(preterm.into())}
+				  [Token::AngleL] _ preterm:preterm() _ [Token::AngleR] {Preterm::SwitchLevel(preterm.into())}
 				/ identifier:identifier() {Preterm::Variable(identifier)}
 				/ former:former() {Preterm::Former(former, vec![])}
 				/ constructor:constructor() {Preterm::Constructor(constructor, vec![])}
@@ -256,8 +267,12 @@ peg::parser! {
 			}
 			/ spine_headed()
 
-		pub rule program() -> Expression
-			= _ preterm:preterm() _ {preterm}
+		rule pragma_fragment() -> u8
+			= [Token::Pragma(Pragma::Fragment)] _ number:number() {(number > 0) as u8}
+			/ {1}
+
+		pub rule program() -> ParsedProgram
+			= _ fragment:pragma_fragment() _ expr:preterm() _ {ParsedProgram {fragment, expr}}
 
   }
 }

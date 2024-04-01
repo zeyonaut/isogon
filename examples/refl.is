@@ -1,3 +1,5 @@
+#fragment 0
+
 def [0] sym : |c : copy| -> |r : repr|
 -> '(|A : * c r| -> |x : A| -> |y : A| -> Id A x y -> Id A y x)
 = |_| |_| <
@@ -30,7 +32,7 @@ def [0] is_prop
 = |c| |r| <|T| |x : T| -> |y : T| -> Id T x y>;
 
 let [0] one_is_prop
-: [is_prop c0 rbyte] #1
+: <is_prop c0 rbyte> #1
 = |x| x :: |x| |y : #1| -> Id #1 x y {
 	0_1 -> |y| y :: |y| Id #1 0_1 y {
 		0_1 -> refl
@@ -40,7 +42,6 @@ let [0] one_is_prop
 let [0] bool_family : #2 -> * c0 rbyte = |b| b :: |_| * c0 rbyte { false -> #0 | true -> #1 };
 
 let [0] bool_no_confusion : Id #2 false true -> #0 = |p|
-	[tr c0 rbyte c0 rbyte] #2 bool_family true false ([sym c0 rbyte] #2 false true p) 0_1;
+	<tr c0 rbyte c0 rbyte> #2 bool_family true false (<sym c0 rbyte> #2 false true p) 0_1;
 
-% bool_no_confusion
-0_1
+bool_no_confusion

@@ -177,6 +177,7 @@ fn print_former(former: &Former, f: &mut impl Write, _: &Rodeo) -> std::fmt::Res
 		Former::Exp(grade) => write!(f, "![{grade}] "),
 		Former::Enum(k) => write!(f, "#{k}"),
 		Former::Id => write!(f, "Id"),
+		Former::Nat => write!(f, "Nat"),
 		Former::Bx => write!(f, "Box"),
 		Former::Wrap => write!(f, "Wrap"),
 	}
@@ -192,9 +193,9 @@ fn print_constructor(constructor: &Constructor, f: &mut impl Write, _: &Rodeo) -
 			f,
 			"{}",
 			match r {
-				self::ReprAtom::Ptr => "rptr",
 				self::ReprAtom::Byte => "rbyte",
-				// self::ReprAtom::Nat => "rnat",
+				self::ReprAtom::Nat => "rnat",
+				self::ReprAtom::Ptr => "rptr",
 				self::ReprAtom::Fun => "rfun",
 			}
 		),
@@ -204,6 +205,8 @@ fn print_constructor(constructor: &Constructor, f: &mut impl Write, _: &Rodeo) -
 		Constructor::Exp(grade) => write!(f, "@[{grade}]"),
 		Constructor::Enum(k, v) => write!(f, "{v}_{k}"),
 		Constructor::Refl => write!(f, "refl"),
+		Constructor::Num(n) => write!(f, "{n}"),
+		Constructor::Suc => write!(f, "suc"),
 		Constructor::Bx => write!(f, "box"),
 		Constructor::Wrap => write!(f, "wrap"),
 	}

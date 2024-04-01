@@ -12,7 +12,12 @@ pub enum StaticTerm {
 	Variable(Option<Name>, Index),
 
 	// Let-expressions.
-	Let { grade: usize, ty: Box<Self>, argument: Box<Self>, tail: Binder<Box<Self>> },
+	Let {
+		grade: usize,
+		ty: Box<Self>,
+		argument: Box<Self>,
+		tail: Binder<Box<Self>>,
+	},
 
 	// Types.
 	Universe,
@@ -28,29 +33,62 @@ pub enum StaticTerm {
 	ReprPair(Box<Self>, Box<Self>),
 
 	// Quoted programs.
-	Lift { liftee: Box<DynamicTerm>, kind: Box<KindTerm> },
+	Lift {
+		liftee: Box<DynamicTerm>,
+		kind: Box<KindTerm>,
+	},
 	Quote(Box<DynamicTerm>),
 
 	// Repeated programs.
 	Exp(usize, Box<Self>),
 	Repeat(usize, Box<Self>),
-	LetExp { grade: usize, grade_argument: usize, argument: Box<Self>, tail: Binder<Box<Self>> },
+	LetExp {
+		grade: usize,
+		grade_argument: usize,
+		argument: Box<Self>,
+		tail: Binder<Box<Self>>,
+	},
 
 	// Dependent functions.
 	Pi(usize, Box<Self>, Binder<Box<Self>>),
 	Function(usize, Binder<Box<Self>>),
-	Apply { scrutinee: Box<Self>, argument: Box<Self> },
+	Apply {
+		scrutinee: Box<Self>,
+		argument: Box<Self>,
+	},
 
 	// Dependent pairs.
 	Sg(Box<Self>, Binder<Box<Self>>),
-	Pair { basepoint: Box<Self>, fiberpoint: Box<Self> },
-	SgLet { grade: usize, argument: Box<Self>, tail: Binder<Box<Self>, 2> },
+	Pair {
+		basepoint: Box<Self>,
+		fiberpoint: Box<Self>,
+	},
+	SgLet {
+		grade: usize,
+		argument: Box<Self>,
+		tail: Binder<Box<Self>, 2>,
+	},
 	SgField(Box<Self>, Field),
 
 	// Enumerated numbers.
 	Enum(u16),
 	EnumValue(u16, u8),
-	CaseEnum { scrutinee: Box<Self>, motive: Binder<Box<Self>>, cases: Vec<Self> },
+	CaseEnum {
+		scrutinee: Box<Self>,
+		motive: Binder<Box<Self>>,
+		cases: Vec<Self>,
+	},
+
+	// Natural numbers.
+	Nat,
+	Num(usize),
+	Suc(Box<Self>),
+	CaseNat {
+		scrutinee: Box<Self>,
+		motive: Binder<Box<Self>>,
+		case_nil: Box<Self>,
+		case_suc: Binder<Box<Self>, 2>,
+	},
 }
 
 impl From<&Repr> for StaticTerm {
@@ -151,9 +189,9 @@ pub enum DynamicTerm {
 	EnumValue(u16, u8),
 	CaseEnum {
 		scrutinee: Box<Self>,
-		cases: Vec<Self>,
-		motive: Binder<Box<Self>>,
 		motive_kind: Option<Box<KindTerm>>,
+		motive: Binder<Box<Self>>,
+		cases: Vec<Self>,
 	},
 
 	// Paths.
@@ -168,6 +206,18 @@ pub enum DynamicTerm {
 		scrutinee: Box<Self>,
 		motive: Binder<Box<Self>, 2>,
 		case_refl: Box<Self>,
+	},
+
+	// Natural numbers.
+	Nat,
+	Num(usize),
+	Suc(Box<Self>),
+	CaseNat {
+		scrutinee: Box<Self>,
+		motive_kind: Option<Box<KindTerm>>,
+		motive: Binder<Box<Self>>,
+		case_nil: Box<Self>,
+		case_suc: Binder<Box<Self>, 2>,
 	},
 
 	// Wrappers.

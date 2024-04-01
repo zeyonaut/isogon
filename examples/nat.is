@@ -1,17 +1,19 @@
-let! add : nat -> nat -> nat
-	= |a| |b| a :: |_| nat {
+#fragment 0
+
+let add : Nat -> Nat -> Nat
+	= |a| |b| a :: |_| Nat {
 		| 0        -> b
 		| suc @_.k -> suc k
 	};
 
-let! mul : nat -> nat -> nat
-	= |a| |b| a :: |_| nat {
+let mul : Nat -> Nat -> Nat
+	= |a| |b| a :: |_| Nat {
 		| 0        -> 0
 		| suc @_.k -> add b k
 	};
 
-let! pow : nat -> nat -> nat
-	= |a| |b| a :: |_| nat {
+let pow : Nat -> Nat -> Nat
+	= |a| |b| a :: |_| Nat {
 		| 0        -> 1
 		| suc @_.k -> mul b k
 	};

@@ -1,10 +1,15 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+	ops::{Deref, DerefMut},
+	rc::Rc,
+};
 
 use crate::{
 	delta::{
 		common::{bind, Closure, Field, Index, Level, Name},
 		ir::{
-			presyntax::{Constructor, Expression, Former, ParsedPreterm, Pattern, Preterm, Projector},
+			presyntax::{
+				Constructor, Expression, Former, ParsedPreterm, ParsedProgram, Pattern, Preterm, Projector,
+			},
 			semantics::{
 				Conversion, DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue,
 				Value,
@@ -23,9 +28,13 @@ use crate::{
 };
 
 /// Elaborates a dynamic preterm to a dynamic term and synthesizes its type.
-pub fn elaborate(source: &str, lexed_source: &LexedSource, term: Expression) -> (DynamicTerm, DynamicValue) {
+pub fn elaborate(
+	source: &str,
+	lexed_source: &LexedSource,
+	program: ParsedProgram,
+) -> (DynamicTerm, DynamicValue) {
 	// TODO: Offer option to choose fragment, rather than force fragment to be 1.
-	match synthesize_dynamic(&mut Context::empty(), term, 1) {
+	match synthesize_dynamic(&mut Context::empty(), program.expr, program.fragment) {
 		Ok((term, ty, ..)) => (term, ty),
 		Err(error) => {
 			report_line_error(
@@ -479,6 +488,9 @@ fn synthesize_static(
 			// Enumerated numbers.
 			Former::Enum(card) if arguments.is_empty() => (StaticTerm::Enum(card), StaticValue::Universe),
 
+			// Natural numbers.
+			Former::Nat if arguments.is_empty() => (StaticTerm::Nat, StaticValue::Universe),
+
 			// Invalid former.
 			_ => return Err(ElaborationErrorKind::InvalidFormer.at(expr.range)),
 		},
@@ -513,6 +525,18 @@ fn synthesize_static(
 			// Enumerated numbers.
 			Constructor::Enum(k, v) if arguments.is_empty() =>
 				(StaticTerm::EnumValue(k, v), StaticValue::Enum(k)),
+
+			// Natural numbers.
+			Constructor::Num(n) if arguments.is_empty() => (StaticTerm::Num(n), StaticValue::Nat),
+			Constructor::Suc => {
+				let [prev] = arguments.try_into().unwrap();
+				let prev = verify_static(ctx, prev, fragment, StaticValue::Nat)?;
+				if let StaticTerm::Num(p) = prev {
+					(StaticTerm::Num(p + 1), StaticValue::Nat)
+				} else {
+					(StaticTerm::Suc(prev.into()), StaticValue::Nat)
+				}
+			}
 
 			// Invalid constructor.
 			_ => return Err(ElaborationErrorKind::InvalidConstructor.at(expr.range)),
@@ -589,6 +613,82 @@ fn synthesize_static(
 							scrutinee: bx!(scrutinee),
 							motive: bind([motive_parameter], motive_term),
 							cases: new_cases,
+						},
+						motive_value.evaluate_with([scrutinee_value]),
+					)
+				}
+
+				// Natural numbers.
+				StaticValue::Nat => {
+					let [motive_parameter] = (*motive.parameters).try_into().unwrap();
+					(cases.len() == 2)
+						.then_some(())
+						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
+					let motive = verify_static(
+						&mut ctx.bind_static(motive_parameter, false, 0.into(), StaticValue::Nat),
+						*motive.body,
+						fragment,
+						StaticValue::Universe,
+					)?;
+					let motive_value = Closure::new(ctx.environment.clone(), [motive_parameter], motive.clone());
+					// Avoid cloning.
+					let case_nil_position = cases
+						.iter()
+						.position(|(pattern, _)| {
+							if let Pattern::Construction(Constructor::Num(0), args) = pattern {
+								args.is_empty()
+							} else {
+								false
+							}
+						})
+						.unwrap();
+					let case_nil = cases[case_nil_position].1.clone();
+					let (index, witness) = {
+						let Pattern::Construction(Constructor::Suc, args) = cases[1 - case_nil_position].0.clone()
+						else {
+							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+						};
+						let [arg] = args.try_into().unwrap();
+						let Pattern::Witness { index, witness } = arg else {
+							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+						};
+						(index, witness)
+					};
+					let case_suc = cases[1 - case_nil_position].1.clone();
+					let case_nil =
+						verify_static(ctx, case_nil, fragment, motive_value.evaluate_with([StaticValue::Num(0)]))?;
+					let case_suc = {
+						// Effectively disallow using nontrivial resources in recursive case.
+						let mut ctx = ctx.amplify(None);
+						let mut ctx = ctx.bind_static(index, false, None, StaticValue::Nat);
+						let index_level = ctx.len().index(0);
+						let result = {
+							let mut ctx = ctx.bind_static(
+								witness,
+								false,
+								(1 * fragment as usize).into(),
+								motive_value.evaluate_with([(index, index_level).into()]),
+							);
+							let result = verify_static(
+								&mut ctx,
+								case_suc,
+								fragment,
+								motive_value.evaluate_with([StaticValue::Neutral(StaticNeutral::Suc(Rc::new(
+									(index, index_level).into(),
+								)))]),
+							)?;
+							ctx.free().map_err(|e| e.at(expr.range))?;
+							result
+						};
+						ctx.free().map_err(|e| e.at(expr.range))?;
+						result
+					};
+					(
+						StaticTerm::CaseNat {
+							scrutinee: bx!(scrutinee),
+							motive: bind([motive_parameter], motive),
+							case_nil: bx!(case_nil),
+							case_suc: bind([index, witness], case_suc),
 						},
 						motive_value.evaluate_with([scrutinee_value]),
 					)
@@ -909,6 +1009,10 @@ fn synthesize_dynamic(
 				)
 			}
 
+			// Natural numbers.
+			Former::Nat if arguments.is_empty() =>
+				(DynamicTerm::Nat, DynamicValue::Universe { kind: KindValue::nat().into() }, KindValue::ty()),
+
 			// Wrappers.
 			Former::Bx => {
 				let [ty] = arguments.try_into().unwrap();
@@ -945,6 +1049,19 @@ fn synthesize_dynamic(
 			// Enumerated numbers.
 			Constructor::Enum(k, v) if arguments.is_empty() =>
 				(DynamicTerm::EnumValue(k, v), DynamicValue::Enum(k), KindValue::enu()),
+
+			// Natural numbers.
+			Constructor::Num(n) if arguments.is_empty() =>
+				(DynamicTerm::Num(n), DynamicValue::Nat, KindValue::nat()),
+			Constructor::Suc => {
+				let [prev] = arguments.try_into().unwrap();
+				let prev = verify_dynamic(ctx, prev, fragment, DynamicValue::Nat)?;
+				if let DynamicTerm::Num(p) = prev {
+					(DynamicTerm::Num(p + 1), DynamicValue::Nat, KindValue::nat())
+				} else {
+					(DynamicTerm::Suc(prev.into()), DynamicValue::Nat, KindValue::nat())
+				}
+			}
 
 			// Wrappers.
 			Constructor::Bx => {
@@ -1137,6 +1254,95 @@ fn synthesize_dynamic(
 							case_refl: case_refl.into(),
 						},
 						motive.evaluate_with([(*right).clone(), scrutinee_value]),
+						motive_kind,
+					)
+				}
+
+				// Natural numbers.
+				DynamicValue::Nat => {
+					// TODO: Handle this error.
+					let [motive_parameter] = (*motive.parameters).try_into().unwrap();
+					(cases.len() == 2)
+						.then_some(())
+						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
+					// TODO: Throw specific error if copy/repr depend on the motive.
+					let (motive_term, motive_kind) = elaborate_dynamic_type(
+						&mut ctx.bind_dynamic(
+							motive_parameter,
+							false,
+							0.into(),
+							DynamicValue::Nat,
+							KindValue::nat(),
+						),
+						*motive.body,
+					)?;
+					let motive = Closure::new(ctx.environment.clone(), [motive_parameter], motive_term.clone());
+					// Avoid cloning.
+					let case_nil_position = cases
+						.iter()
+						.position(|(pattern, _)| {
+							if let Pattern::Construction(Constructor::Num(0), args) = pattern {
+								args.is_empty()
+							} else {
+								false
+							}
+						})
+						.unwrap();
+					let case_nil = cases[case_nil_position].1.clone();
+					let (index, witness) = {
+						let Pattern::Construction(Constructor::Suc, args) = cases[1 - case_nil_position].0.clone()
+						else {
+							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+						};
+						let [arg] = args.try_into().unwrap();
+						let Pattern::Witness { index, witness } = arg else {
+							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+						};
+						(index, witness)
+					};
+					let case_suc = cases[1 - case_nil_position].1.clone();
+					let case_nil =
+						verify_dynamic(ctx, case_nil, fragment, motive.evaluate_with([DynamicValue::Num(0)]))?;
+					// NOTE: I'm not entirely sure this is 'right', as motive is is formed in a smaller context, but I believe this should be 'safe' because of de Bruijn levels.
+					let case_suc = {
+						// Effectively disallow using nontrivial resources in recursive case.
+						let mut ctx = ctx.amplify(None);
+						// NOTE: Unrestricted usage is only "safe" because we're approximating Nat with a finite type.
+						// For nontrivial Nat, we may wish to enclose the index with a thunk.
+						let mut ctx =
+							ctx.bind_dynamic(index, false, None.into(), DynamicValue::Nat, KindValue::nat());
+						let index_level = ctx.len().index(0);
+						let result = {
+							let mut ctx = ctx.bind_dynamic(
+								witness,
+								false,
+								(1 * fragment as usize).into(),
+								motive.evaluate_with([(index, index_level).into()]),
+								motive_kind.clone(),
+							);
+							let result = verify_dynamic(
+								&mut ctx,
+								case_suc,
+								fragment,
+								motive.evaluate_with([DynamicValue::Neutral(DynamicNeutral::Suc(Rc::new(
+									DynamicNeutral::Variable(index, index_level).into(),
+								)))]),
+							)?;
+							ctx.free().map_err(|e| e.at(expr.range))?;
+							result
+						};
+						ctx.free().map_err(|e| e.at(expr.range))?;
+						result
+					};
+					(
+						DynamicTerm::CaseNat {
+							scrutinee: bx!(scrutinee),
+							motive_kind: Some(motive_kind.unevaluate_in(ctx.len()).into()),
+							motive: bind([motive_parameter], motive_term),
+							case_nil: bx!(case_nil),
+							case_suc: bind([index, witness], case_suc),
+						},
+						motive.evaluate_with([scrutinee_value]),
 						motive_kind,
 					)
 				}
