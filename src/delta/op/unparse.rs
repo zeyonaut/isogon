@@ -106,8 +106,11 @@ pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &Rodeo) -> std
 			write!(f, " ")?;
 			print_projector(projector, f, interner)?;
 		}
-		Preterm::Split { scrutinee, motive, cases } => {
+		Preterm::Split { scrutinee, is_cast, motive, cases } => {
 			print_spine(scrutinee, f, interner)?;
+			if *is_cast {
+				write!(f, " cast")?;
+			}
 			write!(f, " :: |")?;
 			print_multiparameter(&motive.parameters, f, interner)?;
 			write!(f, "| ")?;

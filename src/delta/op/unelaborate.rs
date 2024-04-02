@@ -73,6 +73,7 @@ impl Unelaborate for StaticTerm {
 				let card = cases.len() as u16;
 				Preterm::Split {
 					scrutinee: scrutinee.unelaborate().into(),
+					is_cast: false,
 					motive: AnyBinder::from(motive).unelaborate(),
 					cases: cases
 						.into_iter()
@@ -91,6 +92,7 @@ impl Unelaborate for StaticTerm {
 				let case_suc = case_suc.unelaborate();
 				Preterm::Split {
 					scrutinee: scrutinee.unelaborate().into(),
+					is_cast: false,
 					motive: AnyBinder::from(motive).unelaborate(),
 					cases: vec![
 						(Pattern::Construction(Constructor::Num(0), vec![]), case_nil.unelaborate()),
@@ -162,6 +164,7 @@ impl Unelaborate for DynamicTerm {
 				let card = cases.len() as u16;
 				Preterm::Split {
 					scrutinee: scrutinee.unelaborate().into(),
+					is_cast: false,
 					motive: AnyBinder::from(motive).unelaborate(),
 					cases: cases
 						.into_iter()
@@ -178,6 +181,7 @@ impl Unelaborate for DynamicTerm {
 			DynamicTerm::Refl => Preterm::Constructor(Constructor::Refl, vec![]),
 			DynamicTerm::CasePath { scrutinee, motive, case_refl } => Preterm::Split {
 				scrutinee: scrutinee.unelaborate().into(),
+				is_cast: true,
 				motive: AnyBinder::from(motive).unelaborate(),
 				cases: vec![(Pattern::Construction(Constructor::Refl, vec![]), case_refl.unelaborate())],
 			},
@@ -189,6 +193,7 @@ impl Unelaborate for DynamicTerm {
 				let case_suc = case_suc.unelaborate();
 				Preterm::Split {
 					scrutinee: scrutinee.unelaborate().into(),
+					is_cast: false,
 					motive: AnyBinder::from(motive).unelaborate(),
 					cases: vec![
 						(Pattern::Construction(Constructor::Num(0), vec![]), case_nil.unelaborate()),

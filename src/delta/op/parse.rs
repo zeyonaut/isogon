@@ -230,8 +230,8 @@ peg::parser! {
 				/ callee:spine() _ argument:atom()
 					{ Preterm::Call { callee: callee.into(), argument: argument.into() } }
 				// Case splits.
-				/ scrutinee:spine() _ [Token::TwoColon] _ motive:bound_spine_headed() _ [Token::CurlyL] (_ [Token::Pipe])? _ cases:case()**(_ [Token::Pipe] _) _ [Token::CurlyR]
-					{ Preterm::Split { scrutinee: scrutinee.into(), motive, cases} }
+				/ scrutinee:spine() _ cast:([Token::Keyword(Keyword::Cast)] {()})? _ [Token::TwoColon] _ motive:bound_spine_headed() _ [Token::CurlyL] (_ [Token::Pipe])? _ cases:case()**(_ [Token::Pipe] _) _ [Token::CurlyR]
+					{ Preterm::Split { scrutinee: scrutinee.into(), is_cast: cast.is_some(), motive, cases} }
 				// Projections.
 				/ spine:spine() _ projector:projector() { Preterm::Project(spine.into(), projector) }
 			) fini:position!() {preterm.at((init, fini))}

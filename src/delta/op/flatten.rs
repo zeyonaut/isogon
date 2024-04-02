@@ -126,7 +126,7 @@ impl Flattener {
 					tail: self.flatten_with(tail, [Cost::Fin(*grade); 2], reprs, occurrences),
 				}
 			}
-			DynamicTerm::SgField { scrutinee, field } => panic!("irrelevant"),
+			DynamicTerm::SgField { .. } => panic!("irrelevant"),
 
 			// Enumerated numbers.
 			DynamicTerm::Enum(..) => panic!("irrelevant"),
@@ -139,8 +139,7 @@ impl Flattener {
 
 			// Paths.
 			DynamicTerm::Id { .. } | DynamicTerm::Refl => panic!("irrelevant"),
-			// TODO: Require path induction to act on irrelevant paths.
-			DynamicTerm::CasePath { .. } => unimplemented!(),
+			DynamicTerm::CasePath { case_refl, .. } => self.flatten(&case_refl, occurrences),
 
 			// Natural numbers.
 			DynamicTerm::Nat => panic!("irrelevant"),

@@ -1,5 +1,3 @@
-#fragment 0
-
 def [0] sym : |c : copy| -> |r : repr|
 -> '(|A : * c r| -> |x : A| -> |y : A| -> Id A x y -> Id A y x)
 = |_| |_| <
@@ -17,12 +15,12 @@ def [0] trans
 	}
 >;
 
-def [0] tr
-: |c_0 : copy| -> |r_0 : repr| -> |c_1 : copy| -> |r_1 : repr|
+def tr
+: |[0] c_0 : copy| -> |[0] r_0 : repr| -> |[0] c_1 : copy| -> |[0] r_1 : repr|
 -> '(
-	|B : * c_0 r_0| -> |F : B -> * c_1 r_1| -> |x : B| -> |y : B| -> Id B x y -> F x -> F y
+	|[0] B : * c_0 r_0| -> |[0] F : B -> * c_1 r_1| -> |[0] x : B| -> |[0] y : B| -> Id B x y [0] -> F x -> F y
 ) = |_| |_| |_| |_| <
-	|_| |F| |_| |_| |p| |a| p :: |v.q| F v {
+	|_| |[0] F| |_| |_| |[0] p| |a| p cast :: |v._| F v {
 		refl -> a
 	}
 >;
@@ -44,4 +42,4 @@ let [0] bool_family : #2 -> * c0 rbyte = |b| b :: |_| * c0 rbyte { false -> #0 |
 let [0] bool_no_confusion : Id #2 false true -> #0 = |p|
 	<tr c0 rbyte c0 rbyte> #2 bool_family true false (<sym c0 rbyte> #2 false true p) 0_1;
 
-bool_no_confusion
+<tr c0 rbyte c0 rbyte> #2 bool_family true true refl 0_1

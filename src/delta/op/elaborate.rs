@@ -588,7 +588,7 @@ fn synthesize_static(
 		},
 
 		// Generic case splits.
-		Preterm::Split { scrutinee, motive, cases } => {
+		Preterm::Split { scrutinee, is_cast: false, motive, cases } => {
 			let (scrutinee, scrutinee_ty) = synthesize_static(ctx, *scrutinee, fragment)?;
 			let scrutinee_value = scrutinee.clone().evaluate_in(&ctx.environment);
 			match scrutinee_ty {
@@ -1180,211 +1180,275 @@ fn synthesize_dynamic(
 		},
 
 		// Generic case splits.
-		Preterm::Split { scrutinee, motive, cases } => {
-			let (scrutinee, scrutinee_ty, _) = synthesize_dynamic(ctx, *scrutinee, fragment)?;
-			let scrutinee_value = scrutinee.clone().evaluate_in(&ctx.environment);
-			match scrutinee_ty {
-				// Enumerated numbers.
-				DynamicValue::Enum(card) => {
-					// TODO: Handle this error.
-					let [motive_parameter] = (*motive.parameters).try_into().unwrap();
-					(cases.len() == card as _)
-						.then_some(())
-						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
-					// TODO: Throw specific error if copy/repr depend on the motive.
-					let (motive_term, motive_kind) = elaborate_dynamic_type(
-						&mut ctx.bind_dynamic(
-							motive_parameter,
-							false,
-							0.into(),
-							DynamicValue::Enum(card),
-							KindValue::enu(),
-						),
-						*motive.body,
-					)?;
-					let motive = Closure::new(ctx.environment.clone(), [motive_parameter], motive_term.clone());
-					// TODO: Avoid cloning.
-					let mut new_cases = Vec::new();
-					for v in 0..card {
-						let v = v as u8;
-						let case = cases[cases
+		Preterm::Split { scrutinee, is_cast, motive, cases } => {
+			if is_cast {
+				let (scrutinee, scrutinee_ty, _) = synthesize_dynamic(ctx, *scrutinee, 0)?;
+				let scrutinee_value = scrutinee.clone().evaluate_in(&ctx.environment);
+				match scrutinee_ty {
+					DynamicValue::Id { kind, space, left, right } => {
+						// TODO: Handle this error.
+						let [v, p] = (*motive.parameters).try_into().unwrap();
+						let Ok([(Pattern::Construction(Constructor::Refl, pattern), case_refl)]) =
+							<[_; 1]>::try_from(cases)
+						else {
+							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+						};
+						let Ok([]) = <[_; 0]>::try_from(pattern) else {
+							panic!();
+						};
+
+						// TODO: Throw specific error if copy/repr depend on the motive.
+						let (motive_term, motive_kind) = {
+							let mut context =
+								ctx.bind_dynamic(v, false, 0.into(), (*space).clone(), (*kind).clone());
+							let index_level = context.len().index(0);
+							let mut context = context.bind_dynamic(
+								p,
+								false,
+								0.into(),
+								DynamicValue::Id {
+									kind,
+									space: space.clone(),
+									left: left.clone(),
+									right: DynamicValue::Neutral(DynamicNeutral::Variable(v, index_level)).into(),
+								},
+								// TODO: Refactor into a better place.
+								KindValue::path(),
+							);
+							elaborate_dynamic_type(&mut context, *motive.body)?
+						};
+						let motive = Closure::new(ctx.environment.clone(), [v, p], motive_term.clone());
+
+						let case_refl = verify_dynamic(
+							ctx,
+							case_refl,
+							fragment,
+							motive.evaluate_with([(*left).clone(), DynamicValue::Refl]),
+						)?;
+
+						(
+							DynamicTerm::CasePath {
+								scrutinee: scrutinee.into(),
+								motive: bind([v, p], motive_term),
+								case_refl: case_refl.into(),
+							},
+							motive.evaluate_with([(*right).clone(), scrutinee_value]),
+							motive_kind,
+						)
+					}
+
+					// Invalid case split.
+					_ => return Err(ElaborationErrorKind::InvalidCaseSplitScrutineeType.at(expr.range)),
+				}
+			} else {
+				let (scrutinee, scrutinee_ty, _) = synthesize_dynamic(ctx, *scrutinee, fragment)?;
+				let scrutinee_value = scrutinee.clone().evaluate_in(&ctx.environment);
+				match scrutinee_ty {
+					// Enumerated numbers.
+					DynamicValue::Enum(card) => {
+						// TODO: Handle this error.
+						let [motive_parameter] = (*motive.parameters).try_into().unwrap();
+						(cases.len() == card as _)
+							.then_some(())
+							.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
+						// TODO: Throw specific error if copy/repr depend on the motive.
+						let (motive_term, motive_kind) = elaborate_dynamic_type(
+							&mut ctx.bind_dynamic(
+								motive_parameter,
+								false,
+								0.into(),
+								DynamicValue::Enum(card),
+								KindValue::enu(),
+							),
+							*motive.body,
+						)?;
+						let motive = Closure::new(ctx.environment.clone(), [motive_parameter], motive_term.clone());
+						// TODO: Avoid cloning.
+						let mut new_cases = Vec::new();
+						for v in 0..card {
+							let v = v as u8;
+							let case = cases[cases
+								.iter()
+								.position(|(pattern, _)| {
+									if let Pattern::Construction(Constructor::Enum(target_card, target_v), args) =
+										pattern
+									{
+										*target_card == card && *target_v == v && args.is_empty()
+									} else {
+										false
+									}
+								})
+								.unwrap()]
+							.1
+							.clone();
+							new_cases.push(verify_dynamic(
+								ctx,
+								case,
+								fragment,
+								motive.evaluate_with([DynamicValue::EnumValue(card, v)]),
+							)?)
+						}
+						(
+							DynamicTerm::CaseEnum {
+								scrutinee: bx!(scrutinee),
+								cases: new_cases,
+								motive: bind([motive_parameter], motive_term),
+								motive_kind: Some(motive_kind.unevaluate_in(ctx.len()).into()),
+							},
+							motive.evaluate_with([scrutinee_value]),
+							motive_kind,
+						)
+					}
+
+					// Paths. // TODO: Allow grade-0 matching on refl in fragment 1.
+					DynamicValue::Id { kind, space, left, right } if fragment == 0 => {
+						// TODO: Something more like:
+						// let motive = elaborate_dynamic_motive([space, space, id(space, var(1), var(0))]);
+
+						// TODO: Handle this error.
+						let [v, p] = (*motive.parameters).try_into().unwrap();
+						let Ok([(Pattern::Construction(Constructor::Refl, pattern), case_refl)]) =
+							<[_; 1]>::try_from(cases)
+						else {
+							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+						};
+						let Ok([]) = <[_; 0]>::try_from(pattern) else {
+							panic!();
+						};
+
+						// TODO: Throw specific error if copy/repr depend on the motive.
+						let (motive_term, motive_kind) = {
+							let mut context =
+								ctx.bind_dynamic(v, false, 0.into(), (*space).clone(), (*kind).clone());
+							let index_level = context.len().index(0);
+							let mut context = context.bind_dynamic(
+								p,
+								false,
+								0.into(),
+								DynamicValue::Id {
+									kind,
+									space: space.clone(),
+									left: left.clone(),
+									right: DynamicValue::Neutral(DynamicNeutral::Variable(v, index_level)).into(),
+								},
+								// TODO: Refactor into a better place.
+								KindValue::path(),
+							);
+							elaborate_dynamic_type(&mut context, *motive.body)?
+						};
+						let motive = Closure::new(ctx.environment.clone(), [v, p], motive_term.clone());
+
+						let case_refl = verify_dynamic(
+							ctx,
+							case_refl,
+							fragment,
+							motive.evaluate_with([(*left).clone(), DynamicValue::Refl]),
+						)?;
+
+						(
+							DynamicTerm::CasePath {
+								scrutinee: scrutinee.into(),
+								motive: bind([v, p], motive_term),
+								case_refl: case_refl.into(),
+							},
+							motive.evaluate_with([(*right).clone(), scrutinee_value]),
+							motive_kind,
+						)
+					}
+
+					// Natural numbers.
+					DynamicValue::Nat => {
+						// TODO: Handle this error.
+						let [motive_parameter] = (*motive.parameters).try_into().unwrap();
+						(cases.len() == 2)
+							.then_some(())
+							.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
+						// TODO: Throw specific error if copy/repr depend on the motive.
+						let (motive_term, motive_kind) = elaborate_dynamic_type(
+							&mut ctx.bind_dynamic(
+								motive_parameter,
+								false,
+								0.into(),
+								DynamicValue::Nat,
+								KindValue::nat(),
+							),
+							*motive.body,
+						)?;
+						let motive = Closure::new(ctx.environment.clone(), [motive_parameter], motive_term.clone());
+						// Avoid cloning.
+						let case_nil_position = cases
 							.iter()
 							.position(|(pattern, _)| {
-								if let Pattern::Construction(Constructor::Enum(target_card, target_v), args) = pattern
-								{
-									*target_card == card && *target_v == v && args.is_empty()
+								if let Pattern::Construction(Constructor::Num(0), args) = pattern {
+									args.is_empty()
 								} else {
 									false
 								}
 							})
-							.unwrap()]
-						.1
-						.clone();
-						new_cases.push(verify_dynamic(
-							ctx,
-							case,
-							fragment,
-							motive.evaluate_with([DynamicValue::EnumValue(card, v)]),
-						)?)
-					}
-					(
-						DynamicTerm::CaseEnum {
-							scrutinee: bx!(scrutinee),
-							cases: new_cases,
-							motive: bind([motive_parameter], motive_term),
-							motive_kind: Some(motive_kind.unevaluate_in(ctx.len()).into()),
-						},
-						motive.evaluate_with([scrutinee_value]),
-						motive_kind,
-					)
-				}
-
-				// Paths. // TODO: Allow grade-0 matching on refl in fragment 1.
-				DynamicValue::Id { kind, space, left, right } if fragment == 0 => {
-					// TODO: Something more like:
-					// let motive = elaborate_dynamic_motive([space, space, id(space, var(1), var(0))]);
-
-					// TODO: Handle this error.
-					let [v, p] = (*motive.parameters).try_into().unwrap();
-					let Ok([(Pattern::Construction(Constructor::Refl, pattern), case_refl)]) =
-						<[_; 1]>::try_from(cases)
-					else {
-						return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
-					};
-					let Ok([]) = <[_; 0]>::try_from(pattern) else {
-						panic!();
-					};
-
-					// TODO: Throw specific error if copy/repr depend on the motive.
-					let (motive_term, motive_kind) = {
-						let mut context = ctx.bind_dynamic(v, false, 0.into(), (*space).clone(), (*kind).clone());
-						let index_level = context.len().index(0);
-						let mut context = context.bind_dynamic(
-							p,
-							false,
-							0.into(),
-							DynamicValue::Id {
-								kind,
-								space: space.clone(),
-								left: left.clone(),
-								right: DynamicValue::Neutral(DynamicNeutral::Variable(v, index_level)).into(),
-							},
-							// TODO: Refactor into a better place.
-							KindValue::path(),
-						);
-						elaborate_dynamic_type(&mut context, *motive.body)?
-					};
-					let motive = Closure::new(ctx.environment.clone(), [v, p], motive_term.clone());
-
-					let case_refl = verify_dynamic(
-						ctx,
-						case_refl,
-						fragment,
-						motive.evaluate_with([(*left).clone(), DynamicValue::Refl]),
-					)?;
-
-					(
-						DynamicTerm::CasePath {
-							scrutinee: scrutinee.into(),
-							motive: bind([v, p], motive_term),
-							case_refl: case_refl.into(),
-						},
-						motive.evaluate_with([(*right).clone(), scrutinee_value]),
-						motive_kind,
-					)
-				}
-
-				// Natural numbers.
-				DynamicValue::Nat => {
-					// TODO: Handle this error.
-					let [motive_parameter] = (*motive.parameters).try_into().unwrap();
-					(cases.len() == 2)
-						.then_some(())
-						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
-					// TODO: Throw specific error if copy/repr depend on the motive.
-					let (motive_term, motive_kind) = elaborate_dynamic_type(
-						&mut ctx.bind_dynamic(
-							motive_parameter,
-							false,
-							0.into(),
-							DynamicValue::Nat,
-							KindValue::nat(),
-						),
-						*motive.body,
-					)?;
-					let motive = Closure::new(ctx.environment.clone(), [motive_parameter], motive_term.clone());
-					// Avoid cloning.
-					let case_nil_position = cases
-						.iter()
-						.position(|(pattern, _)| {
-							if let Pattern::Construction(Constructor::Num(0), args) = pattern {
-								args.is_empty()
-							} else {
-								false
-							}
-						})
-						.unwrap();
-					let case_nil = cases[case_nil_position].1.clone();
-					let (index, witness) = {
-						let Pattern::Construction(Constructor::Suc, args) = cases[1 - case_nil_position].0.clone()
-						else {
-							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+							.unwrap();
+						let case_nil = cases[case_nil_position].1.clone();
+						let (index, witness) = {
+							let Pattern::Construction(Constructor::Suc, args) =
+								cases[1 - case_nil_position].0.clone()
+							else {
+								return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+							};
+							let [arg] = args.try_into().unwrap();
+							let Pattern::Witness { index, witness } = arg else {
+								return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+							};
+							(index, witness)
 						};
-						let [arg] = args.try_into().unwrap();
-						let Pattern::Witness { index, witness } = arg else {
-							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
-						};
-						(index, witness)
-					};
-					let case_suc = cases[1 - case_nil_position].1.clone();
-					let case_nil =
-						verify_dynamic(ctx, case_nil, fragment, motive.evaluate_with([DynamicValue::Num(0)]))?;
-					// NOTE: I'm not entirely sure this is 'right', as motive is is formed in a smaller context, but I believe this should be 'safe' because of de Bruijn levels.
-					let case_suc = {
-						// Effectively disallow using nontrivial resources in recursive case.
-						let mut ctx = ctx.amplify(None);
-						// NOTE: Unrestricted usage is only "safe" because we're approximating Nat with a finite type.
-						// For nontrivial Nat, we may wish to enclose the index with a thunk.
-						let mut ctx =
-							ctx.bind_dynamic(index, false, None.into(), DynamicValue::Nat, KindValue::nat());
-						let index_level = ctx.len().index(0);
-						let result = {
-							let mut ctx = ctx.bind_dynamic(
-								witness,
-								false,
-								(1 * fragment as usize).into(),
-								motive.evaluate_with([(index, index_level).into()]),
-								motive_kind.clone(),
-							);
-							let result = verify_dynamic(
-								&mut ctx,
-								case_suc,
-								fragment,
-								motive.evaluate_with([DynamicValue::Neutral(DynamicNeutral::Suc(Rc::new(
-									DynamicNeutral::Variable(index, index_level).into(),
-								)))]),
-							)?;
+						let case_suc = cases[1 - case_nil_position].1.clone();
+						let case_nil =
+							verify_dynamic(ctx, case_nil, fragment, motive.evaluate_with([DynamicValue::Num(0)]))?;
+						// NOTE: I'm not entirely sure this is 'right', as motive is is formed in a smaller context, but I believe this should be 'safe' because of de Bruijn levels.
+						let case_suc = {
+							// Effectively disallow using nontrivial resources in recursive case.
+							let mut ctx = ctx.amplify(None);
+							// NOTE: Unrestricted usage is only "safe" because we're approximating Nat with a finite type.
+							// For nontrivial Nat, we may wish to enclose the index with a thunk.
+							let mut ctx =
+								ctx.bind_dynamic(index, false, None.into(), DynamicValue::Nat, KindValue::nat());
+							let index_level = ctx.len().index(0);
+							let result = {
+								let mut ctx = ctx.bind_dynamic(
+									witness,
+									false,
+									(1 * fragment as usize).into(),
+									motive.evaluate_with([(index, index_level).into()]),
+									motive_kind.clone(),
+								);
+								let result = verify_dynamic(
+									&mut ctx,
+									case_suc,
+									fragment,
+									motive.evaluate_with([DynamicValue::Neutral(DynamicNeutral::Suc(Rc::new(
+										DynamicNeutral::Variable(index, index_level).into(),
+									)))]),
+								)?;
+								ctx.free().map_err(|e| e.at(expr.range))?;
+								result
+							};
 							ctx.free().map_err(|e| e.at(expr.range))?;
 							result
 						};
-						ctx.free().map_err(|e| e.at(expr.range))?;
-						result
-					};
-					(
-						DynamicTerm::CaseNat {
-							scrutinee: bx!(scrutinee),
-							motive_kind: Some(motive_kind.unevaluate_in(ctx.len()).into()),
-							motive: bind([motive_parameter], motive_term),
-							case_nil: bx!(case_nil),
-							case_suc: bind([index, witness], case_suc),
-						},
-						motive.evaluate_with([scrutinee_value]),
-						motive_kind,
-					)
-				}
+						(
+							DynamicTerm::CaseNat {
+								scrutinee: bx!(scrutinee),
+								motive_kind: Some(motive_kind.unevaluate_in(ctx.len()).into()),
+								motive: bind([motive_parameter], motive_term),
+								case_nil: bx!(case_nil),
+								case_suc: bind([index, witness], case_suc),
+							},
+							motive.evaluate_with([scrutinee_value]),
+							motive_kind,
+						)
+					}
 
-				// Invalid case split.
-				_ => return Err(ElaborationErrorKind::InvalidCaseSplitScrutineeType.at(expr.range)),
+					// Invalid case split.
+					_ => return Err(ElaborationErrorKind::InvalidCaseSplitScrutineeType.at(expr.range)),
+				}
 			}
 		}
 

@@ -38,7 +38,7 @@ pub enum Preterm<E> {
 	Former(Former, Vec<E>),
 	Constructor(Constructor, Vec<E>),
 	Project(Box<E>, Projector),
-	Split { scrutinee: Box<E>, motive: AnyBinder<Box<E>>, cases: Vec<(Pattern, E)> },
+	Split { scrutinee: Box<E>, is_cast: bool, motive: AnyBinder<Box<E>>, cases: Vec<(Pattern, E)> },
 }
 
 #[derive(Debug, Clone)]

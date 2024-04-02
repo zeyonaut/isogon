@@ -74,6 +74,7 @@ pub enum Keyword {
 
 	Id,
 	Refl,
+	Cast,
 
 	Nat,
 	Suc,
@@ -160,6 +161,7 @@ impl LexedSource {
 
 			"Id" => Keyword(Id),
 			"refl" => Keyword(Refl),
+			"cast" => Keyword(Cast),
 
 			"Nat" => Keyword(Nat),
 			"suc" => Keyword(Suc),
