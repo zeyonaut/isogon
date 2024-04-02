@@ -484,12 +484,11 @@ fn synthesize_static(
 		}
 
 		// Generic type formers.
-		Preterm::Former(former, arguments) => match former {
+		Preterm::Former(former, arguments) if fragment == 0 => match former {
 			// Types and universe indices.
-			Former::Universe if fragment == 0 && arguments.is_empty() =>
-				(StaticTerm::Universe, StaticValue::Universe),
-			Former::Copy if fragment == 0 && arguments.is_empty() => (StaticTerm::Cpy, StaticValue::Universe),
-			Former::Repr if fragment == 0 && arguments.is_empty() => (StaticTerm::Repr, StaticValue::Universe),
+			Former::Universe if arguments.is_empty() => (StaticTerm::Universe, StaticValue::Universe),
+			Former::Copy if arguments.is_empty() => (StaticTerm::Cpy, StaticValue::Universe),
+			Former::Repr if arguments.is_empty() => (StaticTerm::Repr, StaticValue::Universe),
 
 			// Quoting.
 			Former::Lift => {
@@ -815,7 +814,7 @@ fn synthesize_dynamic(
 
 		// Let-expressions.
 		Preterm::Let { grade, ty, argument, tail } => {
-			let (ty, base_kind) = elaborate_dynamic_type(ctx, *ty)?;
+			let (ty, argument_kind) = elaborate_dynamic_type(ctx, *ty)?;
 			let ty_value = ty.clone().evaluate_in(&ctx.environment);
 			let argument = verify_dynamic(
 				&mut ctx.amplify(grade),
@@ -832,7 +831,7 @@ fn synthesize_dynamic(
 					false,
 					(grade * fragment as usize).into(),
 					ty_value,
-					base_kind,
+					argument_kind.clone(),
 					argument_value,
 				);
 				let result = synthesize_dynamic(&mut context, *tail.body, fragment)?;
@@ -841,7 +840,13 @@ fn synthesize_dynamic(
 			};
 
 			(
-				DynamicTerm::Let { grade, ty: bx!(ty), argument: bx!(argument), tail: bind(parameters, tail) },
+				DynamicTerm::Let {
+					grade,
+					ty: ty.into(),
+					argument_kind: argument_kind.unevaluate_in(ctx.len()).into(),
+					argument: argument.into(),
+					tail: bind(parameters, tail),
+				},
 				tail_ty,
 				tail_kind,
 			)
@@ -901,6 +906,7 @@ fn synthesize_dynamic(
 			(
 				DynamicTerm::Apply {
 					scrutinee: scrutinee.into(),
+					grade: Some(grade),
 					argument: argument.into(),
 					family_kind: Some(family_kind.unevaluate_in(ctx.len()).into()),
 				},
@@ -910,14 +916,14 @@ fn synthesize_dynamic(
 		}
 
 		// Dependent pairs.
-		Preterm::Sg { base, family } => {
+		Preterm::Sg { base, family } if fragment == 0 => {
 			let (base, base_kind) = elaborate_dynamic_type(ctx, *base)?;
 			let base_value = base.clone().evaluate_in(&ctx.environment);
 			let parameters = family.parameters;
 			let (family, family_kind) = {
-				let mut context = ctx.bind_dynamic(parameters[0], false, 0.into(), base_value, base_kind.clone());
-				let result = elaborate_dynamic_type(&mut context, *family.body)?;
-				context.free().map_err(|e| e.at(expr.range))?;
+				let mut ctx = ctx.bind_dynamic(parameters[0], false, 0.into(), base_value, base_kind.clone());
+				let result = elaborate_dynamic_type(&mut ctx, *family.body)?;
+				ctx.free().map_err(|e| e.at(expr.range))?;
 				result
 			};
 
@@ -976,13 +982,22 @@ fn synthesize_dynamic(
 				result
 			};
 
-			(DynamicTerm::SgLet { grade, argument: tm.into(), tail: bind(parameters, tail) }, tail_ty, kind)
+			(
+				DynamicTerm::SgLet {
+					grade,
+					kinds: [base_kind, family_kind].map(|x| x.unevaluate_in(ctx.len()).into()),
+					argument: tm.into(),
+					tail: bind(parameters, tail),
+				},
+				tail_ty,
+				kind,
+			)
 		}
 
 		// Generic type formers.
-		Preterm::Former(former, arguments) => match former {
+		Preterm::Former(former, arguments) if fragment == 0 => match former {
 			// Types.
-			Former::Universe if fragment == 0 => {
+			Former::Universe => {
 				let [copy, repr] = arguments.try_into().unwrap();
 				let copy = verify_static(ctx, copy, 0, StaticValue::Cpy)?;
 				let repr = verify_static(ctx, repr, 0, StaticValue::ReprType)?;
@@ -1224,8 +1239,8 @@ fn synthesize_dynamic(
 					)
 				}
 
-				// Paths.
-				DynamicValue::Id { kind, space, left, right } => {
+				// Paths. // TODO: Allow grade-0 matching on refl in fragment 1.
+				DynamicValue::Id { kind, space, left, right } if fragment == 0 => {
 					// TODO: Something more like:
 					// let motive = elaborate_dynamic_motive([space, space, id(space, var(1), var(0))]);
 
@@ -1389,7 +1404,7 @@ fn verify_dynamic(
 		// Dependent functions.
 		(
 			Preterm::Lambda { grade, body },
-			DynamicValue::IndexedProduct { grade: grade_t, base, base_kind, family, .. },
+			DynamicValue::IndexedProduct { grade: grade_t, base, base_kind, family, family_kind },
 		) => {
 			(grade * fragment as usize == grade_t * fragment as usize)
 				.then_some(())
@@ -1410,7 +1425,12 @@ fn verify_dynamic(
 				family.evaluate_with([(parameters[0], basepoint_level).into()]),
 			)?;
 			context.free().map_err(|e| e.at(expr.range))?;
-			DynamicTerm::Function { grade, body: bind(parameters, body) }
+			DynamicTerm::Function {
+				grade,
+				body: bind(parameters, body),
+				domain_kind: Some(base_kind.unevaluate_in(ctx.len()).into()),
+				codomain_kind: Some(family_kind.unevaluate_in(ctx.len()).into()),
+			}
 		}
 
 		// Dependent pairs.
@@ -1423,7 +1443,7 @@ fn verify_dynamic(
 		}
 
 		// Paths.
-		(Preterm::Constructor(Constructor::Refl, tms), ty) => {
+		(Preterm::Constructor(Constructor::Refl, tms), ty) if fragment == 0 => {
 			let DynamicValue::Id { left, right, .. } = ty else {
 				return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Id).at(expr.range));
 			};

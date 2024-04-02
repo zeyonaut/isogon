@@ -1,3 +1,4 @@
+pub mod flat;
 pub mod object;
 pub mod presyntax;
 pub mod semantics;

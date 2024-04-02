@@ -117,7 +117,7 @@ impl Unelaborate for DynamicTerm {
 		PurePreterm(match self {
 			DynamicTerm::Variable(name, _) => Preterm::Variable(name.unwrap()),
 
-			DynamicTerm::Let { grade, ty, argument, tail } => Preterm::Let {
+			DynamicTerm::Let { grade, ty, argument_kind, argument, tail } => Preterm::Let {
 				grade,
 				ty: ty.unelaborate().into(),
 				argument: argument.unelaborate().into(),
@@ -140,8 +140,9 @@ impl Unelaborate for DynamicTerm {
 
 			DynamicTerm::Pi { grade, base_kind: _, base, family_kind: _, family } =>
 				Preterm::Pi { grade, base: base.unelaborate().into(), family: family.unelaborate().into() },
-			DynamicTerm::Function { grade, body } => Preterm::Lambda { grade, body: body.unelaborate().into() },
-			DynamicTerm::Apply { scrutinee, argument, family_kind: _ } =>
+			DynamicTerm::Function { grade, body, domain_kind: _, codomain_kind: _ } =>
+				Preterm::Lambda { grade, body: body.unelaborate().into() },
+			DynamicTerm::Apply { scrutinee, grade: _, argument, family_kind: _ } =>
 				Preterm::Call { callee: scrutinee.unelaborate().into(), argument: argument.unelaborate().into() },
 
 			DynamicTerm::Sg { base_kind: _, base, family_kind: _, family } =>
@@ -150,7 +151,7 @@ impl Unelaborate for DynamicTerm {
 				basepoint: basepoint.unelaborate().into(),
 				fiberpoint: fiberpoint.unelaborate().into(),
 			},
-			DynamicTerm::SgLet { grade, argument, tail } =>
+			DynamicTerm::SgLet { grade, argument, kinds: _, tail } =>
 				Preterm::SgLet { grade, argument: argument.unelaborate().into(), tail: tail.unelaborate() },
 			DynamicTerm::SgField { scrutinee, field } =>
 				Preterm::Project(scrutinee.unelaborate().into(), Projector::Field(field)),

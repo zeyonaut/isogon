@@ -29,9 +29,10 @@ impl Unstage for DynamicValue {
 			Variable(name, v) => DynamicTerm::Variable(*name, Index(context_len - (v.0 + 1))),
 
 			// Let-expressions.
-			Let { grade, ty, argument, tail } => DynamicTerm::Let {
+			Let { grade, ty_kind, ty, argument, tail } => DynamicTerm::Let {
 				grade: *grade,
 				ty: ty.unstage_in(level).into(),
+				argument_kind: ty_kind.unstage_in(level).into(),
 				argument: argument.unstage_in(level).into(),
 				tail: tail.unstage_in(level),
 			},
@@ -49,9 +50,15 @@ impl Unstage for DynamicValue {
 				family_kind: family_kind.unstage_in(level).into(),
 				family: family.unstage_in(level),
 			},
-			Function { grade, body } => DynamicTerm::Function { grade: *grade, body: body.unstage_in(level) },
-			Apply { scrutinee, argument, family_kind } => DynamicTerm::Apply {
+			Function { grade, body, domain_kind, codomain_kind } => DynamicTerm::Function {
+				grade: *grade,
+				body: body.unstage_in(level),
+				domain_kind: domain_kind.as_ref().map(|kind| kind.unstage_in(level).into()),
+				codomain_kind: codomain_kind.as_ref().map(|kind| kind.unstage_in(level).into()),
+			},
+			Apply { scrutinee, grade, argument, family_kind } => DynamicTerm::Apply {
 				scrutinee: scrutinee.unstage_in(level).into(),
+				grade: *grade,
 				argument: argument.unstage_in(level).into(),
 				family_kind: family_kind.as_ref().map(|kind| kind.unstage_in(level).into()),
 			},
@@ -67,9 +74,10 @@ impl Unstage for DynamicValue {
 				basepoint: basepoint.unstage_in(level).into(),
 				fiberpoint: fiberpoint.unstage_in(level).into(),
 			},
-			SgLet { grade, argument, tail } => DynamicTerm::SgLet {
+			SgLet { grade, argument, kinds, tail } => DynamicTerm::SgLet {
 				grade: *grade,
 				argument: argument.unstage_in(level).into(),
+				kinds: kinds.each_ref().map(|kind| kind.unstage_in(level).into()),
 				tail: tail.unstage_in(level),
 			},
 			SgField(scrutinee, field) =>
@@ -134,7 +142,7 @@ impl Unstage for DynamicValue {
 impl Unstage for UniverseKind {
 	type CoreTerm = KindTerm;
 	fn unstage_in(&self, _: Level) -> Self::CoreTerm {
-		KindTerm { copy: StaticTerm::CpyValue(self.0), repr: StaticTerm::from(self.1.as_ref()) }
+		KindTerm { copy: StaticTerm::CpyValue(self.copy), repr: StaticTerm::from(self.repr.as_ref()) }
 	}
 }
 impl<const N: usize> Unstage for Closure<Environment, DynamicTerm, N> {

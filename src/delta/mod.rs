@@ -7,12 +7,14 @@ use op::{elaborate, evaluate::Evaluate, parse::parse};
 
 use self::ir::presyntax::PurePreterm;
 use crate::delta::op::{
-	stage::Stage, unelaborate::Unelaborate, unevaluate::Unevaluate, unparse::print, unstage::Unstage,
+	flatten::flatten, stage::Stage, unelaborate::Unelaborate, unevaluate::Unevaluate, unparse::print,
+	unstage::Unstage,
 };
 
 pub fn run(source: &str) {
 	// Parsing.
 	let (lexed_source, parsed_program, interner) = parse(source);
+	let fragment = parsed_program.fragment;
 	println!("Parsing complete.");
 
 	println!();
@@ -35,6 +37,18 @@ pub fn run(source: &str) {
 		"Evaluation: {}",
 		pretty_print(&unstaged_term.clone().evaluate().unevaluate().unelaborate(), &interner)
 	);
+
+	// Early return for irrelevant programs.
+	if fragment == 0 {
+		return;
+	}
+
+	println!();
+
+	// Closure conversion.
+	let flat_term = flatten(&unstaged_term);
+	println!("Closure conversion complete.");
+	println!("Closure-converted program: {flat_term:?}")
 }
 
 fn pretty_print(term: &PurePreterm, interner: &Rodeo) -> String {

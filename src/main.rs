@@ -1,3 +1,5 @@
+#![feature(array_methods)]
+
 // Non-staged; no unification.
 mod alpha;
 // Non-staged; with unification.

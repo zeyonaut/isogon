@@ -1,4 +1,6 @@
-def awful : ('#2 -> copy) -> '(* c0 rnone) = |stuck|
-	<|x : #2| & * (stuck <x>) rnone>;
+#fragment 0
+
+def awful : ('#2 -> copy) -> (|c : copy| -> '(* c rnone)) -> '(* c0 rbyte) = |stuck| |f|
+	<|x : #2| & <f (stuck <x>)>>;
 
 0_1

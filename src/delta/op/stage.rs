@@ -127,8 +127,9 @@ impl Stage for DynamicTerm {
 			Variable(_, index) => environment.lookup_dynamic(index),
 
 			// Let-expressions.
-			Let { grade, ty, argument, tail } => DynamicValue::Let {
+			Let { grade, ty, argument_kind, argument, tail } => DynamicValue::Let {
 				grade,
+				ty_kind: argument_kind.stage_in(environment),
 				ty: ty.stage_in(environment).into(),
 				argument: argument.stage_in(environment).into(),
 				tail: tail.stage_in(environment),
@@ -156,10 +157,15 @@ impl Stage for DynamicTerm {
 				family_kind: family_kind.stage_in(environment),
 				family: family.stage_in(environment),
 			},
-			Function { grade, body } =>
-				DynamicValue::Function { grade, body: body.stage_in(environment).into() },
-			Apply { scrutinee, argument, family_kind } => DynamicValue::Apply {
+			Function { grade, body, domain_kind, codomain_kind } => DynamicValue::Function {
+				grade,
+				body: body.stage_in(environment).into(),
+				domain_kind: domain_kind.map(|kind| kind.stage_in(environment)),
+				codomain_kind: codomain_kind.map(|kind| kind.stage_in(environment)),
+			},
+			Apply { scrutinee, grade, argument, family_kind } => DynamicValue::Apply {
 				scrutinee: scrutinee.stage_in(environment).into(),
+				grade,
 				argument: argument.stage_in(environment).into(),
 				family_kind: family_kind.map(|kind| kind.stage_in(environment)),
 			},
@@ -176,9 +182,10 @@ impl Stage for DynamicTerm {
 				fiberpoint: fiberpoint.stage_in(environment).into(),
 			},
 			SgField { scrutinee, field } => DynamicValue::SgField(scrutinee.stage_in(environment).into(), field),
-			SgLet { grade, argument, tail } => DynamicValue::SgLet {
+			SgLet { grade, argument, kinds, tail } => DynamicValue::SgLet {
 				grade,
 				argument: argument.stage_in(environment).into(),
+				kinds: kinds.map(|kind| kind.stage_in(environment)),
 				tail: tail.stage_in(environment),
 			},
 
@@ -241,9 +248,9 @@ impl Stage for DynamicTerm {
 impl Stage for KindTerm {
 	type ObjectTerm = UniverseKind;
 	fn stage_in(self, environment: &Environment) -> Self::ObjectTerm {
-		let StaticValue::CpyValue(c) = self.copy.stage_in(environment) else { panic!() };
-		let StaticValue::ReprValue(r) = self.repr.stage_in(environment) else { panic!() };
-		UniverseKind(c, r)
+		let StaticValue::CpyValue(copy) = self.copy.stage_in(environment) else { panic!() };
+		let StaticValue::ReprValue(repr) = self.repr.stage_in(environment) else { panic!() };
+		UniverseKind { copy, repr }
 	}
 }
 

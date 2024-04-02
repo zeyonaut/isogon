@@ -76,6 +76,7 @@ pub enum DynamicValue {
 	// Let-expressions.
 	Let {
 		grade: usize,
+		ty_kind: UniverseKind,
 		ty: Rc<Self>,
 		argument: Rc<Self>,
 		tail: Closure<Environment, DynamicTerm>,
@@ -97,9 +98,12 @@ pub enum DynamicValue {
 	Function {
 		grade: usize,
 		body: Closure<Environment, DynamicTerm>,
+		domain_kind: Option<UniverseKind>,
+		codomain_kind: Option<UniverseKind>,
 	},
 	Apply {
 		scrutinee: Rc<Self>,
+		grade: Option<usize>,
 		argument: Rc<Self>,
 		family_kind: Option<UniverseKind>,
 	},
@@ -118,6 +122,7 @@ pub enum DynamicValue {
 	SgLet {
 		grade: usize,
 		argument: Box<Self>,
+		kinds: [UniverseKind; 2],
 		tail: Closure<Environment, DynamicTerm, 2>,
 	},
 	SgField(Rc<Self>, Field),

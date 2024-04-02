@@ -198,16 +198,17 @@ impl Evaluate for DynamicTerm {
 			},
 
 			// Dependent functions.
-			Function { grade, body } =>
+			Function { grade, body, domain_kind: _, codomain_kind: _ } =>
 				DynamicValue::Function { grade, body: body.evaluate_in(environment).into() },
-			Apply { scrutinee, argument, family_kind: _ } => match scrutinee.evaluate_in(environment) {
-				DynamicValue::Function { body, .. } => body.evaluate_with([argument.evaluate_in(environment)]),
-				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Apply {
-					scrutinee: rc!(neutral),
-					argument: rc!(argument.evaluate_in(environment)),
-				}),
-				_ => panic!(),
-			},
+			Apply { scrutinee, grade: _, argument, family_kind: _ } =>
+				match scrutinee.evaluate_in(environment) {
+					DynamicValue::Function { body, .. } => body.evaluate_with([argument.evaluate_in(environment)]),
+					DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Apply {
+						scrutinee: rc!(neutral),
+						argument: rc!(argument.evaluate_in(environment)),
+					}),
+					_ => panic!(),
+				},
 			Pi { grade, base_kind, base, family_kind, family } => DynamicValue::IndexedProduct {
 				grade,
 				base_kind: base_kind.evaluate_in(environment).into(),
@@ -236,7 +237,7 @@ impl Evaluate for DynamicTerm {
 					DynamicValue::Neutral(DynamicNeutral::Project { scrutinee: neutral.into(), projection: field }),
 				_ => panic!(),
 			},
-			SgLet { grade: _, argument, tail } => tail.evaluate_at(
+			SgLet { grade: _, argument, kinds: _, tail } => tail.evaluate_at(
 				environment,
 				[
 					SgField { scrutinee: argument.clone(), field: Field::Base }.evaluate_in(environment),

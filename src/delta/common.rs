@@ -1,4 +1,7 @@
-use std::rc::Rc;
+use std::{
+	ops::{AddAssign, Mul, MulAssign},
+	rc::Rc,
+};
 
 use lasso::Spur;
 
@@ -123,4 +126,44 @@ pub enum Repr {
 }
 
 #[derive(Clone, Debug)]
-pub struct UniverseKind(pub Cpy, pub Option<Repr>);
+pub struct UniverseKind {
+	pub copy: Cpy,
+	pub repr: Option<Repr>,
+}
+
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+pub enum Cost {
+	Fin(usize),
+	Inf,
+}
+
+impl Mul for Cost {
+	type Output = Cost;
+	fn mul(self, rhs: Self) -> Self::Output {
+		match (self, rhs) {
+			(Self::Fin(a), Self::Fin(b)) => Self::Fin(a * b),
+			(Self::Fin(0), _) => Self::Fin(0),
+			(_, Self::Fin(0)) => Self::Fin(0),
+			(Self::Inf, _) => Self::Inf,
+			(_, Self::Inf) => Self::Inf,
+		}
+	}
+}
+
+impl MulAssign for Cost {
+	fn mul_assign(&mut self, rhs: Self) { *self = *self * rhs; }
+}
+
+impl<T: Into<Cost>> AddAssign<T> for Cost {
+	fn add_assign(&mut self, rhs: T) {
+		match (self, rhs.into()) {
+			(Self::Fin(a), Self::Fin(b)) => *a += b,
+			(Self::Inf, _) => (),
+			(a, Self::Inf) => *a = Self::Inf,
+		}
+	}
+}
+
+impl From<usize> for Cost {
+	fn from(value: usize) -> Self { Self::Fin(value) }
+}

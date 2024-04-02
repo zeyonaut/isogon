@@ -35,7 +35,7 @@ impl<const N: usize> Unevaluate for Closure<Environment, DynamicTerm, N> {
 impl Unevaluate for KindValue {
 	type Term = KindTerm;
 	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
-		Ok(KindTerm { copy: self.copy.unevaluate_in(level), repr: self.repr.unevaluate_in(level) })
+		Ok(KindTerm { copy: self.copy.try_unevaluate_in(level)?, repr: self.repr.try_unevaluate_in(level)? })
 	}
 }
 impl Unevaluate for StaticValue {
@@ -162,8 +162,12 @@ impl Unevaluate for DynamicValue {
 				family_kind: family_kind.try_unevaluate_in(level)?.into(),
 				family: family.try_unevaluate_in(level)?,
 			},
-			Function { grade, body } =>
-				DynamicTerm::Function { grade: *grade, body: body.try_unevaluate_in(level)?.into() },
+			Function { grade, body } => DynamicTerm::Function {
+				grade: *grade,
+				body: body.try_unevaluate_in(level)?.into(),
+				domain_kind: None,
+				codomain_kind: None,
+			},
 
 			// Dependent pairs.
 			IndexedSum { base_kind, base, family_kind, family } => DynamicTerm::Sg {
@@ -227,6 +231,7 @@ impl Unevaluate for DynamicNeutral {
 			// Dependent functions.
 			Apply { scrutinee, argument } => DynamicTerm::Apply {
 				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
+				grade: None,
 				argument: argument.try_unevaluate_in(level)?.into(),
 				family_kind: None,
 			},

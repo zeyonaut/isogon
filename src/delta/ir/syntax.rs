@@ -94,6 +94,7 @@ pub enum DynamicTerm {
 	Let {
 		grade: usize,
 		ty: Box<Self>,
+		argument_kind: Box<KindTerm>,
 		argument: Box<Self>,
 		tail: Binder<Box<Self>>,
 	},
@@ -126,10 +127,14 @@ pub enum DynamicTerm {
 	},
 	Function {
 		grade: usize,
+		domain_kind: Option<Box<KindTerm>>,
+		codomain_kind: Option<Box<KindTerm>>,
 		body: Binder<Box<Self>>,
 	},
 	Apply {
 		scrutinee: Box<Self>,
+		// TODO: None doesn't mean Inf here, but irrelevance. Use Cost where applicable (i.e. during elaboration, not here) to avoid confusion.
+		grade: Option<usize>,
 		argument: Box<Self>,
 		family_kind: Option<Box<KindTerm>>,
 	},
@@ -148,6 +153,7 @@ pub enum DynamicTerm {
 	SgLet {
 		grade: usize,
 		argument: Box<Self>,
+		kinds: [Box<KindTerm>; 2],
 		tail: Binder<Box<Self>, 2>,
 	},
 	SgField {
