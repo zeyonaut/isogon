@@ -14,7 +14,7 @@ pub enum StaticTerm {
 	},
 
 	// Types.
-	Universe,
+	Universe(Cpy),
 
 	// Universe indices.
 	Cpy,
@@ -44,7 +44,12 @@ pub enum StaticTerm {
 	},
 
 	// Dependent functions.
-	Pi(usize, Box<Self>, Binder<Box<Self>>),
+	Pi {
+		grade: usize,
+		base_copy: Cpy,
+		base: Box<Self>,
+		family: Binder<Box<Self>>,
+	},
 	Function(usize, Binder<Box<Self>>),
 	Apply {
 		scrutinee: Box<Self>,
@@ -52,7 +57,12 @@ pub enum StaticTerm {
 	},
 
 	// Dependent pairs.
-	Sg(Box<Self>, Binder<Box<Self>>),
+	Sg {
+		base_copy: Cpy,
+		base: Box<Self>,
+		family_copy: Cpy,
+		family: Binder<Box<Self>>,
+	},
 	Pair {
 		basepoint: Box<Self>,
 		fiberpoint: Box<Self>,

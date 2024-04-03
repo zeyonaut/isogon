@@ -54,7 +54,7 @@ pub enum StaticValue {
 	Neutral(StaticNeutral),
 
 	// Types and universe indices.
-	Universe,
+	Universe(Cpy),
 
 	Cpy,
 	CpyValue(Cpy),
@@ -67,7 +67,10 @@ pub enum StaticValue {
 	ReprPair(Rc<Self>, Rc<Self>),
 
 	// Quoted programs.
-	Lift { ty: DynamicValue, kind: Rc<KindValue> },
+	Lift {
+		ty: DynamicValue,
+		kind: Rc<KindValue>,
+	},
 	Quote(DynamicValue),
 
 	// Repeated programs.
@@ -75,11 +78,21 @@ pub enum StaticValue {
 	Repeat(usize, Rc<Self>),
 
 	// Dependent functions.
-	IndexedProduct(usize, Rc<Self>, Rc<Closure<Environment, StaticTerm>>),
+	IndexedProduct {
+		grade: usize,
+		base_copy: Cpy,
+		base: Rc<Self>,
+		family: Rc<Closure<Environment, StaticTerm>>,
+	},
 	Function(usize, Rc<Closure<Environment, StaticTerm>>),
 
 	// Dependent pairs.
-	IndexedSum(Rc<Self>, Rc<Closure<Environment, StaticTerm>>),
+	IndexedSum {
+		base_copy: Cpy,
+		base: Rc<Self>,
+		family_copy: Cpy,
+		family: Rc<Closure<Environment, StaticTerm>>,
+	},
 	Pair(Rc<Self>, Rc<Self>),
 
 	// Enumerated numbers.

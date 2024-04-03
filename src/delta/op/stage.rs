@@ -34,7 +34,7 @@ impl Stage for StaticTerm {
 				tail.stage_at(environment, [argument.stage_in(environment)]),
 
 			// Types and universe indices.
-			StaticTerm::Universe => StaticValue::Type,
+			StaticTerm::Universe(_) => StaticValue::Type,
 
 			StaticTerm::Cpy => StaticValue::Type,
 			StaticTerm::CpyValue(c) => StaticValue::CpyValue(c),
@@ -70,7 +70,7 @@ impl Stage for StaticTerm {
 			StaticTerm::LetExp { .. } => unimplemented!(),
 
 			// Dependent functions.
-			StaticTerm::Pi(..) => StaticValue::Type,
+			StaticTerm::Pi { .. } => StaticValue::Type,
 			StaticTerm::Function(_, function) => StaticValue::Function(function.stage_in(environment)),
 			StaticTerm::Apply { scrutinee, argument } => {
 				let StaticValue::Function(function) = scrutinee.stage_in(environment) else { panic!() };
@@ -78,7 +78,7 @@ impl Stage for StaticTerm {
 			}
 
 			// Dependent pairs.
-			StaticTerm::Sg(..) => StaticValue::Type,
+			StaticTerm::Sg { .. } => StaticValue::Type,
 			StaticTerm::Pair { basepoint, fiberpoint } =>
 				StaticValue::Pair(basepoint.stage_in(environment).into(), fiberpoint.stage_in(environment).into()),
 			StaticTerm::SgField(scrutinee, projection) => {

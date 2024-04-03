@@ -8,10 +8,11 @@ use lasso::Rodeo;
 use super::{unelaborate::Unelaborate, unparse::print};
 use crate::{
 	delta::{
-		common::{bind, Closure, Cost, Field, Index, Level, Name},
+		common::{bind, Closure, Cost, Cpy, Field, Index, Level, Name},
 		ir::{
 			presyntax::{
 				Constructor, Expression, Former, ParsedPreterm, ParsedProgram, Pattern, Preterm, Projector,
+				PurePreterm,
 			},
 			semantics::{
 				DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue, Value,
@@ -53,6 +54,7 @@ pub fn elaborate(
 fn display_error(kind: ElaborationErrorKind, interner: &Rodeo) -> String {
 	match kind {
 		ElaborationErrorKind::StaticBidirectionalMismatch { synthesized, expected } => {
+			println!("elaboration error: type mismatch\nexpected: {synthesized:#?}\nfound: {expected:#?}");
 			let mut ty_sy = String::new();
 			print(&synthesized.unelaborate(), &mut ty_sy, interner).unwrap();
 			let mut ty_ex = String::new();
@@ -78,7 +80,7 @@ struct ElaborationError {
 
 #[derive(Debug, Clone)]
 enum ExpectedFormer {
-	DynamicUniverse,
+	Universe,
 	Sigma,
 	Pi,
 	Lift,
@@ -281,12 +283,17 @@ impl Context {
 		name: Option<Name>,
 		is_crisp: bool,
 		grade: Cost,
+		copy: Cpy,
 		ty: StaticValue,
 	) -> ExtendedContext<'c> {
 		ExtendedContext::new(
 			self,
 			name,
-			ContextEntry::new(is_crisp, grade, ContextType::Static(ty)),
+			ContextEntry::new(
+				is_crisp,
+				if copy == Cpy::Nt || grade == 0.into() { grade } else { Cost::Inf },
+				ContextType::Static(ty),
+			),
 			Value::Static(StaticValue::Neutral(StaticNeutral::Variable(name, self.len()))),
 		)
 	}
@@ -312,13 +319,18 @@ impl Context {
 		name: Option<Name>,
 		is_crisp: bool,
 		grade: Cost,
+		copy: Cpy,
 		ty: StaticValue,
 		value: StaticValue,
 	) -> ExtendedContext<'c> {
 		ExtendedContext::new(
 			self,
 			name,
-			ContextEntry::new(is_crisp, grade, ContextType::Static(ty)),
+			ContextEntry::new(
+				is_crisp,
+				if copy == Cpy::Nt || grade == 0.into() { grade } else { Cost::Inf },
+				ContextType::Static(ty),
+			),
 			Value::Static(value),
 		)
 	}
@@ -367,7 +379,7 @@ fn synthesize_static(
 		// Let-expressions.
 		Preterm::Let { is_meta: true, grade, ty, argument, tail } => {
 			let grade = grade.unwrap_or_else(|| if tail.parameter().is_some() { 1 } else { 0 }.into());
-			let ty = verify_static(ctx, *ty, 0, StaticValue::Universe)?;
+			let (ty, ty_c) = elaborate_static_type(ctx, *ty)?;
 			let ty_value = ty.clone().evaluate_in(&ctx.environment);
 			let argument = verify_static(
 				&mut ctx.amplify(grade),
@@ -383,6 +395,7 @@ fn synthesize_static(
 					parameters[0],
 					false,
 					(grade * (fragment as usize).into()).into(),
+					ty_c,
 					ty_value,
 					argument_value,
 				);
@@ -404,21 +417,29 @@ fn synthesize_static(
 
 		// Dependent functions.
 		Preterm::Pi { grade, base, family } if fragment == 0 => {
-			let base = verify_static(ctx, *base, 0, StaticValue::Universe)?;
+			let (base, base_copy) = elaborate_static_type(ctx, *base)?;
 			let base_value = base.clone().evaluate_in(&ctx.environment);
 			let [parameter] = family.parameters;
-			let family = {
-				let mut context = ctx.bind_static(parameter, false, 0.into(), base_value);
-				let family = verify_static(&mut context, *family.body, 0, StaticValue::Universe)?;
+			let (family, family_copy) = {
+				let mut context = ctx.bind_static(parameter, false, 0.into(), base_copy, base_value);
+				let family = elaborate_static_type(&mut context, *family.body)?;
 				context.free().map_err(|e| e.at(expr.range))?;
 				family
 			};
-			(StaticTerm::Pi(grade.into(), bx!(base), bind([parameter], family)), StaticValue::Universe)
+			(
+				StaticTerm::Pi {
+					grade: grade.into(),
+					base_copy,
+					base: base.into(),
+					family: bind([parameter], family),
+				},
+				StaticValue::Universe(family_copy),
+			)
 		}
 		Preterm::Lambda { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
 		Preterm::Call { callee, argument } => {
 			let (callee, scrutinee_ty) = synthesize_static(ctx, *callee, fragment)?;
-			let StaticValue::IndexedProduct(grade, base, family) = scrutinee_ty else {
+			let StaticValue::IndexedProduct { grade, base, family, .. } = scrutinee_ty else {
 				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
 			};
 			let argument =
@@ -431,21 +452,24 @@ fn synthesize_static(
 
 		// Dependent pairs.
 		Preterm::Sg { base, family } => {
-			let base = verify_static(ctx, *base, 0, StaticValue::Universe)?;
+			let (base, base_copy) = elaborate_static_type(ctx, *base)?;
 			let base_value = base.clone().evaluate_in(&ctx.environment);
 			let [parameter] = family.parameters;
-			let family = {
-				let mut context = ctx.bind_static(parameter, false, 0.into(), base_value);
-				let family = verify_static(&mut context, *family.body, 0, StaticValue::Universe)?;
+			let (family, family_copy) = {
+				let mut context = ctx.bind_static(parameter, false, 0.into(), base_copy, base_value);
+				let family = elaborate_static_type(&mut context, *family.body)?;
 				context.free().map_err(|e| e.at(expr.range))?;
 				family
 			};
-			(StaticTerm::Sg(bx!(base), bind([parameter], family)), StaticValue::Universe)
+			(
+				StaticTerm::Sg { base_copy, base: base.into(), family_copy, family: bind([parameter], family) },
+				StaticValue::Universe(base_copy.max(family_copy)),
+			)
 		}
 		Preterm::Pair { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
 		Preterm::SgLet { grade, argument, tail } => {
 			let (tm, ty) = synthesize_static(&mut ctx.amplify(grade), *argument, fragment)?;
-			let StaticValue::IndexedSum(base, family) = ty else {
+			let StaticValue::IndexedSum { base_copy, base, family_copy, family } = ty else {
 				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
 			};
 			let parameters = tail.parameters;
@@ -457,14 +481,16 @@ fn synthesize_static(
 					parameters[0],
 					false,
 					(grade * fragment as usize).into(),
+					base_copy,
 					(*base).clone(),
 					basepoint.clone(),
 				);
 				let result = {
 					let mut ctx = ctx.extend_static(
-						parameters[0],
+						parameters[1],
 						false,
 						(grade * fragment as usize).into(),
+						family_copy,
 						family.evaluate_with([basepoint]),
 						fiberpoint,
 					);
@@ -481,9 +507,14 @@ fn synthesize_static(
 		// Generic type formers.
 		Preterm::Former(former, arguments) if fragment == 0 => match former {
 			// Types and universe indices.
-			Former::Universe if arguments.is_empty() => (StaticTerm::Universe, StaticValue::Universe),
-			Former::Copy if arguments.is_empty() => (StaticTerm::Cpy, StaticValue::Universe),
-			Former::Repr if arguments.is_empty() => (StaticTerm::Repr, StaticValue::Universe),
+			Former::Universe => {
+				let [c] = arguments.try_into().unwrap();
+				let ParsedPreterm(Preterm::Constructor(Constructor::Cpy(c), v)) = c.preterm else { panic!() };
+				assert!(v.is_empty());
+				(StaticTerm::Universe(c), StaticValue::Universe(Cpy::Tr))
+			}
+			Former::Copy if arguments.is_empty() => (StaticTerm::Cpy, StaticValue::Universe(Cpy::Tr)),
+			Former::Repr if arguments.is_empty() => (StaticTerm::Repr, StaticValue::Universe(Cpy::Tr)),
 
 			// Quoting.
 			Former::Lift => {
@@ -491,22 +522,23 @@ fn synthesize_static(
 				let (liftee, kind) = elaborate_dynamic_type(ctx, liftee)?;
 				(
 					StaticTerm::Lift { liftee: liftee.into(), kind: kind.unevaluate_in(ctx.len()).into() },
-					StaticValue::Universe,
+					StaticValue::Universe(Cpy::Nt),
 				)
 			}
 
 			// Repeated programs.
 			Former::Exp(grade) => {
 				let [ty] = arguments.try_into().unwrap();
-				let ty = verify_static(ctx, ty, 0, StaticValue::Universe)?;
-				(StaticTerm::Exp(grade, ty.into()), StaticValue::Universe)
+				let (ty, c) = elaborate_static_type(ctx, ty)?;
+				(StaticTerm::Exp(grade, ty.into()), StaticValue::Universe(c))
 			}
 
 			// Enumerated numbers.
-			Former::Enum(card) if arguments.is_empty() => (StaticTerm::Enum(card), StaticValue::Universe),
+			Former::Enum(card) if arguments.is_empty() =>
+				(StaticTerm::Enum(card), StaticValue::Universe(Cpy::Tr)),
 
 			// Natural numbers.
-			Former::Nat if arguments.is_empty() => (StaticTerm::Nat, StaticValue::Universe),
+			Former::Nat if arguments.is_empty() => (StaticTerm::Nat, StaticValue::Universe(Cpy::Tr)),
 
 			// Invalid former.
 			_ => return Err(ElaborationErrorKind::InvalidFormer.at(expr.range)),
@@ -564,7 +596,7 @@ fn synthesize_static(
 			// Dependent pairs.
 			Projector::Field(field) if fragment == 0 => {
 				let (scrutinee, scrutinee_ty) = synthesize_static(ctx, *scrutinee, 0)?;
-				let StaticValue::IndexedSum(base, family) = scrutinee_ty else {
+				let StaticValue::IndexedSum { base, family, .. } = scrutinee_ty else {
 					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
 				};
 				match field {
@@ -592,11 +624,9 @@ fn synthesize_static(
 					(cases.len() == card as _)
 						.then_some(())
 						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
-					let motive_term = verify_static(
-						&mut ctx.bind_static(motive_parameter, false, 0.into(), StaticValue::Enum(card)),
+					let (motive_term, _) = elaborate_static_type(
+						&mut ctx.bind_static(motive_parameter, false, 0.into(), Cpy::Tr, StaticValue::Enum(card)),
 						*motive.body,
-						0,
-						StaticValue::Universe,
 					)?;
 					let motive_value =
 						Closure::new(ctx.environment.clone(), [motive_parameter], motive_term.clone());
@@ -641,11 +671,9 @@ fn synthesize_static(
 					(cases.len() == 2)
 						.then_some(())
 						.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
-					let motive = verify_static(
-						&mut ctx.bind_static(motive_parameter, false, 0.into(), StaticValue::Nat),
+					let (motive, motive_c) = elaborate_static_type(
+						&mut ctx.bind_static(motive_parameter, false, 0.into(), Cpy::Tr, StaticValue::Nat),
 						*motive.body,
-						fragment,
-						StaticValue::Universe,
 					)?;
 					let motive_value = Closure::new(ctx.environment.clone(), [motive_parameter], motive.clone());
 					// Avoid cloning.
@@ -677,13 +705,14 @@ fn synthesize_static(
 					let case_suc = {
 						// Effectively disallow using nontrivial resources in recursive case.
 						let mut ctx = ctx.amplify(Cost::Inf);
-						let mut ctx = ctx.bind_static(index, false, Cost::Inf, StaticValue::Nat);
+						let mut ctx = ctx.bind_static(index, false, Cost::Inf, Cpy::Tr, StaticValue::Nat);
 						let index_level = ctx.len().index(0);
 						let result = {
 							let mut ctx = ctx.bind_static(
 								witness,
 								false,
 								(1 * fragment as usize).into(),
+								motive_c,
 								motive_value.evaluate_with([(index, index_level).into()]),
 							);
 							let result = verify_static(
@@ -728,6 +757,36 @@ fn verify_static(
 ) -> Result<StaticTerm, ElaborationError> {
 	let ParsedPreterm(preterm) = expr.preterm;
 	Ok(match (preterm, ty) {
+		// Let-expressions.
+		(Preterm::Let { is_meta: true, grade, ty, argument, tail }, tail_ty) => {
+			let grade = grade.unwrap_or_else(|| if tail.parameter().is_some() { 1 } else { 0 }.into());
+			let (ty, ty_c) = elaborate_static_type(ctx, *ty)?;
+			let ty_value = ty.clone().evaluate_in(&ctx.environment);
+			let argument = verify_static(
+				&mut ctx.amplify(grade),
+				*argument,
+				fragment * (grade != Cost::Fin(0)) as u8,
+				ty_value.clone(),
+			)?;
+			// TODO: Lazy evaluation.
+			let argument_value = argument.clone().evaluate_in(&ctx.environment);
+			let parameters = tail.parameters;
+			let tail = {
+				let mut context = ctx.extend_static(
+					parameters[0],
+					false,
+					(grade * (fragment as usize).into()).into(),
+					ty_c,
+					ty_value,
+					argument_value,
+				);
+				let result = verify_static(&mut context, *tail.body, fragment, tail_ty)?;
+				context.free().map_err(|e| e.at(expr.range))?;
+				result
+			};
+			StaticTerm::Let { grade, ty: bx!(ty), argument: bx!(argument), tail: bind(parameters, tail) }
+		}
+
 		// Quoted programs.
 		(Preterm::SwitchLevel(quotee), ty) => {
 			let StaticValue::Lift { ty: liftee, .. } = ty else {
@@ -738,13 +797,21 @@ fn verify_static(
 		}
 
 		// Dependent functions.
-		(Preterm::Lambda { grade, body }, StaticValue::IndexedProduct(grade_v, base, family)) => {
+		(
+			Preterm::Lambda { grade, body },
+			StaticValue::IndexedProduct { grade: grade_v, base_copy, base, family },
+		) => {
 			(grade * fragment as usize == grade_v * fragment as usize)
 				.then_some(())
 				.ok_or_else(|| ElaborationErrorKind::LambdaGradeMismatch(grade, grade_v).at(expr.range))?;
 			let parameters = body.parameters;
-			let mut context =
-				ctx.bind_static(parameters[0], false, (grade * fragment as usize).into(), base.as_ref().clone());
+			let mut context = ctx.bind_static(
+				parameters[0],
+				false,
+				(grade * fragment as usize).into(),
+				base_copy,
+				base.as_ref().clone(),
+			);
 			let basepoint_level = context.len().index(0);
 			let body = verify_static(
 				&mut context,
@@ -757,11 +824,50 @@ fn verify_static(
 		}
 
 		// Dependent pairs.
-		(Preterm::Pair { basepoint, fiberpoint }, StaticValue::IndexedSum(base, family)) => {
+		(
+			Preterm::Pair { basepoint, fiberpoint },
+			StaticValue::IndexedSum { base_copy: _, base, family_copy: _, family },
+		) => {
 			let basepoint = verify_static(ctx, *basepoint, fragment, base.as_ref().clone())?;
 			let basepoint_value = basepoint.clone().evaluate_in(&ctx.environment);
 			let fiberpoint = verify_static(ctx, *fiberpoint, fragment, family.evaluate_with([basepoint_value]))?;
 			StaticTerm::Pair { basepoint: basepoint.into(), fiberpoint: fiberpoint.into() }
+		}
+		(Preterm::SgLet { grade, argument, tail }, tail_ty) => {
+			let (tm, ty) = synthesize_static(&mut ctx.amplify(grade), *argument, fragment)?;
+			let StaticValue::IndexedSum { base_copy, base, family_copy, family } = ty else {
+				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
+			};
+			let parameters = tail.parameters;
+			// This evaluates tm twice; may want to factor this out if convenient.
+			let basepoint = StaticTerm::SgField(tm.clone().into(), Field::Base).evaluate_in(&ctx.environment);
+			let fiberpoint = StaticTerm::SgField(tm.clone().into(), Field::Fiber).evaluate_in(&ctx.environment);
+			let tail = {
+				let mut ctx = ctx.extend_static(
+					parameters[0],
+					false,
+					(grade * fragment as usize).into(),
+					base_copy,
+					(*base).clone(),
+					basepoint.clone(),
+				);
+				let result = {
+					let mut ctx = ctx.extend_static(
+						parameters[1],
+						false,
+						(grade * fragment as usize).into(),
+						family_copy,
+						family.evaluate_with([basepoint]),
+						fiberpoint,
+					);
+					let result = verify_static(&mut ctx, *tail.body, fragment, tail_ty)?;
+					result
+				};
+				ctx.free().map_err(|e| e.at(expr.range))?;
+				result
+			};
+
+			StaticTerm::SgLet { grade, argument: tm.into(), tail: bind(parameters, tail) }
 		}
 
 		// Synthesize and conversion-check.
@@ -811,7 +917,7 @@ fn synthesize_dynamic(
 		Preterm::Let { is_meta, grade, ty, argument, tail } => {
 			let grade = grade.unwrap_or_else(|| if tail.parameter().is_some() { 1 } else { 0 }.into());
 			if is_meta {
-				let ty = verify_static(ctx, *ty, 0, StaticValue::Universe)?;
+				let (ty, ty_c) = elaborate_static_type(ctx, *ty)?;
 				let ty_value = ty.clone().evaluate_in(&ctx.environment);
 				let argument = verify_static(
 					&mut ctx.amplify(grade),
@@ -827,6 +933,7 @@ fn synthesize_dynamic(
 						parameters[0],
 						false,
 						(grade * (fragment as usize).into()).into(),
+						ty_c,
 						ty_value,
 						argument_value,
 					);
@@ -1004,7 +1111,7 @@ fn synthesize_dynamic(
 				);
 				let result = {
 					let mut ctx = ctx.extend_dynamic(
-						parameters[0],
+						parameters[1],
 						false,
 						(grade * fragment as usize).into(),
 						family.evaluate_with([basepoint]),
@@ -1501,6 +1608,75 @@ fn verify_dynamic(
 ) -> Result<DynamicTerm, ElaborationError> {
 	let ParsedPreterm(preterm) = expr.preterm;
 	Ok(match (preterm, ty) {
+		// Let-expressions.
+		(Preterm::Let { is_meta, grade, ty, argument, tail }, tail_ty) => {
+			let grade = grade.unwrap_or_else(|| if tail.parameter().is_some() { 1 } else { 0 }.into());
+			if is_meta {
+				let (ty, ty_c) = elaborate_static_type(ctx, *ty)?;
+				let ty_value = ty.clone().evaluate_in(&ctx.environment);
+				let argument = verify_static(
+					&mut ctx.amplify(grade),
+					*argument,
+					fragment * (grade != Cost::Fin(0)) as u8,
+					ty_value.clone(),
+				)?;
+				// TODO: Lazy evaluation.
+				let argument_value = argument.clone().evaluate_in(&ctx.environment);
+				let parameters = tail.parameters;
+				let tail = {
+					let mut context = ctx.extend_static(
+						parameters[0],
+						false,
+						(grade * (fragment as usize).into()).into(),
+						ty_c,
+						ty_value,
+						argument_value,
+					);
+					let result = verify_dynamic(&mut context, *tail.body, fragment, tail_ty)?;
+					context.free().map_err(|e| e.at(expr.range))?;
+					result
+				};
+
+				DynamicTerm::Def { grade, ty: ty.into(), argument: argument.into(), tail: bind(parameters, tail) }
+			} else {
+				let Cost::Fin(grade) = grade else {
+					panic!();
+				};
+				let (ty, argument_kind) = elaborate_dynamic_type(ctx, *ty)?;
+				let ty_value = ty.clone().evaluate_in(&ctx.environment);
+				let argument = verify_dynamic(
+					&mut ctx.amplify(grade),
+					*argument,
+					fragment * (grade > 0) as u8,
+					ty_value.clone(),
+				)?;
+				// TODO: Lazy evaluation.
+				let argument_value = argument.clone().evaluate_in(&ctx.environment);
+				let parameters = tail.parameters;
+				let tail = {
+					let mut context = ctx.extend_dynamic(
+						parameters[0],
+						false,
+						(grade * fragment as usize).into(),
+						ty_value,
+						argument_kind.clone(),
+						argument_value,
+					);
+					let result = verify_dynamic(&mut context, *tail.body, fragment, tail_ty)?;
+					context.free().map_err(|e| e.at(expr.range))?;
+					result
+				};
+
+				DynamicTerm::Let {
+					grade,
+					ty: ty.into(),
+					argument_kind: argument_kind.unevaluate_in(ctx.len()).into(),
+					argument: argument.into(),
+					tail: bind(parameters, tail),
+				}
+			}
+		}
+
 		// Dependent functions.
 		(
 			Preterm::Lambda { grade, body },
@@ -1540,6 +1716,49 @@ fn verify_dynamic(
 			let fiberpoint =
 				verify_dynamic(ctx, *fiberpoint, fragment, family.evaluate_with([basepoint_value]))?;
 			DynamicTerm::Pair { basepoint: basepoint.into(), fiberpoint: fiberpoint.into() }
+		}
+		(Preterm::SgLet { grade, argument, tail }, tail_ty) => {
+			let (tm, ty, _) = synthesize_dynamic(&mut ctx.amplify(grade), *argument, fragment)?;
+			let DynamicValue::IndexedSum { base_kind, base, family_kind, family } = ty else {
+				return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
+			};
+			let parameters = tail.parameters;
+			// This evaluates tm twice; may want to factor this out if convenient.
+			let basepoint = DynamicTerm::SgField { scrutinee: tm.clone().into(), field: Field::Base }
+				.evaluate_in(&ctx.environment);
+			let fiberpoint = DynamicTerm::SgField { scrutinee: tm.clone().into(), field: Field::Fiber }
+				.evaluate_in(&ctx.environment);
+			let tail = {
+				let mut ctx = ctx.extend_dynamic(
+					parameters[0],
+					false,
+					(grade * fragment as usize).into(),
+					(*base).clone(),
+					(*base_kind).clone(),
+					basepoint.clone(),
+				);
+				let result = {
+					let mut ctx = ctx.extend_dynamic(
+						parameters[1],
+						false,
+						(grade * fragment as usize).into(),
+						family.evaluate_with([basepoint]),
+						(*family_kind).clone(),
+						fiberpoint,
+					);
+					let result = verify_dynamic(&mut ctx, *tail.body, fragment, tail_ty)?;
+					result
+				};
+				ctx.free().map_err(|e| e.at(expr.range))?;
+				result
+			};
+
+			DynamicTerm::SgLet {
+				grade,
+				kinds: [base_kind, family_kind].map(|x| x.unevaluate_in(ctx.len()).into()),
+				argument: tm.into(),
+				tail: bind(parameters, tail),
+			}
 		}
 
 		// Paths.
@@ -1589,13 +1808,21 @@ fn verify_dynamic(
 	})
 }
 
+fn elaborate_static_type(ctx: &mut Context, expr: Expression) -> Result<(StaticTerm, Cpy), ElaborationError> {
+	let expr_range = expr.range;
+	let (term, StaticValue::Universe(c)) = synthesize_static(ctx, expr, 0)? else {
+		return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Universe).at(expr_range));
+	};
+	Ok((term, c))
+}
+
 fn elaborate_dynamic_type(
 	ctx: &mut Context,
 	expr: Expression,
 ) -> Result<(DynamicTerm, KindValue), ElaborationError> {
 	let expr_range = expr.range;
 	let (term, DynamicValue::Universe { kind }, _) = synthesize_dynamic(ctx, expr, 0)? else {
-		return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::DynamicUniverse).at(expr_range));
+		return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Universe).at(expr_range));
 	};
 	Ok((term, (*kind).clone()))
 }

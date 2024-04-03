@@ -1,6 +1,4 @@
-#fragment 0
-
-let List : Nat -> * c1 rptr
+let [0] List : Nat -> * c1 rptr
 	= |n| n :: |_| * c1 rptr {
 		| 0        -> Box #1
 		| suc @_.T -> Box (T & Nat)

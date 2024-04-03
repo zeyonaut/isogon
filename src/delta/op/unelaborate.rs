@@ -26,7 +26,10 @@ impl Unelaborate for StaticTerm {
 				tail: tail.unelaborate(),
 			},
 
-			StaticTerm::Universe => Preterm::Former(Former::Universe, vec![]),
+			StaticTerm::Universe(c) => Preterm::Former(
+				Former::Universe,
+				vec![PurePreterm(Preterm::Constructor(Constructor::Cpy(c), vec![]))],
+			),
 
 			StaticTerm::Cpy => Preterm::Former(Former::Copy, vec![]),
 			StaticTerm::CpyValue(c) => Preterm::Constructor(Constructor::Cpy(c), vec![]),
@@ -51,14 +54,14 @@ impl Unelaborate for StaticTerm {
 				tail: tail.unelaborate(),
 			},
 
-			StaticTerm::Pi(grade, base, family) =>
+			StaticTerm::Pi { grade, base_copy: _, base, family } =>
 				Preterm::Pi { grade, base: base.unelaborate().into(), family: family.unelaborate().into() },
 			StaticTerm::Function(grade, function) =>
 				Preterm::Lambda { grade, body: function.unelaborate().into() },
 			StaticTerm::Apply { scrutinee, argument } =>
 				Preterm::Call { callee: scrutinee.unelaborate().into(), argument: argument.unelaborate().into() },
 
-			StaticTerm::Sg(base, family) =>
+			StaticTerm::Sg { base_copy: _, base, family_copy: _, family } =>
 				Preterm::Sg { base: base.unelaborate().into(), family: family.unelaborate().into() },
 			StaticTerm::Pair { basepoint, fiberpoint } => Preterm::Pair {
 				basepoint: basepoint.unelaborate().into(),

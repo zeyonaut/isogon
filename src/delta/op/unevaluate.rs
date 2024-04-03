@@ -47,7 +47,7 @@ impl Unevaluate for StaticValue {
 			Neutral(neutral) => neutral.try_unevaluate_in(level)?,
 
 			// Types.
-			Universe => StaticTerm::Universe,
+			Universe(c) => StaticTerm::Universe(*c),
 
 			// Universe indices.
 			Cpy => StaticTerm::Cpy,
@@ -71,13 +71,21 @@ impl Unevaluate for StaticValue {
 			Repeat(grade, value) => StaticTerm::Repeat(*grade, value.unevaluate_in(level).into()),
 
 			// Dependent functions.
-			IndexedProduct(grade, base, family) =>
-				StaticTerm::Pi(*grade, base.try_unevaluate_in(level)?.into(), family.try_unevaluate_in(level)?),
+			IndexedProduct { grade, base_copy, base, family } => StaticTerm::Pi {
+				grade: *grade,
+				base_copy: *base_copy,
+				base: base.try_unevaluate_in(level)?.into(),
+				family: family.try_unevaluate_in(level)?,
+			},
 			Function(grade, function) => StaticTerm::Function(*grade, function.try_unevaluate_in(level)?),
 
 			// Dependent pairs.
-			IndexedSum(base, family) =>
-				StaticTerm::Sg(base.try_unevaluate_in(level)?.into(), family.try_unevaluate_in(level)?),
+			IndexedSum { base_copy, base, family_copy, family } => StaticTerm::Sg {
+				base_copy: *base_copy,
+				base: base.try_unevaluate_in(level)?.into(),
+				family_copy: *family_copy,
+				family: family.try_unevaluate_in(level)?,
+			},
 			Pair(basepoint, fiberpoint) => StaticTerm::Pair {
 				basepoint: basepoint.try_unevaluate_in(level)?.into(),
 				fiberpoint: fiberpoint.try_unevaluate_in(level)?.into(),

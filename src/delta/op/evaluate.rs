@@ -49,7 +49,7 @@ impl Evaluate for StaticTerm {
 			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate_in(environment)]),
 
 			// Types and universe indices.
-			Universe => StaticValue::Universe,
+			Universe(c) => StaticValue::Universe(c),
 			Cpy => StaticValue::Cpy,
 			CpyValue(c) => StaticValue::CpyValue(c),
 			CpyMax(a, b) => StaticValue::max_copyability(a.evaluate_in(environment), b.evaluate_in(environment)),
@@ -77,11 +77,12 @@ impl Evaluate for StaticTerm {
 			},
 
 			// Dependent functions.
-			Pi(grade, base, family) => StaticValue::IndexedProduct(
+			Pi { grade, base_copy, base, family } => StaticValue::IndexedProduct {
 				grade,
-				base.evaluate_in(environment).into(),
-				family.evaluate_in(environment).into(),
-			),
+				base_copy,
+				base: base.evaluate_in(environment).into(),
+				family: family.evaluate_in(environment).into(),
+			},
 			Function(grade, function) => StaticValue::Function(grade, rc!(function.evaluate_in(environment))),
 			Apply { scrutinee, argument } => match scrutinee.evaluate_in(environment) {
 				StaticValue::Function(_, function) => function.evaluate_with([argument.evaluate_in(environment)]),
@@ -93,10 +94,12 @@ impl Evaluate for StaticTerm {
 			},
 
 			// Dependent pairs.
-			Sg(base, family) => StaticValue::IndexedSum(
-				base.evaluate_in(environment).into(),
-				family.evaluate_in(environment).into(),
-			),
+			Sg { base_copy, base, family_copy, family } => StaticValue::IndexedSum {
+				base_copy,
+				base: base.evaluate_in(environment).into(),
+				family_copy,
+				family: family.evaluate_in(environment).into(),
+			},
 			Pair { basepoint, fiberpoint } => StaticValue::Pair(
 				basepoint.evaluate_in(environment).into(),
 				fiberpoint.evaluate_in(environment).into(),

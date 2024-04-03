@@ -1,39 +1,42 @@
-#fragment 0
-
-def BitVec : Nat -> '(* c1 rptr)
+def [0] BitVec : Nat -> '(* c1 rptr)
 	= |n| n :: |n| '(* c1 rptr) {
 		| 0        -> <Box #1>
 		| suc @n.T -> <Box (Bool & <T>)>
 	};
 
-def not : Bool -> Bool
+def [*] not : Bool -> Bool
 	= |b| b :: |_| Bool {
 		| false -> true
 		| true  -> false
 	};
 
-def lower : Bool -> 'Bool
+def [*] lower : Bool -> 'Bool
 	= |b| b :: |_| 'Bool {
 		| false -> <false>
 		| true  -> <true>
 	};
 
-def is_even : Nat -> Bool
+def [*] is_even : Nat -> Bool
 	= |n| n :: |_| Bool {
 		| 0        -> true
 		| suc @n.x -> not x
 	};
 
-def pred : Nat -> Nat
+def [*] pred : Nat -> Nat
 	= |n| n :: |_| Nat {
 		| 0        -> 0
 		| suc @n.x -> n
 	};
 
-def make_bitvec : |n : Nat| -> '<BitVec n>
-	= |n| n :: |n| Nat & '<BitVec n> {
-		| 0        -> pred n, <box 0_1>
-		| suc @_.v -> pred (v/.), <box (<lower (is_even (v/.))>, <v/!>)>
-	}/!;
+def [*] make_bitvec : |n : Nat| -> '<BitVec n>
+	= |n| (
+		let (n, v) = n :: |n| Nat & '<BitVec n> {
+			| 0        -> pred n, <box 0_1>
+			| suc @n.v ->
+				let (k, v) = v;
+				pred k, <box (<lower (is_even k)>, <v>)>
+		};
+		v
+	);
 
 <make_bitvec 8>

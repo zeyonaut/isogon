@@ -26,7 +26,8 @@ impl Conversion<StaticValue> for Level {
 			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
 
 			// Types and universe indidces.
-			(Universe, Universe) | (Cpy, Cpy) | (ReprType, ReprType) | (ReprNone, ReprNone) => true,
+			(Universe(l), Universe(r)) => l == r,
+			(Cpy, Cpy) | (ReprType, ReprType) | (ReprNone, ReprNone) => true,
 			(CpyValue(left), CpyValue(right)) => left == right,
 			(ReprAtom(left), ReprAtom(right)) => left == right,
 			(ReprExp(a, l), ReprExp(b, r)) => a == b && self.can_convert(&**l, r),
@@ -42,8 +43,8 @@ impl Conversion<StaticValue> for Level {
 
 			// Dependent functions.
 			(
-				IndexedProduct(left_grade, left_base, left_family),
-				IndexedProduct(right_grade, right_base, right_family),
+				IndexedProduct { grade: left_grade, base: left_base, family: left_family, .. },
+				IndexedProduct { grade: right_grade, base: right_base, family: right_family, .. },
 			) =>
 				left_grade == right_grade
 					&& self.can_convert(&**left_base, right_base)
@@ -60,7 +61,10 @@ impl Conversion<StaticValue> for Level {
 			),
 
 			// Dependent pairs.
-			(IndexedSum(left_base, left_family), IndexedSum(right_base, right_family)) =>
+			(
+				IndexedSum { base: left_base, family: left_family, .. },
+				IndexedSum { base: right_base, family: right_family, .. },
+			) =>
 				self.can_convert(&**left_base, right_base)
 					&& (self + 1).can_convert(&left_family.evaluate_auto(self), &right_family.evaluate_auto(self)),
 			(Pair(left_bp, left_fp), Pair(right_bp, right_fp)) =>
