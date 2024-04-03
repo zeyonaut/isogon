@@ -8,7 +8,7 @@ use lasso::Rodeo;
 use super::{unelaborate::Unelaborate, unparse::print};
 use crate::{
 	delta::{
-		common::{bind, Closure, Field, Index, Level, Name},
+		common::{bind, Closure, Cost, Field, Index, Level, Name},
 		ir::{
 			presyntax::{
 				Constructor, Expression, Former, ParsedPreterm, ParsedProgram, Pattern, Preterm, Projector,
@@ -125,12 +125,12 @@ pub enum ContextType {
 #[derive(Clone, Debug)]
 pub struct ContextEntry {
 	is_crisp: bool,
-	grade: Option<usize>,
+	grade: Cost,
 	ty: ContextType,
 }
 
 impl ContextEntry {
-	pub fn new(is_crisp: bool, grade: Option<usize>, ty: ContextType) -> Self { Self { is_crisp, grade, ty } }
+	pub fn new(is_crisp: bool, grade: Cost, ty: ContextType) -> Self { Self { is_crisp, grade, ty } }
 }
 
 pub struct LockedContext<'c> {
@@ -163,7 +163,7 @@ pub struct AmplifiedContext<'c> {
 }
 
 impl<'c> AmplifiedContext<'c> {
-	fn new(ctx: &'c mut Context, amplifier: Option<usize>) -> Self {
+	fn new(ctx: &'c mut Context, amplifier: Cost) -> Self {
 		ctx.amplifiers.push((ctx.len().0, amplifier));
 		Self { context: ctx }
 	}
@@ -197,7 +197,7 @@ impl<'c> ExtendedContext<'c> {
 	#[must_use]
 	fn free(self) -> Result<(), ElaborationErrorKind> {
 		let grade = self.tys.last().unwrap().1.grade;
-		if let Some(grade) = grade {
+		if let Cost::Fin(grade) = grade {
 			(grade == 0).then_some(()).ok_or(ElaborationErrorKind::VariableHasUsesLeft(grade))
 		} else {
 			Ok(())
@@ -224,7 +224,7 @@ impl<'c> Drop for ExtendedContext<'c> {
 
 pub struct Context {
 	lock: usize,
-	amplifiers: Vec<(usize, Option<usize>)>,
+	amplifiers: Vec<(usize, Cost)>,
 	environment: Environment,
 	tys: Vec<(Option<Name>, ContextEntry)>,
 }
@@ -245,32 +245,26 @@ impl Context {
 			return Err(ElaborationErrorKind::UsedNonCrispLockedVariable);
 		}
 
-		let mut usage = Some(fragment as usize);
 		// Skip this for fragment 0, as 0 is absorbing under multiplication.
-		if usage != Some(0) {
-			for (len, amplifier) in self.amplifiers.iter().rev() {
-				if level < *len {
-					match (&mut usage, amplifier) {
-						(usage, Some(0)) => {
-							*usage = Some(0);
-							break;
-						}
-						(usage, None) => *usage = None,
-						(None, _) => (),
-						(Some(usage), Some(amplifier)) => *usage *= amplifier,
-					}
-				} else {
-					break;
-				}
+		let usage = if fragment == 0 {
+			Cost::Fin(0)
+		} else {
+			self
+				.amplifiers
+				.iter()
+				.rev()
+				.take_while(|(len, _)| level < *len)
+				.fold(Cost::Fin(1), |agg, (_, amp)| agg * *amp)
+		};
+
+		if let Cost::Fin(grade) = &mut self.tys[level].1.grade {
+			if let Cost::Fin(usage) = usage {
+				*grade = grade.checked_sub(usage).ok_or(ElaborationErrorKind::RanOutOfVariableUses)?;
+			} else {
+				return Err(ElaborationErrorKind::RanOutOfVariableUses);
 			}
 		}
-		match (usage, self.tys[level].1.grade.as_mut()) {
-			(_, None) => (),
-			(None, Some(_)) => return Err(ElaborationErrorKind::RanOutOfVariableUses),
-			(Some(amplifier), Some(grade)) => {
-				*grade = grade.checked_sub(amplifier).ok_or(ElaborationErrorKind::RanOutOfVariableUses)?;
-			}
-		}
+
 		Ok(())
 	}
 
@@ -278,7 +272,7 @@ impl Context {
 		LockedContext::new(self, should_lock)
 	}
 
-	pub fn amplify<'c>(&'c mut self, amplifier: impl Into<Option<usize>>) -> AmplifiedContext<'c> {
+	pub fn amplify<'c>(&'c mut self, amplifier: impl Into<Cost>) -> AmplifiedContext<'c> {
 		AmplifiedContext::new(self, amplifier.into())
 	}
 
@@ -286,7 +280,7 @@ impl Context {
 		&'c mut self,
 		name: Option<Name>,
 		is_crisp: bool,
-		grade: Option<usize>,
+		grade: Cost,
 		ty: StaticValue,
 	) -> ExtendedContext<'c> {
 		ExtendedContext::new(
@@ -301,7 +295,7 @@ impl Context {
 		&'c mut self,
 		name: Option<Name>,
 		is_crisp: bool,
-		grade: Option<usize>,
+		grade: Cost,
 		ty: DynamicValue,
 		kind: KindValue,
 	) -> ExtendedContext<'c> {
@@ -317,7 +311,7 @@ impl Context {
 		&'c mut self,
 		name: Option<Name>,
 		is_crisp: bool,
-		grade: Option<usize>,
+		grade: Cost,
 		ty: StaticValue,
 		value: StaticValue,
 	) -> ExtendedContext<'c> {
@@ -333,7 +327,7 @@ impl Context {
 		&'c mut self,
 		name: Option<Name>,
 		is_crisp: bool,
-		grade: Option<usize>,
+		grade: Cost,
 		ty: DynamicValue,
 		kind: KindValue,
 		value: DynamicValue,
@@ -371,13 +365,14 @@ fn synthesize_static(
 		},
 
 		// Let-expressions.
-		Preterm::Let { grade, ty, argument, tail } => {
+		Preterm::Let { is_meta: true, grade, ty, argument, tail } => {
+			let grade = grade.unwrap_or_else(|| if tail.parameter().is_some() { 1 } else { 0 }.into());
 			let ty = verify_static(ctx, *ty, 0, StaticValue::Universe)?;
 			let ty_value = ty.clone().evaluate_in(&ctx.environment);
 			let argument = verify_static(
 				&mut ctx.amplify(grade),
 				*argument,
-				fragment * (grade > 0) as u8,
+				fragment * (grade != Cost::Fin(0)) as u8,
 				ty_value.clone(),
 			)?;
 			// TODO: Lazy evaluation.
@@ -387,7 +382,7 @@ fn synthesize_static(
 				let mut context = ctx.extend_static(
 					parameters[0],
 					false,
-					(grade * fragment as usize).into(),
+					(grade * (fragment as usize).into()).into(),
 					ty_value,
 					argument_value,
 				);
@@ -681,8 +676,8 @@ fn synthesize_static(
 						verify_static(ctx, case_nil, fragment, motive_value.evaluate_with([StaticValue::Num(0)]))?;
 					let case_suc = {
 						// Effectively disallow using nontrivial resources in recursive case.
-						let mut ctx = ctx.amplify(None);
-						let mut ctx = ctx.bind_static(index, false, None, StaticValue::Nat);
+						let mut ctx = ctx.amplify(Cost::Inf);
+						let mut ctx = ctx.bind_static(index, false, Cost::Inf, StaticValue::Nat);
 						let index_level = ctx.len().index(0);
 						let result = {
 							let mut ctx = ctx.bind_static(
@@ -813,43 +808,84 @@ fn synthesize_dynamic(
 		},
 
 		// Let-expressions.
-		Preterm::Let { grade, ty, argument, tail } => {
-			let (ty, argument_kind) = elaborate_dynamic_type(ctx, *ty)?;
-			let ty_value = ty.clone().evaluate_in(&ctx.environment);
-			let argument = verify_dynamic(
-				&mut ctx.amplify(grade),
-				*argument,
-				fragment * (grade > 0) as u8,
-				ty_value.clone(),
-			)?;
-			// TODO: Lazy evaluation.
-			let argument_value = argument.clone().evaluate_in(&ctx.environment);
-			let parameters = tail.parameters;
-			let (tail, tail_ty, tail_kind) = {
-				let mut context = ctx.extend_dynamic(
-					parameters[0],
-					false,
-					(grade * fragment as usize).into(),
-					ty_value,
-					argument_kind.clone(),
-					argument_value,
-				);
-				let result = synthesize_dynamic(&mut context, *tail.body, fragment)?;
-				context.free().map_err(|e| e.at(expr.range))?;
-				result
-			};
+		Preterm::Let { is_meta, grade, ty, argument, tail } => {
+			let grade = grade.unwrap_or_else(|| if tail.parameter().is_some() { 1 } else { 0 }.into());
+			if is_meta {
+				let ty = verify_static(ctx, *ty, 0, StaticValue::Universe)?;
+				let ty_value = ty.clone().evaluate_in(&ctx.environment);
+				let argument = verify_static(
+					&mut ctx.amplify(grade),
+					*argument,
+					fragment * (grade != Cost::Fin(0)) as u8,
+					ty_value.clone(),
+				)?;
+				// TODO: Lazy evaluation.
+				let argument_value = argument.clone().evaluate_in(&ctx.environment);
+				let parameters = tail.parameters;
+				let (tail, tail_ty, tail_kind) = {
+					let mut context = ctx.extend_static(
+						parameters[0],
+						false,
+						(grade * (fragment as usize).into()).into(),
+						ty_value,
+						argument_value,
+					);
+					let result = synthesize_dynamic(&mut context, *tail.body, fragment)?;
+					context.free().map_err(|e| e.at(expr.range))?;
+					result
+				};
 
-			(
-				DynamicTerm::Let {
-					grade,
-					ty: ty.into(),
-					argument_kind: argument_kind.unevaluate_in(ctx.len()).into(),
-					argument: argument.into(),
-					tail: bind(parameters, tail),
-				},
-				tail_ty,
-				tail_kind,
-			)
+				(
+					DynamicTerm::Def {
+						grade,
+						ty: ty.into(),
+						argument: argument.into(),
+						tail: bind(parameters, tail),
+					},
+					tail_ty,
+					tail_kind,
+				)
+			} else {
+				let Cost::Fin(grade) = grade else {
+					panic!();
+				};
+				let (ty, argument_kind) = elaborate_dynamic_type(ctx, *ty)?;
+				let ty_value = ty.clone().evaluate_in(&ctx.environment);
+				let argument = verify_dynamic(
+					&mut ctx.amplify(grade),
+					*argument,
+					fragment * (grade > 0) as u8,
+					ty_value.clone(),
+				)?;
+				// TODO: Lazy evaluation.
+				let argument_value = argument.clone().evaluate_in(&ctx.environment);
+				let parameters = tail.parameters;
+				let (tail, tail_ty, tail_kind) = {
+					let mut context = ctx.extend_dynamic(
+						parameters[0],
+						false,
+						(grade * fragment as usize).into(),
+						ty_value,
+						argument_kind.clone(),
+						argument_value,
+					);
+					let result = synthesize_dynamic(&mut context, *tail.body, fragment)?;
+					context.free().map_err(|e| e.at(expr.range))?;
+					result
+				};
+
+				(
+					DynamicTerm::Let {
+						grade,
+						ty: ty.into(),
+						argument_kind: argument_kind.unevaluate_in(ctx.len()).into(),
+						argument: argument.into(),
+						tail: bind(parameters, tail),
+					},
+					tail_ty,
+					tail_kind,
+				)
+			}
 		}
 
 		// Splicing.
@@ -1405,11 +1441,11 @@ fn synthesize_dynamic(
 						// NOTE: I'm not entirely sure this is 'right', as motive is is formed in a smaller context, but I believe this should be 'safe' because of de Bruijn levels.
 						let case_suc = {
 							// Effectively disallow using nontrivial resources in recursive case.
-							let mut ctx = ctx.amplify(None);
+							let mut ctx = ctx.amplify(Cost::Inf);
 							// NOTE: Unrestricted usage is only "safe" because we're approximating Nat with a finite type.
 							// For nontrivial Nat, we may wish to enclose the index with a thunk.
 							let mut ctx =
-								ctx.bind_dynamic(index, false, None.into(), DynamicValue::Nat, KindValue::nat());
+								ctx.bind_dynamic(index, false, Cost::Inf, DynamicValue::Nat, KindValue::nat());
 							let index_level = ctx.len().index(0);
 							let result = {
 								let mut ctx = ctx.bind_dynamic(

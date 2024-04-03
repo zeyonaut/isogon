@@ -19,7 +19,8 @@ impl Unelaborate for StaticTerm {
 			StaticTerm::Variable(name, _) => Preterm::Variable(name.unwrap()),
 
 			StaticTerm::Let { grade, ty, argument, tail } => Preterm::Let {
-				grade,
+				is_meta: true,
+				grade: Some(grade),
 				ty: ty.unelaborate().into(),
 				argument: argument.unelaborate().into(),
 				tail: tail.unelaborate(),
@@ -119,8 +120,17 @@ impl Unelaborate for DynamicTerm {
 		PurePreterm(match self {
 			DynamicTerm::Variable(name, _) => Preterm::Variable(name.unwrap()),
 
+			DynamicTerm::Def { grade, ty, argument, tail } => Preterm::Let {
+				is_meta: true,
+				grade: Some(grade.into()),
+				ty: ty.unelaborate().into(),
+				argument: argument.unelaborate().into(),
+				tail: tail.unelaborate(),
+			},
+
 			DynamicTerm::Let { grade, ty, argument_kind, argument, tail } => Preterm::Let {
-				grade,
+				is_meta: false,
+				grade: Some(grade.into()),
 				ty: ty.unelaborate().into(),
 				argument: argument.unelaborate().into(),
 				tail: tail.unelaborate(),

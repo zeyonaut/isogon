@@ -1,4 +1,4 @@
-use crate::delta::common::{AnyBinder, Binder, Cpy, Field, Name, ReprAtom};
+use crate::delta::common::{AnyBinder, Binder, Cost, Cpy, Field, Name, ReprAtom};
 
 #[derive(Debug, Clone)]
 pub struct ParsedProgram {
@@ -21,7 +21,7 @@ pub struct PurePreterm(pub Preterm<Self>);
 pub enum Preterm<E> {
 	Variable(Name),
 
-	Let { grade: usize, ty: Box<E>, argument: Box<E>, tail: Binder<Box<E>> },
+	Let { is_meta: bool, grade: Option<Cost>, ty: Box<E>, argument: Box<E>, tail: Binder<Box<E>> },
 
 	SwitchLevel(Box<E>),
 

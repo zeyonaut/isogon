@@ -1,7 +1,7 @@
 use lasso::Rodeo;
 
 use crate::delta::{
-	common::{any_bind, bind, AnyBinder, Cpy, Name, ReprAtom},
+	common::{any_bind, bind, AnyBinder, Cost, Cpy, Name, ReprAtom},
 	ir::{
 		presyntax::{Constructor, Expression, Former, ParsedProgram, Pattern, Preterm, Projector},
 		source::{Keyword, LexError, LexErrorKind, LexedSource, Pragma, Token},
@@ -143,6 +143,9 @@ peg::parser! {
 		rule optional_parameter() -> Option<Name>
 			= name:identifier() {Some(name)} / [Token::LowDash] {None}
 
+		rule cost_annotation() -> Cost
+			= [Token::SquareL] _ cost:([Token::Ast] {Cost::Inf} / number:number() {Cost::Fin(number)}) _ [Token::SquareR] {cost}
+
 		rule finite_grade_annotation() -> usize
 			= [Token::SquareL] _ number:number() _ [Token::SquareR] {number}
 
@@ -251,8 +254,9 @@ peg::parser! {
 
 		rule preterm() -> Expression
 			= init:position!() preterm:(
-				[Token::Keyword(Keyword::Let)] _ grade:(finite_grade_annotation())? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
-				{ Preterm::Let { grade: grade.unwrap_or(name.is_some() as _), ty: ty.into(), argument: argument.into(), tail: bind([name], tail) }}
+				is_meta:([Token::Keyword(Keyword::Let)] {false} / [Token::Keyword(Keyword::Def)] {true})
+					_ grade:(cost_annotation())? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
+				{ Preterm::Let { is_meta, grade, ty: ty.into(), argument: argument.into(), tail: bind([name], tail) }}
 				/ [Token::Keyword(Keyword::Let)] _ grade:(finite_grade_annotation())? _ [Token::At] grade_argument:finite_grade_annotation() _ [Token::ParenL] _ name:optional_parameter() _ [Token::ParenR] _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() {
 					Preterm::LetExp { grade: grade.unwrap_or(name.is_some() as _), grade_argument, argument: argument.into(), tail: bind([name], tail) }
 				}
@@ -260,11 +264,6 @@ peg::parser! {
 					Preterm::SgLet { grade: grade.unwrap_or(1), argument: argument.into(), tail: bind([a, b], tail) }
 				}
 			) fini:position!() {preterm.at((init, fini))}
-			/ init:position!() [Token::Keyword(Keyword::Def)] _ grade:(finite_grade_annotation())? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() fini:position!()
-			{
-				let tail_range = tail.range;
-				Preterm::SwitchLevel(Preterm::Let { grade: grade.unwrap_or(name.is_some() as _), ty: ty.into(), argument: argument.into(), tail: bind([name], Preterm::SwitchLevel(tail.into()).at((tail_range.0, tail_range.1))) }.at((init, fini)).into()).at((init, fini))
-			}
 			/ spine_headed()
 
 		rule pragma_fragment() -> u8

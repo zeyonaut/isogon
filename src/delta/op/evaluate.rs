@@ -176,6 +176,8 @@ impl Evaluate for DynamicTerm {
 			Variable(_, index) => environment.lookup_dynamic(index),
 
 			// Let-expressions.
+			Def { argument, tail, .. } =>
+				tail.body.evaluate_in(&environment.extend([Value::Static(argument.evaluate_in(environment))])),
 			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate_in(environment)]),
 
 			// Types.

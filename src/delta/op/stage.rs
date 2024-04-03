@@ -127,6 +127,8 @@ impl Stage for DynamicTerm {
 			Variable(_, index) => environment.lookup_dynamic(index),
 
 			// Let-expressions.
+			Def { grade, ty, argument, tail } =>
+				tail.body.stage_in(&environment.extend([Value::Static(argument.stage_in(environment))])),
 			Let { grade, ty, argument_kind, argument, tail } => DynamicValue::Let {
 				grade,
 				ty_kind: argument_kind.stage_in(environment),

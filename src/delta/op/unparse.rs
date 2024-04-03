@@ -3,16 +3,21 @@ use std::fmt::Write;
 use lasso::Rodeo;
 
 use crate::delta::{
-	common::{Cpy, Field, Name, ReprAtom},
+	common::{Cost, Cpy, Field, Name, ReprAtom},
 	ir::presyntax::{Constructor, Former, Pattern, Preterm, Projector, PurePreterm},
 };
 
 pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
 	match &preterm.0 {
 		Preterm::Variable(name) => write!(f, "{}", interner.resolve(name))?,
-		Preterm::Let { grade, ty, argument, tail } => {
+		Preterm::Let { is_meta, grade, ty, argument, tail } => {
 			let parameter = resolve(interner, &tail.parameter());
-			write!(f, "let {}{parameter} : ", optional_grade_prefix(*grade, parameter))?;
+			write!(
+				f,
+				"{} {}{parameter} : ",
+				if *is_meta { "def" } else { "let" },
+				if let Some(grade) = grade { optional_grade_prefix(*grade, parameter) } else { "".into() }
+			)?;
 			print(ty, f, interner)?;
 			write!(f, " = ")?;
 			print(argument, f, interner)?;
@@ -268,10 +273,15 @@ fn resolve<'a>(interner: &'a Rodeo, name: &Option<Name>) -> &'a str {
 	}
 }
 
-fn optional_grade_prefix(grade: usize, parameter: &str) -> String {
-	if (grade == 0 && parameter == "_") || (grade == 1 && parameter != "_") {
-		"".to_owned()
+fn optional_grade_prefix(grade: impl Into<Cost>, parameter: &str) -> String {
+	let grade = grade.into();
+	if let Cost::Fin(grade) = grade {
+		if (grade == 0 && parameter == "_") || (grade == 1 && parameter != "_") {
+			"".to_owned()
+		} else {
+			format!("[{grade}] ")
+		}
 	} else {
-		format!("[{grade}] ")
+		format!("[*] ")
 	}
 }

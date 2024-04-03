@@ -1,4 +1,4 @@
-use crate::delta::common::{Binder, Cpy, Field, Index, Name, Repr, ReprAtom};
+use crate::delta::common::{Binder, Cost, Cpy, Field, Index, Name, Repr, ReprAtom};
 
 #[derive(Clone, Debug)]
 pub enum StaticTerm {
@@ -7,7 +7,7 @@ pub enum StaticTerm {
 
 	// Let-expressions.
 	Let {
-		grade: usize,
+		grade: Cost,
 		ty: Box<Self>,
 		argument: Box<Self>,
 		tail: Binder<Box<Self>>,
@@ -91,6 +91,12 @@ pub enum DynamicTerm {
 	Variable(Option<Name>, Index),
 
 	// Let-expressions.
+	Def {
+		grade: Cost,
+		ty: Box<StaticTerm>,
+		argument: Box<StaticTerm>,
+		tail: Binder<Box<Self>>,
+	},
 	Let {
 		grade: usize,
 		ty: Box<Self>,

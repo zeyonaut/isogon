@@ -47,6 +47,7 @@ impl Flattener {
 			}
 
 			// Let-expressions.
+			DynamicTerm::Def { .. } => panic!("unstaged"),
 			DynamicTerm::Let { grade, ty: _, argument_kind, argument, tail } => {
 				let repr = argument_kind.clone().stage().repr;
 				Term::Let {
