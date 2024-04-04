@@ -3,7 +3,7 @@ use crate::{
 		common::{Binder, Closure, Field, Level},
 		ir::{
 			semantics::{
-				DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue, Value,
+				CpyValue, DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue, Value,
 			},
 			syntax::{DynamicTerm, KindTerm, StaticTerm},
 		},
@@ -40,51 +40,54 @@ impl Evaluate for KindTerm {
 impl Evaluate for StaticTerm {
 	type Value = StaticValue;
 	fn evaluate_in(self, environment: &Environment) -> Self::Value {
-		use StaticTerm::*;
+		use StaticTerm as S;
 		match self {
 			// Variables.
-			Variable(_, index) => environment.lookup_static(index),
+			S::Variable(_, index) => environment.lookup_static(index),
 
 			// Let-expressions.
-			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate_in(environment)]),
+			S::Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate_in(environment)]),
 
 			// Types and universe indices.
-			Universe(c) => StaticValue::Universe(c),
-			Cpy => StaticValue::Cpy,
-			CpyValue(c) => StaticValue::CpyValue(c),
-			CpyMax(a, b) => StaticValue::max_copyability(a.evaluate_in(environment), b.evaluate_in(environment)),
-			Repr => StaticValue::ReprType,
-			ReprAtom(r) => r.map(StaticValue::ReprAtom).unwrap_or(StaticValue::ReprNone),
-			ReprPair(l, r) =>
+			S::Universe(c) => StaticValue::Universe(c),
+			S::Cpy => StaticValue::Cpy,
+			S::CpyNt => StaticValue::CpyValue(CpyValue::Nt),
+			S::CpyMax(set) => set.into_iter().fold(StaticValue::CpyValue(CpyValue::Max(vec![])), |a, b| {
+				StaticValue::max_copyability(environment.level(), a, b.evaluate_in(environment))
+			}),
+			S::Repr => StaticValue::ReprType,
+			S::ReprAtom(r) => r.map(StaticValue::ReprAtom).unwrap_or(StaticValue::ReprNone),
+			S::ReprPair(l, r) =>
 				StaticValue::pair_representation(l.evaluate_in(environment), r.evaluate_in(environment)),
 			// TODO: Absorb rnone.
-			ReprExp(grade, repr) => StaticValue::ReprExp(grade, repr.evaluate_in(environment).into()),
+			S::ReprExp(grade, repr) => StaticValue::ReprExp(grade, repr.evaluate_in(environment).into()),
 
 			// Quoted programs.
-			Lift { liftee, kind } => StaticValue::Lift {
+			S::Lift { liftee, kind } => StaticValue::Lift {
 				ty: liftee.evaluate_in(environment),
 				kind: kind.evaluate_in(environment).into(),
 			},
-			Quote(quotee) => StaticValue::Quote(quotee.evaluate_in(environment)),
+			S::Quote(quotee) => StaticValue::Quote(quotee.evaluate_in(environment)),
 
 			// Repeated programs.
-			Exp(grade, ty) => StaticValue::Exp(grade, ty.evaluate_in(environment).into()),
-			Repeat(grade, argument) => StaticValue::Repeat(grade, argument.evaluate_in(environment).into()),
-			LetExp { grade: _, grade_argument: _, argument, tail } => match argument.evaluate_in(environment) {
+			S::Exp(grade, ty) => StaticValue::Exp(grade, ty.evaluate_in(environment).into()),
+			S::Repeat(grade, argument) => StaticValue::Repeat(grade, argument.evaluate_in(environment).into()),
+			S::LetExp { grade: _, grade_argument: _, argument, tail } => match argument.evaluate_in(environment)
+			{
 				StaticValue::Repeat(_, argument) => tail.evaluate_at(environment, [(*argument).clone()]),
 				StaticValue::Neutral(neutral) => unimplemented!(),
 				_ => panic!(),
 			},
 
 			// Dependent functions.
-			Pi { grade, base_copy, base, family } => StaticValue::IndexedProduct {
+			S::Pi { grade, base_copy, base, family } => StaticValue::IndexedProduct {
 				grade,
 				base_copy,
 				base: base.evaluate_in(environment).into(),
 				family: family.evaluate_in(environment).into(),
 			},
-			Function(grade, function) => StaticValue::Function(grade, rc!(function.evaluate_in(environment))),
-			Apply { scrutinee, argument } => match scrutinee.evaluate_in(environment) {
+			S::Function(grade, function) => StaticValue::Function(grade, rc!(function.evaluate_in(environment))),
+			S::Apply { scrutinee, argument } => match scrutinee.evaluate_in(environment) {
 				StaticValue::Function(_, function) => function.evaluate_with([argument.evaluate_in(environment)]),
 				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::Apply(
 					rc!(neutral),
@@ -94,17 +97,17 @@ impl Evaluate for StaticTerm {
 			},
 
 			// Dependent pairs.
-			Sg { base_copy, base, family_copy, family } => StaticValue::IndexedSum {
+			S::Sg { base_copy, base, family_copy, family } => StaticValue::IndexedSum {
 				base_copy,
 				base: base.evaluate_in(environment).into(),
 				family_copy,
 				family: family.evaluate_in(environment).into(),
 			},
-			Pair { basepoint, fiberpoint } => StaticValue::Pair(
+			S::Pair { basepoint, fiberpoint } => StaticValue::Pair(
 				basepoint.evaluate_in(environment).into(),
 				fiberpoint.evaluate_in(environment).into(),
 			),
-			SgField(scrutinee, projection) => match scrutinee.evaluate_in(environment) {
+			S::SgField(scrutinee, projection) => match scrutinee.evaluate_in(environment) {
 				StaticValue::Pair(basepoint, fiberpoint) => match projection {
 					Field::Base => basepoint.as_ref().clone(),
 					Field::Fiber => fiberpoint.as_ref().clone(),
@@ -113,18 +116,18 @@ impl Evaluate for StaticTerm {
 					StaticValue::Neutral(StaticNeutral::Project(neutral.into(), projection)),
 				_ => panic!(),
 			},
-			SgLet { grade: _, argument, tail } => tail.evaluate_at(
+			S::SgLet { grade: _, argument, tail } => tail.evaluate_at(
 				environment,
 				[
-					SgField(argument.clone(), Field::Base).evaluate_in(environment),
-					SgField(argument.clone(), Field::Fiber).evaluate_in(environment),
+					S::SgField(argument.clone(), Field::Base).evaluate_in(environment),
+					S::SgField(argument.clone(), Field::Fiber).evaluate_in(environment),
 				],
 			),
 
 			// Enumerated numbers.
-			Enum(card) => StaticValue::Enum(card),
-			EnumValue(k, v) => StaticValue::EnumValue(k, v),
-			CaseEnum { scrutinee, motive, cases } => match scrutinee.evaluate_in(environment) {
+			S::Enum(card) => StaticValue::Enum(card),
+			S::EnumValue(k, v) => StaticValue::EnumValue(k, v),
+			S::CaseEnum { scrutinee, motive, cases } => match scrutinee.evaluate_in(environment) {
 				StaticValue::EnumValue(_, v) => cases.into_iter().nth(v.into()).unwrap().evaluate_in(environment),
 				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::CaseEnum {
 					scrutinee: rc!(neutral),
@@ -135,14 +138,14 @@ impl Evaluate for StaticTerm {
 			},
 
 			// Natural numbers.
-			Nat => StaticValue::Nat,
-			Num(n) => StaticValue::Num(n),
-			Suc(prev) => match prev.evaluate_in(environment) {
+			S::Nat => StaticValue::Nat,
+			S::Num(n) => StaticValue::Num(n),
+			S::Suc(prev) => match prev.evaluate_in(environment) {
 				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::Suc(rc!(neutral))),
 				StaticValue::Num(n) => StaticValue::Num(n + 1),
 				_ => panic!(),
 			},
-			CaseNat { scrutinee, motive, case_nil, case_suc } => match scrutinee.evaluate_in(environment) {
+			S::CaseNat { scrutinee, motive, case_nil, case_suc } => match scrutinee.evaluate_in(environment) {
 				StaticValue::Num(n) => (0..n).fold(case_nil.evaluate_in(environment), |previous, i| {
 					case_suc.evaluate_at(environment, [StaticValue::Num(i), previous])
 				}),

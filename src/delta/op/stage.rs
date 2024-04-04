@@ -1,8 +1,9 @@
 use crate::{
 	delta::{
-		common::{Binder, Closure, Field, Level, Repr, UniverseKind},
+		common::{Binder, Closure, Cpy, Field, Level, Repr, UniverseKind},
 		ir::{
 			object::{DynamicValue, Environment, StaticValue, Value},
+			semantics::CpyValue,
 			syntax::{DynamicTerm, KindTerm, StaticTerm},
 		},
 	},
@@ -37,12 +38,11 @@ impl Stage for StaticTerm {
 			StaticTerm::Universe(_) => StaticValue::Type,
 
 			StaticTerm::Cpy => StaticValue::Type,
-			StaticTerm::CpyValue(c) => StaticValue::CpyValue(c),
-			StaticTerm::CpyMax(a, b) => {
-				let StaticValue::CpyValue(a) = a.stage_in(environment) else { panic!() };
+			StaticTerm::CpyNt => StaticValue::CpyValue(Cpy::Nt),
+			StaticTerm::CpyMax(set) => StaticValue::CpyValue(set.into_iter().fold(Cpy::Tr, |a, b| {
 				let StaticValue::CpyValue(b) = b.stage_in(environment) else { panic!() };
-				StaticValue::CpyValue(std::cmp::max(a, b))
-			}
+				std::cmp::max(a, b)
+			})),
 
 			StaticTerm::Repr => StaticValue::Type,
 			StaticTerm::ReprAtom(r) => StaticValue::ReprValue(r.map(Repr::Atom)),

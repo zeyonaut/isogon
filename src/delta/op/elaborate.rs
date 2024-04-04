@@ -547,14 +547,22 @@ fn synthesize_static(
 		// Generic term constructors.
 		Preterm::Constructor(constructor, arguments) => match constructor {
 			// Universe indices.
-			Constructor::Cpy(c) if fragment == 0 && arguments.is_empty() =>
-				(StaticTerm::CpyValue(c), StaticValue::Cpy),
-			Constructor::CpyMax if fragment == 0 => {
-				let [a, b] = arguments.try_into().unwrap();
-				let a = verify_static(ctx, a, 0, StaticValue::Cpy)?;
-				let b = verify_static(ctx, b, 0, StaticValue::Cpy)?;
-				(StaticTerm::CpyMax(bx!(a), bx!(b)), StaticValue::Cpy)
-			}
+			Constructor::Cpy(c) if fragment == 0 && arguments.is_empty() => (
+				match c {
+					Cpy::Tr => StaticTerm::CpyMax(vec![]),
+					Cpy::Nt => StaticTerm::CpyNt,
+				},
+				StaticValue::Cpy,
+			),
+			Constructor::CpyMax if fragment == 0 => (
+				StaticTerm::CpyMax(
+					arguments
+						.into_iter()
+						.map(|a| verify_static(ctx, a, 0, StaticValue::Cpy))
+						.collect::<Result<_, _>>()?,
+				),
+				StaticValue::Cpy,
+			),
 			Constructor::ReprAtom(r) if fragment == 0 && arguments.is_empty() =>
 				(StaticTerm::ReprAtom(r), StaticValue::ReprType),
 			Constructor::ReprPair if fragment == 0 => {
@@ -1070,7 +1078,7 @@ fn synthesize_dynamic(
 				result
 			};
 
-			let kind = KindValue::pair(base_kind.clone(), family_kind.clone());
+			let kind = KindValue::pair(ctx.len(), base_kind.clone(), family_kind.clone());
 
 			// Ensure that the inferred fiber axes are independent of the basepoint, or error otherwise.
 			let Ok(family_kind) = family_kind.try_unevaluate_in(ctx.len()).into() else {

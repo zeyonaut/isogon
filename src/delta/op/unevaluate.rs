@@ -2,7 +2,9 @@ use super::evaluate::EvaluateAuto;
 use crate::delta::{
 	common::{bind, Binder, Closure, Index, Level},
 	ir::{
-		semantics::{DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue},
+		semantics::{
+			CpyValue, DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue,
+		},
 		syntax::{DynamicTerm, KindTerm, StaticTerm},
 	},
 };
@@ -41,63 +43,66 @@ impl Unevaluate for KindValue {
 impl Unevaluate for StaticValue {
 	type Term = StaticTerm;
 	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
-		use StaticValue::*;
+		use StaticValue as V;
 		Ok(match self {
 			// Neutrals.
-			Neutral(neutral) => neutral.try_unevaluate_in(level)?,
+			V::Neutral(neutral) => neutral.try_unevaluate_in(level)?,
 
 			// Types.
-			Universe(c) => StaticTerm::Universe(*c),
+			V::Universe(c) => StaticTerm::Universe(*c),
 
 			// Universe indices.
-			Cpy => StaticTerm::Cpy,
-			CpyValue(c) => StaticTerm::CpyValue(*c),
+			V::Cpy => StaticTerm::Cpy,
+			V::CpyValue(CpyValue::Nt) => StaticTerm::CpyNt,
+			V::CpyValue(CpyValue::Max(ns)) =>
+				StaticTerm::CpyMax(ns.into_iter().map(|n| n.unevaluate_in(level)).collect()),
 
-			ReprType => StaticTerm::Repr,
-			ReprNone => StaticTerm::ReprAtom(None),
-			ReprAtom(r) => StaticTerm::ReprAtom(Some(*r)),
-			ReprPair(l, r) => StaticTerm::ReprPair(l.unevaluate_in(level).into(), r.unevaluate_in(level).into()),
-			ReprExp(grade, r) => StaticTerm::ReprExp(*grade, r.unevaluate_in(level).into()),
+			V::ReprType => StaticTerm::Repr,
+			V::ReprNone => StaticTerm::ReprAtom(None),
+			V::ReprAtom(r) => StaticTerm::ReprAtom(Some(*r)),
+			V::ReprPair(l, r) =>
+				StaticTerm::ReprPair(l.unevaluate_in(level).into(), r.unevaluate_in(level).into()),
+			V::ReprExp(grade, r) => StaticTerm::ReprExp(*grade, r.unevaluate_in(level).into()),
 
 			// Quoted programs.
-			Lift { ty: liftee, kind } => StaticTerm::Lift {
+			V::Lift { ty: liftee, kind } => StaticTerm::Lift {
 				liftee: liftee.try_unevaluate_in(level)?.into(),
 				kind: kind.try_unevaluate_in(level)?.into(),
 			},
-			Quote(quotee) => StaticTerm::Quote(quotee.try_unevaluate_in(level)?.into()),
+			V::Quote(quotee) => StaticTerm::Quote(quotee.try_unevaluate_in(level)?.into()),
 
 			// Repeated programs.
-			Exp(grade, ty) => StaticTerm::Exp(*grade, ty.unevaluate_in(level).into()),
-			Repeat(grade, value) => StaticTerm::Repeat(*grade, value.unevaluate_in(level).into()),
+			V::Exp(grade, ty) => StaticTerm::Exp(*grade, ty.unevaluate_in(level).into()),
+			V::Repeat(grade, value) => StaticTerm::Repeat(*grade, value.unevaluate_in(level).into()),
 
 			// Dependent functions.
-			IndexedProduct { grade, base_copy, base, family } => StaticTerm::Pi {
+			V::IndexedProduct { grade, base_copy, base, family } => StaticTerm::Pi {
 				grade: *grade,
 				base_copy: *base_copy,
 				base: base.try_unevaluate_in(level)?.into(),
 				family: family.try_unevaluate_in(level)?,
 			},
-			Function(grade, function) => StaticTerm::Function(*grade, function.try_unevaluate_in(level)?),
+			V::Function(grade, function) => StaticTerm::Function(*grade, function.try_unevaluate_in(level)?),
 
 			// Dependent pairs.
-			IndexedSum { base_copy, base, family_copy, family } => StaticTerm::Sg {
+			V::IndexedSum { base_copy, base, family_copy, family } => StaticTerm::Sg {
 				base_copy: *base_copy,
 				base: base.try_unevaluate_in(level)?.into(),
 				family_copy: *family_copy,
 				family: family.try_unevaluate_in(level)?,
 			},
-			Pair(basepoint, fiberpoint) => StaticTerm::Pair {
+			V::Pair(basepoint, fiberpoint) => StaticTerm::Pair {
 				basepoint: basepoint.try_unevaluate_in(level)?.into(),
 				fiberpoint: fiberpoint.try_unevaluate_in(level)?.into(),
 			},
 
 			// Enumerated values.
-			Enum(k) => StaticTerm::Enum(*k),
-			EnumValue(k, v) => StaticTerm::EnumValue(*k, *v),
+			V::Enum(k) => StaticTerm::Enum(*k),
+			V::EnumValue(k, v) => StaticTerm::EnumValue(*k, *v),
 
 			// Natural numbers.
-			Nat => StaticTerm::Nat,
-			Num(n) => StaticTerm::Num(*n),
+			V::Nat => StaticTerm::Nat,
+			V::Num(n) => StaticTerm::Num(*n),
 		})
 	}
 }
@@ -110,10 +115,6 @@ impl Unevaluate for StaticNeutral {
 			// Variables.
 			Variable(name, Level(level)) =>
 				StaticTerm::Variable(*name, Index(context_length.checked_sub(level + 1).ok_or(())?)),
-
-			// Universe indices.
-			CpyMax(a, b) =>
-				StaticTerm::CpyMax(a.try_unevaluate_in(level)?.into(), b.try_unevaluate_in(level)?.into()),
 
 			// Repeated programs.
 			ExpProject(_) => unimplemented!(),

@@ -1,6 +1,6 @@
 use super::super::ir::presyntax::Preterm;
 use crate::delta::{
-	common::{AnyBinder, Binder},
+	common::{AnyBinder, Binder, Cpy},
 	ir::{
 		presyntax::{Constructor, Former, Pattern, Projector, PurePreterm},
 		syntax::{DynamicTerm, StaticTerm},
@@ -32,9 +32,15 @@ impl Unelaborate for StaticTerm {
 			),
 
 			StaticTerm::Cpy => Preterm::Former(Former::Copy, vec![]),
-			StaticTerm::CpyValue(c) => Preterm::Constructor(Constructor::Cpy(c), vec![]),
-			StaticTerm::CpyMax(a, b) =>
-				Preterm::Constructor(Constructor::CpyMax, vec![a.unelaborate(), b.unelaborate()]),
+			StaticTerm::CpyNt => Preterm::Constructor(Constructor::Cpy(Cpy::Nt), vec![]),
+			StaticTerm::CpyMax(set) => {
+				let set: Vec<_> = set.into_iter().map(|x| x.unelaborate()).collect();
+				if set.len() == 0 {
+					Preterm::Constructor(Constructor::Cpy(Cpy::Tr), vec![])
+				} else {
+					Preterm::Constructor(Constructor::CpyMax, set)
+				}
+			}
 
 			StaticTerm::Repr => Preterm::Former(Former::Repr, vec![]),
 			StaticTerm::ReprAtom(a) => Preterm::Constructor(Constructor::ReprAtom(a), vec![]),

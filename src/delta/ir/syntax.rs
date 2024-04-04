@@ -18,8 +18,8 @@ pub enum StaticTerm {
 
 	// Universe indices.
 	Cpy,
-	CpyValue(Cpy),
-	CpyMax(Box<Self>, Box<Self>),
+	CpyNt,
+	CpyMax(Vec<Self>),
 
 	Repr,
 	ReprAtom(Option<ReprAtom>),

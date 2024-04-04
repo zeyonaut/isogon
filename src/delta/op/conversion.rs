@@ -1,7 +1,7 @@
-use super::super::ir::semantics::{DynamicNeutral, DynamicValue, KindValue, StaticNeutral, StaticValue};
 use crate::{
 	delta::{
 		common::{Field, Level},
+		ir::semantics::{CpyValue, DynamicNeutral, DynamicValue, KindValue, StaticNeutral, StaticValue},
 		op::evaluate::EvaluateAuto,
 	},
 	utility::rc,
@@ -20,70 +20,94 @@ impl Conversion<KindValue> for Level {
 
 impl Conversion<StaticValue> for Level {
 	fn can_convert(self, left: &StaticValue, right: &StaticValue) -> bool {
-		use StaticValue::*;
+		use StaticValue as V;
 		match (left, right) {
 			// Neutrals.
-			(Neutral(left), Neutral(right)) => self.can_convert(left, right),
+			(V::Neutral(left), V::Neutral(right)) => self.can_convert(left, right),
 
 			// Types and universe indidces.
-			(Universe(l), Universe(r)) => l == r,
-			(Cpy, Cpy) | (ReprType, ReprType) | (ReprNone, ReprNone) => true,
-			(CpyValue(left), CpyValue(right)) => left == right,
-			(ReprAtom(left), ReprAtom(right)) => left == right,
-			(ReprExp(a, l), ReprExp(b, r)) => a == b && self.can_convert(&**l, r),
-			(ReprPair(a, b), ReprPair(s, t)) => self.can_convert(&**a, s) && self.can_convert(&**b, t),
+			(V::Universe(l), V::Universe(r)) => l == r,
+
+			(V::Cpy, V::Cpy) => true,
+			(V::CpyValue(CpyValue::Nt), V::CpyValue(CpyValue::Nt)) => true,
+			(V::CpyValue(CpyValue::Max(a_set)), V::CpyValue(CpyValue::Max(b_set)))
+				if a_set.len() == b_set.len() =>
+			{
+				let mut a_compared = vec![false; a_set.len()];
+				'b: for b in b_set {
+					'a: for (i, a) in a_set.iter().enumerate() {
+						if a_compared[i] {
+							continue 'a;
+						}
+
+						if self.can_convert(a, b) {
+							a_compared[i] = true;
+							continue 'b;
+						}
+					}
+					return false;
+				}
+				return true;
+			}
+
+			(V::ReprType, V::ReprType) | (V::ReprNone, V::ReprNone) => true,
+			(V::ReprAtom(left), V::ReprAtom(right)) => left == right,
+			(V::ReprExp(a, l), V::ReprExp(b, r)) => a == b && self.can_convert(&**l, r),
+			(V::ReprPair(a, b), V::ReprPair(s, t)) => self.can_convert(&**a, s) && self.can_convert(&**b, t),
 
 			// Quoted programs.
-			(Lift { ty: left, .. }, Lift { ty: right, .. }) | (Quote(left), Quote(right)) =>
+			(V::Lift { ty: left, .. }, V::Lift { ty: right, .. }) | (V::Quote(left), V::Quote(right)) =>
 				self.can_convert(left, right),
 
 			// Repeated programs.
-			(Exp(grade_l, ty_l), Exp(grade_r, ty_r)) => grade_l == grade_r && self.can_convert(&**ty_l, ty_r),
-			(Repeat(_, left), Repeat(_, right)) => self.can_convert(&**left, right),
+			(V::Exp(grade_l, ty_l), V::Exp(grade_r, ty_r)) =>
+				grade_l == grade_r && self.can_convert(&**ty_l, ty_r),
+			(V::Repeat(_, left), V::Repeat(_, right)) => self.can_convert(&**left, right),
 
 			// Dependent functions.
 			(
-				IndexedProduct { grade: left_grade, base: left_base, family: left_family, .. },
-				IndexedProduct { grade: right_grade, base: right_base, family: right_family, .. },
+				V::IndexedProduct { grade: left_grade, base: left_base, family: left_family, .. },
+				V::IndexedProduct { grade: right_grade, base: right_base, family: right_family, .. },
 			) =>
 				left_grade == right_grade
 					&& self.can_convert(&**left_base, right_base)
 					&& (self + 1).can_convert(&left_family.evaluate_auto(self), &right_family.evaluate_auto(self)),
-			(Function(_, left), Function(_, right)) =>
+			(V::Function(_, left), V::Function(_, right)) =>
 				(self + 1).can_convert(&left.evaluate_auto(self), &right.evaluate_auto(self)),
-			(Neutral(left), Function(_, right)) => (self + 1).can_convert(
-				&Neutral(StaticNeutral::Apply(rc!(left.clone()), rc!((right.parameter(), self).into()))),
+			(V::Neutral(left), V::Function(_, right)) => (self + 1).can_convert(
+				&V::Neutral(StaticNeutral::Apply(rc!(left.clone()), rc!((right.parameter(), self).into()))),
 				&right.evaluate_auto(self),
 			),
-			(Function(_, left), Neutral(right)) => (self + 1).can_convert(
+			(V::Function(_, left), V::Neutral(right)) => (self + 1).can_convert(
 				&left.evaluate_auto(self),
-				&Neutral(StaticNeutral::Apply(rc!(right.clone()), rc!((left.parameter(), self).into()))),
+				&V::Neutral(StaticNeutral::Apply(rc!(right.clone()), rc!((left.parameter(), self).into()))),
 			),
 
 			// Dependent pairs.
 			(
-				IndexedSum { base: left_base, family: left_family, .. },
-				IndexedSum { base: right_base, family: right_family, .. },
+				V::IndexedSum { base: left_base, family: left_family, .. },
+				V::IndexedSum { base: right_base, family: right_family, .. },
 			) =>
 				self.can_convert(&**left_base, right_base)
 					&& (self + 1).can_convert(&left_family.evaluate_auto(self), &right_family.evaluate_auto(self)),
-			(Pair(left_bp, left_fp), Pair(right_bp, right_fp)) =>
+			(V::Pair(left_bp, left_fp), V::Pair(right_bp, right_fp)) =>
 				self.can_convert(&**left_bp, &right_bp) && self.can_convert(&**left_fp, &right_fp),
-			(Neutral(left), Pair(br, fr)) =>
-				self.can_convert(&Neutral(StaticNeutral::Project(left.clone().into(), Field::Base)), &br)
-					&& self.can_convert(&Neutral(StaticNeutral::Project(left.clone().into(), Field::Fiber)), &fr),
-			(Pair(bl, fl), Neutral(right)) =>
-				self.can_convert(&**bl, &Neutral(StaticNeutral::Project(right.clone().into(), Field::Base)))
+			(V::Neutral(left), V::Pair(br, fr)) =>
+				self.can_convert(&V::Neutral(StaticNeutral::Project(left.clone().into(), Field::Base)), &br)
 					&& self
-						.can_convert(&**fl, &Neutral(StaticNeutral::Project(right.clone().into(), Field::Fiber))),
+						.can_convert(&V::Neutral(StaticNeutral::Project(left.clone().into(), Field::Fiber)), &fr),
+			(V::Pair(bl, fl), V::Neutral(right)) =>
+				self.can_convert(&**bl, &V::Neutral(StaticNeutral::Project(right.clone().into(), Field::Base)))
+					&& self
+						.can_convert(&**fl, &V::Neutral(StaticNeutral::Project(right.clone().into(), Field::Fiber))),
 
 			// Enumerated numbers.
-			(Enum(left), Enum(right)) => left == right,
-			(EnumValue(_, left), EnumValue(_, right)) => left == right,
+			(V::Enum(left), V::Enum(right)) => left == right,
+			(V::EnumValue(_, left), V::EnumValue(_, right)) => left == right,
 
 			// Natural numbers.
-			(Nat, Nat) => true,
-			(Num(l), Num(r)) => l == r,
+			(V::Nat, V::Nat) => true,
+			(V::Num(l), V::Num(r)) => l == r,
 
 			// Inconvertible.
 			_ => false,
@@ -97,10 +121,6 @@ impl Conversion<StaticNeutral> for Level {
 		match (left, right) {
 			// Variables.
 			(Variable(_, left), Variable(_, right)) => left == right,
-
-			// Universe indices.
-			(CpyMax(a_left, b_left), CpyMax(a_right, b_right)) =>
-				self.can_convert(&**a_left, a_right) && self.can_convert(&**b_left, b_right),
 
 			// Repeated programs.
 			(ExpProject(left), ExpProject(right)) => self.can_convert(&**left, right),

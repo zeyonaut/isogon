@@ -2,7 +2,10 @@ use std::rc::Rc;
 
 use super::syntax::{DynamicTerm, StaticTerm};
 use crate::{
-	delta::common::{Closure, Cpy, Field, Index, Level, Name, Repr, ReprAtom},
+	delta::{
+		common::{Closure, Cpy, Field, Index, Level, Name, Repr, ReprAtom},
+		op::conversion::Conversion,
+	},
 	utility::rc,
 };
 
@@ -13,39 +16,45 @@ pub struct KindValue {
 }
 
 impl KindValue {
-	pub const fn path() -> Self { Self { copy: StaticValue::CpyValue(Cpy::Tr), repr: StaticValue::ReprNone } }
+	pub const fn path() -> Self { Self { copy: StaticValue::cpy(Cpy::Tr), repr: StaticValue::ReprNone } }
 
 	pub const fn fun() -> Self {
-		Self { copy: StaticValue::CpyValue(Cpy::Nt), repr: StaticValue::ReprAtom(ReprAtom::Fun) }
+		Self { copy: StaticValue::cpy(Cpy::Nt), repr: StaticValue::ReprAtom(ReprAtom::Fun) }
 	}
 
 	pub const fn enu() -> Self {
-		Self { copy: StaticValue::CpyValue(Cpy::Tr), repr: StaticValue::ReprAtom(ReprAtom::Byte) }
+		Self { copy: StaticValue::cpy(Cpy::Tr), repr: StaticValue::ReprAtom(ReprAtom::Byte) }
 	}
 
-	pub const fn ty() -> Self { Self { copy: StaticValue::CpyValue(Cpy::Tr), repr: StaticValue::ReprNone } }
+	pub const fn ty() -> Self { Self { copy: StaticValue::cpy(Cpy::Tr), repr: StaticValue::ReprNone } }
 
 	// TODO: Only consider nat to be trivial for slightly simpler implementation.
 	pub const fn nat() -> Self {
-		Self { copy: StaticValue::CpyValue(Cpy::Tr), repr: StaticValue::ReprAtom(ReprAtom::Nat) }
+		Self { copy: StaticValue::cpy(Cpy::Tr), repr: StaticValue::ReprAtom(ReprAtom::Nat) }
 	}
 
 	pub const fn ptr() -> Self {
-		Self { copy: StaticValue::CpyValue(Cpy::Nt), repr: StaticValue::ReprAtom(ReprAtom::Ptr) }
+		Self { copy: StaticValue::cpy(Cpy::Nt), repr: StaticValue::ReprAtom(ReprAtom::Ptr) }
 	}
 
-	pub fn wrap(self) -> Self { Self { copy: StaticValue::CpyValue(Cpy::Nt), repr: self.repr } }
+	pub fn wrap(self) -> Self { Self { copy: Cpy::Nt.into(), repr: self.repr } }
 
 	pub fn exp(self, grade: usize) -> Self {
 		Self { copy: self.copy, repr: StaticValue::ReprExp(grade, self.repr.into()) }
 	}
 
-	pub fn pair(a: Self, b: Self) -> Self {
+	pub fn pair(level: Level, a: Self, b: Self) -> Self {
 		Self {
-			copy: StaticValue::max_copyability(a.copy, b.copy),
+			copy: StaticValue::max_copyability(level, a.copy, b.copy),
 			repr: StaticValue::pair_representation(a.repr, b.repr),
 		}
 	}
+}
+
+#[derive(Clone, Debug)]
+pub enum CpyValue {
+	Nt,
+	Max(Vec<StaticNeutral>),
 }
 
 #[derive(Clone, Debug)]
@@ -57,7 +66,7 @@ pub enum StaticValue {
 	Universe(Cpy),
 
 	Cpy,
-	CpyValue(Cpy),
+	CpyValue(CpyValue),
 
 	ReprType,
 	ReprNone,
@@ -109,9 +118,6 @@ pub enum StaticNeutral {
 	// Variables.
 	Variable(Option<Name>, Level),
 
-	// Hacks.
-	CpyMax(Rc<Self>, Rc<Self>),
-
 	// Repeated programs.
 	ExpProject(Rc<Self>),
 
@@ -136,6 +142,19 @@ pub enum StaticNeutral {
 		case_nil: Rc<StaticValue>,
 		case_suc: Rc<Closure<Environment, StaticTerm, 2>>,
 	},
+}
+
+impl StaticValue {
+	pub const fn cpy(value: Cpy) -> Self {
+		match value {
+			Cpy::Nt => Self::CpyValue(CpyValue::Nt),
+			Cpy::Tr => Self::CpyValue(CpyValue::Max(Vec::new())),
+		}
+	}
+}
+
+impl From<Cpy> for StaticValue {
+	fn from(value: Cpy) -> Self { Self::cpy(value) }
 }
 
 impl From<&Repr> for StaticValue {
@@ -276,14 +295,37 @@ pub enum DynamicNeutral {
 }
 
 impl StaticValue {
-	pub fn max_copyability(a: Self, b: Self) -> Self {
-		use Cpy as C;
+	fn combine_max_copyability(
+		level: Level,
+		mut a_set: Vec<StaticNeutral>,
+		b_set: Vec<StaticNeutral>,
+	) -> Self {
+		let len = a_set.len();
+		'b: for b in b_set {
+			'a: for i in 0..len {
+				if level.can_convert(&a_set[i], &b) {
+					continue 'b;
+				} else {
+					continue 'a;
+				}
+			}
+			a_set.push(b);
+		}
+		Self::CpyValue(CpyValue::Max(a_set))
+	}
+
+	pub fn max_copyability(level: Level, a: Self, b: Self) -> Self {
+		use CpyValue as C;
 		match (a, b) {
 			(Self::CpyValue(C::Nt), _) => Self::CpyValue(C::Nt),
-			(Self::CpyValue(C::Tr), b) => b,
 			(_, Self::CpyValue(C::Nt)) => Self::CpyValue(C::Nt),
-			(a, Self::CpyValue(C::Tr)) => a,
-			(Self::Neutral(a), Self::Neutral(b)) => Self::Neutral(StaticNeutral::CpyMax(rc!(a), rc!(b))),
+			(Self::Neutral(a), Self::Neutral(b)) => Self::combine_max_copyability(level, vec![a], vec![b]),
+			(Self::Neutral(a), Self::CpyValue(C::Max(b_set))) =>
+				Self::combine_max_copyability(level, vec![a], b_set),
+			(Self::CpyValue(C::Max(a_set)), Self::Neutral(b)) =>
+				Self::combine_max_copyability(level, a_set, vec![b]),
+			(Self::CpyValue(C::Max(a_set)), Self::CpyValue(C::Max(b_set))) =>
+				Self::combine_max_copyability(level, a_set, b_set),
 			_ => panic!(),
 		}
 	}
@@ -343,6 +385,8 @@ impl Environment {
 		environment.0.extend(values);
 		environment
 	}
+
+	pub fn level(&self) -> Level { Level(self.0.len()) }
 
 	pub fn push(&mut self, value: Value) { self.0.push(value); }
 
