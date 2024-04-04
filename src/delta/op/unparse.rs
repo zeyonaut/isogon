@@ -96,14 +96,14 @@ pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &Rodeo) -> std
 			print_former(former, f, interner)?;
 			for arg in args {
 				write!(f, " ")?;
-				print(arg, f, interner)?;
+				print_atom(arg, f, interner)?;
 			}
 		}
 		Preterm::Constructor(constructor, args) => {
 			print_constructor(constructor, f, interner)?;
 			for arg in args {
 				write!(f, " ")?;
-				print(arg, f, interner)?;
+				print_atom(arg, f, interner)?;
 			}
 		}
 		Preterm::Project(head, projector) => {

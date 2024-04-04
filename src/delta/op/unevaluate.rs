@@ -55,7 +55,11 @@ impl Unevaluate for StaticValue {
 			V::Cpy => StaticTerm::Cpy,
 			V::CpyValue(CpyValue::Nt) => StaticTerm::CpyNt,
 			V::CpyValue(CpyValue::Max(ns)) =>
-				StaticTerm::CpyMax(ns.into_iter().map(|n| n.unevaluate_in(level)).collect()),
+				if ns.len() == 1 {
+					ns[0].try_unevaluate_in(level)?
+				} else {
+					StaticTerm::CpyMax(ns.into_iter().map(|n| n.unevaluate_in(level)).collect())
+				},
 
 			V::ReprType => StaticTerm::Repr,
 			V::ReprNone => StaticTerm::ReprAtom(None),

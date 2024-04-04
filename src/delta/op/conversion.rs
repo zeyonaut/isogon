@@ -49,6 +49,10 @@ impl Conversion<StaticValue> for Level {
 				}
 				return true;
 			}
+			(V::CpyValue(CpyValue::Max(left)), V::Neutral(right)) if left.len() == 1 =>
+				self.can_convert(&left[0], right),
+			(V::Neutral(left), V::CpyValue(CpyValue::Max(right))) if right.len() == 1 =>
+				self.can_convert(left, &right[0]),
 
 			(V::ReprType, V::ReprType) | (V::ReprNone, V::ReprNone) => true,
 			(V::ReprAtom(left), V::ReprAtom(right)) => left == right,

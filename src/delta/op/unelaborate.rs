@@ -37,6 +37,12 @@ impl Unelaborate for StaticTerm {
 				let set: Vec<_> = set.into_iter().map(|x| x.unelaborate()).collect();
 				if set.len() == 0 {
 					Preterm::Constructor(Constructor::Cpy(Cpy::Tr), vec![])
+				} else if set.len() == 1 {
+					let Ok(set) = <Box<[_; 1]>>::try_from(set) else {
+						unreachable!();
+					};
+					let [set] = *set;
+					set.0
 				} else {
 					Preterm::Constructor(Constructor::CpyMax, set)
 				}
