@@ -151,6 +151,13 @@ impl StaticValue {
 			Cpy::Tr => Self::CpyValue(CpyValue::Max(Vec::new())),
 		}
 	}
+
+	pub fn is_trivial(&self) -> bool {
+		match self {
+			StaticValue::CpyValue(CpyValue::Max(v)) if v.is_empty() => true,
+			_ => false,
+		}
+	}
 }
 
 impl From<Cpy> for StaticValue {

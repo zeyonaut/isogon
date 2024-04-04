@@ -309,7 +309,11 @@ impl Context {
 		ExtendedContext::new(
 			self,
 			name,
-			ContextEntry::new(is_crisp, grade, ContextType::Dynamic(ty, kind)),
+			ContextEntry::new(
+				is_crisp,
+				if !kind.copy.is_trivial() || grade == 0.into() { grade } else { Cost::Inf },
+				ContextType::Dynamic(ty, kind),
+			),
 			Value::Dynamic(DynamicValue::Neutral(DynamicNeutral::Variable(name, self.len()))),
 		)
 	}
@@ -347,7 +351,11 @@ impl Context {
 		ExtendedContext::new(
 			self,
 			name,
-			ContextEntry::new(is_crisp, grade, ContextType::Dynamic(ty, kind)),
+			ContextEntry::new(
+				is_crisp,
+				if !kind.copy.is_trivial() || grade == 0.into() { grade } else { Cost::Inf },
+				ContextType::Dynamic(ty, kind),
+			),
 			Value::Dynamic(value),
 		)
 	}
