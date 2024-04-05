@@ -3,7 +3,7 @@ use std::{
 	rc::Rc,
 };
 
-use lasso::Rodeo;
+use lasso::Resolver;
 
 use super::{unelaborate::Unelaborate, unparse::print};
 use crate::{
@@ -12,7 +12,6 @@ use crate::{
 		ir::{
 			presyntax::{
 				Constructor, Expression, Former, ParsedPreterm, ParsedProgram, Pattern, Preterm, Projector,
-				PurePreterm,
 			},
 			semantics::{
 				DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue, Value,
@@ -35,7 +34,7 @@ pub fn elaborate(
 	source: &str,
 	lexed_source: &LexedSource,
 	program: ParsedProgram,
-	interner: &Rodeo,
+	interner: &impl Resolver,
 ) -> (DynamicTerm, DynamicValue) {
 	// TODO: Offer option to choose fragment, rather than force fragment to be 1.
 	match synthesize_dynamic(&mut Context::empty(), program.expr, program.fragment) {
@@ -51,7 +50,7 @@ pub fn elaborate(
 	}
 }
 
-fn display_error(kind: ElaborationErrorKind, interner: &Rodeo) -> String {
+fn display_error(kind: ElaborationErrorKind, interner: &impl Resolver) -> String {
 	match kind {
 		ElaborationErrorKind::StaticBidirectionalMismatch { synthesized, expected } => {
 			println!("elaboration error: type mismatch\nexpected: {synthesized:#?}\nfound: {expected:#?}");

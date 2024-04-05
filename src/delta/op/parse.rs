@@ -1,4 +1,4 @@
-use lasso::Rodeo;
+use lasso::{Rodeo, RodeoResolver};
 
 use crate::delta::{
 	common::{any_bind, bind, AnyBinder, Cost, Cpy, Name, ReprAtom},
@@ -9,7 +9,7 @@ use crate::delta::{
 };
 
 /// Parses a dynamic preterm from a source string.
-pub fn parse(source: &str) -> (LexedSource, ParsedProgram, Rodeo) {
+pub fn parse(source: &str) -> (LexedSource, ParsedProgram, RodeoResolver) {
 	let lexed_source = match LexedSource::new(source) {
 		Ok(lexed_source) => lexed_source,
 		Err(lex_error) => {
@@ -35,7 +35,7 @@ pub fn parse(source: &str) -> (LexedSource, ParsedProgram, Rodeo) {
 		}
 	};
 
-	(lexed_source, program, parser.interner)
+	(lexed_source, program, parser.interner.into_resolver())
 }
 pub fn format_lex_error(source: &str, LexError(location, kind): LexError) -> String {
 	fn char_list_string(chars: &[char]) -> String {

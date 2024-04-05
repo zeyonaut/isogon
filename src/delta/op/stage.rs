@@ -3,7 +3,6 @@ use crate::{
 		common::{Binder, Closure, Cpy, Field, Level, Repr, UniverseKind},
 		ir::{
 			object::{DynamicValue, Environment, StaticValue, Value},
-			semantics::CpyValue,
 			syntax::{DynamicTerm, KindTerm, StaticTerm},
 		},
 	},
@@ -127,7 +126,7 @@ impl Stage for DynamicTerm {
 			Variable(_, index) => environment.lookup_dynamic(index),
 
 			// Let-expressions.
-			Def { grade, ty, argument, tail } =>
+			Def { grade: _, ty: _, argument, tail } =>
 				tail.body.stage_in(&environment.extend([Value::Static(argument.stage_in(environment))])),
 			Let { grade, ty, argument_kind, argument, tail } => DynamicValue::Let {
 				grade,

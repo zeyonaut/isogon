@@ -143,7 +143,7 @@ impl Unelaborate for DynamicTerm {
 				tail: tail.unelaborate(),
 			},
 
-			DynamicTerm::Let { grade, ty, argument_kind, argument, tail } => Preterm::Let {
+			DynamicTerm::Let { grade, ty, argument_kind: _, argument, tail } => Preterm::Let {
 				is_meta: false,
 				grade: Some(grade.into()),
 				ty: ty.unelaborate().into(),

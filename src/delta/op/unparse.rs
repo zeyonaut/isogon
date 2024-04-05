@@ -1,13 +1,19 @@
 use std::fmt::Write;
 
-use lasso::Rodeo;
+use lasso::Resolver;
 
 use crate::delta::{
 	common::{Cost, Cpy, Field, Name, ReprAtom},
 	ir::presyntax::{Constructor, Former, Pattern, Preterm, Projector, PurePreterm},
 };
 
-pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
+pub fn pretty_print(term: &PurePreterm, interner: &impl Resolver) -> String {
+	let mut s = String::new();
+	print(term, &mut s, interner).unwrap();
+	s
+}
+
+pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver) -> std::fmt::Result {
 	match &preterm.0 {
 		Preterm::Variable(name) => write!(f, "{}", interner.resolve(name))?,
 		Preterm::Let { is_meta, grade, ty, argument, tail } => {
@@ -142,14 +148,14 @@ pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &Rodeo) -> std
 	Ok(())
 }
 
-fn print_spine(preterm: &PurePreterm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
+fn print_spine(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver) -> std::fmt::Result {
 	match &preterm.0 {
 		Preterm::Call { .. } | Preterm::Project(..) | Preterm::Split { .. } => print(preterm, f, interner),
 		_ => print_atom(preterm, f, interner),
 	}
 }
 
-fn print_atom(preterm: &PurePreterm, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
+fn print_atom(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver) -> std::fmt::Result {
 	match &preterm.0 {
 		Preterm::Variable(_) | Preterm::SwitchLevel(_) => print(preterm, f, interner)?,
 
@@ -176,7 +182,7 @@ fn print_atom(preterm: &PurePreterm, f: &mut impl Write, interner: &Rodeo) -> st
 	Ok(())
 }
 
-fn print_former(former: &Former, f: &mut impl Write, _: &Rodeo) -> std::fmt::Result {
+fn print_former(former: &Former, f: &mut impl Write, _: &impl Resolver) -> std::fmt::Result {
 	match former {
 		Former::Universe => write!(f, "*"),
 		Former::Copy => write!(f, "copy"),
@@ -191,7 +197,7 @@ fn print_former(former: &Former, f: &mut impl Write, _: &Rodeo) -> std::fmt::Res
 	}
 }
 
-fn print_constructor(constructor: &Constructor, f: &mut impl Write, _: &Rodeo) -> std::fmt::Result {
+fn print_constructor(constructor: &Constructor, f: &mut impl Write, _: &impl Resolver) -> std::fmt::Result {
 	match constructor {
 		Constructor::Cpy(Cpy::Tr) => write!(f, "c0"),
 		Constructor::Cpy(Cpy::Nt) => write!(f, "c1"),
@@ -220,7 +226,7 @@ fn print_constructor(constructor: &Constructor, f: &mut impl Write, _: &Rodeo) -
 	}
 }
 
-fn print_projector(projector: &Projector, f: &mut impl Write, _: &Rodeo) -> std::fmt::Result {
+fn print_projector(projector: &Projector, f: &mut impl Write, _: &impl Resolver) -> std::fmt::Result {
 	match projector {
 		Projector::Bx => write!(f, "unbox"),
 		Projector::Wrap => write!(f, "wrap"),
@@ -229,7 +235,7 @@ fn print_projector(projector: &Projector, f: &mut impl Write, _: &Rodeo) -> std:
 	}
 }
 
-fn print_pattern(pattern: &Pattern, f: &mut impl Write, interner: &Rodeo) -> std::fmt::Result {
+fn print_pattern(pattern: &Pattern, f: &mut impl Write, interner: &impl Resolver) -> std::fmt::Result {
 	match pattern {
 		Pattern::Variable(name) => write!(f, "{}", resolve(interner, name))?,
 		Pattern::Witness { index, witness } => {
@@ -253,7 +259,7 @@ fn print_pattern(pattern: &Pattern, f: &mut impl Write, interner: &Rodeo) -> std
 fn print_multiparameter(
 	parameters: &[Option<Name>],
 	f: &mut impl Write,
-	interner: &Rodeo,
+	interner: &impl Resolver,
 ) -> std::fmt::Result {
 	let mut parameters = parameters.into_iter();
 	if let Some(first) = parameters.next() {
@@ -265,7 +271,7 @@ fn print_multiparameter(
 	Ok(())
 }
 
-fn resolve<'a>(interner: &'a Rodeo, name: &Option<Name>) -> &'a str {
+fn resolve<'a>(interner: &'a impl Resolver, name: &Option<Name>) -> &'a str {
 	if let Some(name) = name {
 		interner.resolve(name)
 	} else {

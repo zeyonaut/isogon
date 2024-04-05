@@ -2,12 +2,10 @@ mod common;
 mod ir;
 mod op;
 
-use lasso::Rodeo;
 use op::{elaborate, evaluate::Evaluate, parse::parse};
 
-use self::ir::presyntax::PurePreterm;
 use crate::delta::op::{
-	flatten::flatten, stage::Stage, unelaborate::Unelaborate, unevaluate::Unevaluate, unparse::print,
+	flatten::flatten, stage::Stage, unelaborate::Unelaborate, unevaluate::Unevaluate, unparse::pretty_print,
 	unstage::Unstage,
 };
 
@@ -49,10 +47,4 @@ pub fn run(source: &str) {
 	let flat_term = flatten(&unstaged_term);
 	println!("Closure conversion complete.");
 	println!("Closure-converted program: {flat_term:?}")
-}
-
-fn pretty_print(term: &PurePreterm, interner: &Rodeo) -> String {
-	let mut s = String::new();
-	print(term, &mut s, interner).unwrap();
-	s
 }
