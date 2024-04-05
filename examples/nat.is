@@ -1,21 +1,19 @@
-#fragment 0
-
-let add : Nat -> Nat -> Nat
-	= |a| |b| a :: |_| Nat {
+def [*] add : '(Nat -> Nat -> Nat)
+	= <|a| |b| a :: |_| Nat {
 		| 0        -> b
 		| suc @_.k -> suc k
-	};
+	}>;
 
-let mul : Nat -> Nat -> Nat
-	= |a| |b| a :: |_| Nat {
+def [*] mul : '(Nat -> Nat -> Nat)
+	= <|a| |b| a :: |_| Nat {
 		| 0        -> 0
-		| suc @_.k -> add b k
-	};
+		| suc @_.k -> <add> b k
+	}>;
 
-let pow : Nat -> Nat -> Nat
-	= |a| |b| a :: |_| Nat {
+def [*] pow : '(Nat -> Nat -> Nat)
+	= <|a| |b| a :: |_| Nat {
 		| 0        -> 1
-		| suc @_.k -> mul b k
-	};
+		| suc @_.k -> <mul> b k
+	}>;
 
-pow 3 7
+<pow> 3 7

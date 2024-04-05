@@ -1,18 +1,21 @@
-#fragment 0
-
-let add : Nat -> Nat -> Nat
-	= |a| |b| a :: |_| Nat {
+def [*] add : '(Nat -> Nat -> Nat)
+	= <|a| |b| a :: |_| Nat {
 		| 0        -> b
 		| suc @_.k -> suc k
-	};
+	}>;
 
-let fib2 : Nat -> (Nat & Nat) -> (Nat & Nat)
-	= |n| |x| n :: |_| (Nat & Nat) {
+def [*] fib2 : '(Nat -> (Nat & Nat) -> (Nat & Nat))
+	= <|n| |x| n :: |_| (Nat & Nat) {
 		| 0        -> x
-		| suc @_.x -> add (x/.) (x/!), x/.
-	};
+		| suc @_.x ->
+			let (a, b) = x;
+			<add> a b, a
+	}>;
 
 let fib : Nat -> Nat
-	= |n| fib2 n (0, 1)/.;
+	= |n| (
+		let (a, b) = <fib2> n (0, 1);
+		a
+	);
 
 fib 14
