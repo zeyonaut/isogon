@@ -13,7 +13,7 @@ use nom::{
 use crate::{parse::*, utility::*};
 
 pub fn run(line: &str) {
-	let ("", term) = parse_term_eof(&line).unwrap() else {
+	let ("", term) = parse_term_eof(line).unwrap() else {
 		return;
 	};
 	println!("parsed.");

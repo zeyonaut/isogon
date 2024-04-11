@@ -13,7 +13,7 @@ use crate::delta::{
 pub fn flatten(value: &DynamicTerm) -> Program {
 	let mut flattener = Flattener { amplifiers: vec![], context: vec![], procedures: vec![] };
 
-	let entry = flattener.flatten(&value, &mut vec![]);
+	let entry = flattener.flatten(value, &mut vec![]);
 
 	Program { entry, procedures: flattener.procedures }
 }
@@ -134,13 +134,13 @@ impl Flattener {
 			DynamicTerm::EnumValue(k, v) => Term::EnumValue(*k, *v),
 			DynamicTerm::CaseEnum { scrutinee, motive_kind, motive: _, cases } => Term::CaseEnum {
 				scrutinee: self.flatten(scrutinee, occurrences).into(),
-				cases: cases.into_iter().map(|case| self.flatten(case, occurrences)).collect(),
+				cases: cases.iter().map(|case| self.flatten(case, occurrences)).collect(),
 				motive_repr: motive_kind.clone().unwrap().stage().repr,
 			},
 
 			// Paths.
 			DynamicTerm::Id { .. } | DynamicTerm::Refl => panic!("irrelevant"),
-			DynamicTerm::CasePath { case_refl, .. } => self.flatten(&case_refl, occurrences),
+			DynamicTerm::CasePath { case_refl, .. } => self.flatten(case_refl, occurrences),
 
 			// Natural numbers.
 			DynamicTerm::Nat => panic!("irrelevant"),
@@ -183,7 +183,7 @@ impl Flattener {
 		repr: Option<Repr>,
 		body: &Binder<Box<DynamicTerm>>,
 		result_repr: Option<Repr>,
-		occurrences: &mut Vec<Cost>,
+		occurrences: &mut [Cost],
 	) -> Function {
 		let context_len = Level(self.context.len());
 

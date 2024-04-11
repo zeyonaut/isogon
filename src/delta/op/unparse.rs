@@ -128,7 +128,7 @@ pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver
 			print_spine(&motive.body, f, interner)?;
 			write!(f, " {{")?;
 
-			let mut cases = cases.into_iter();
+			let mut cases = cases.iter();
 			if let Some((pattern, preterm)) = cases.next() {
 				print_pattern(pattern, f, interner)?;
 				write!(f, " -> ")?;
@@ -159,7 +159,7 @@ fn print_atom(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolve
 	match &preterm.0 {
 		Preterm::Variable(_) | Preterm::SwitchLevel(_) => print(preterm, f, interner)?,
 
-		Preterm::Constructor(_, args) | Preterm::Former(_, args) if args.len() == 0 =>
+		Preterm::Constructor(_, args) | Preterm::Former(_, args) if args.is_empty() =>
 			print(preterm, f, interner)?,
 
 		Preterm::Let { .. }
@@ -261,7 +261,7 @@ fn print_multiparameter(
 	f: &mut impl Write,
 	interner: &impl Resolver,
 ) -> std::fmt::Result {
-	let mut parameters = parameters.into_iter();
+	let mut parameters = parameters.iter();
 	if let Some(first) = parameters.next() {
 		write!(f, "{}", resolve(interner, first))?;
 		for parameter in parameters {
@@ -288,6 +288,6 @@ fn optional_grade_prefix(grade: impl Into<Cost>, parameter: &str) -> String {
 			format!("[{grade}] ")
 		}
 	} else {
-		format!("[*] ")
+		"[*] ".to_owned()
 	}
 }

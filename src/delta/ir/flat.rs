@@ -186,14 +186,12 @@ impl Substitute for Function {
 
 impl Substitute for Variable {
 	fn substitute(&mut self, substitution: &HashMap<Level, Level>, minimum_level: Level) {
-		match self {
-			Variable::Local(level) =>
-				*self = match level.0.cmp(&minimum_level.0) {
-					Ordering::Less => Variable::Outer(substitution[level]),
-					Ordering::Equal => Variable::Parameter,
-					Ordering::Greater => Variable::Local(Level(level.0 - minimum_level.0 - 1)),
-				},
-			_ => (),
+		if let Variable::Local(level) = self {
+			*self = match level.0.cmp(&minimum_level.0) {
+				Ordering::Less => Variable::Outer(substitution[level]),
+				Ordering::Equal => Variable::Parameter,
+				Ordering::Greater => Variable::Local(Level(level.0 - minimum_level.0 - 1)),
+			}
 		}
 	}
 }

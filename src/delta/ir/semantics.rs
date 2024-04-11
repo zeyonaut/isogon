@@ -153,10 +153,7 @@ impl StaticValue {
 	}
 
 	pub fn is_trivial(&self) -> bool {
-		match self {
-			StaticValue::CpyValue(CpyValue::Max(v)) if v.is_empty() => true,
-			_ => false,
-		}
+		matches!(self, StaticValue::CpyValue(CpyValue::Max(v)) if v.is_empty())
 	}
 }
 
@@ -309,8 +306,8 @@ impl StaticValue {
 	) -> Self {
 		let len = a_set.len();
 		'b: for b in b_set {
-			'a: for i in 0..len {
-				if level.can_convert(&a_set[i], &b) {
+			'a: for a in &a_set[0..len] {
+				if level.can_convert(a, &b) {
 					continue 'b;
 				} else {
 					continue 'a;

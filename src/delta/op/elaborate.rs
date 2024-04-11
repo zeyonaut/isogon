@@ -156,7 +156,11 @@ impl<'c> DerefMut for LockedContext<'c> {
 }
 
 impl<'c> Drop for LockedContext<'c> {
-	fn drop(&mut self) { self.old_lock.map(|old_lock| self.context.lock = old_lock); }
+	fn drop(&mut self) {
+		if let Some(old_lock) = self.old_lock {
+			self.context.lock = old_lock
+		}
+	}
 }
 
 pub struct AmplifiedContext<'c> {
@@ -195,7 +199,6 @@ impl<'c> ExtendedContext<'c> {
 		Self { context: ctx }
 	}
 
-	#[must_use]
 	fn free(self) -> Result<(), ElaborationErrorKind> {
 		let grade = self.tys.last().unwrap().1.grade;
 		if let Cost::Fin(grade) = grade {
@@ -238,7 +241,6 @@ impl Context {
 	pub fn len(&self) -> Level { Level(self.environment.0.len()) }
 
 	// Uses a resource.
-	#[must_use]
 	fn take_index(&mut self, index: usize, fragment: u8) -> Result<(), ElaborationErrorKind> {
 		let level = self.tys.len() - (index + 1);
 
@@ -269,22 +271,20 @@ impl Context {
 		Ok(())
 	}
 
-	pub fn lock_if<'c>(&'c mut self, should_lock: bool) -> LockedContext<'c> {
-		LockedContext::new(self, should_lock)
-	}
+	pub fn lock_if(&mut self, should_lock: bool) -> LockedContext<'_> { LockedContext::new(self, should_lock) }
 
-	pub fn amplify<'c>(&'c mut self, amplifier: impl Into<Cost>) -> AmplifiedContext<'c> {
+	pub fn amplify(&mut self, amplifier: impl Into<Cost>) -> AmplifiedContext<'_> {
 		AmplifiedContext::new(self, amplifier.into())
 	}
 
-	pub fn bind_static<'c>(
-		&'c mut self,
+	pub fn bind_static(
+		&mut self,
 		name: Option<Name>,
 		is_crisp: bool,
 		grade: Cost,
 		copy: Cpy,
 		ty: StaticValue,
-	) -> ExtendedContext<'c> {
+	) -> ExtendedContext<'_> {
 		ExtendedContext::new(
 			self,
 			name,
@@ -297,14 +297,14 @@ impl Context {
 		)
 	}
 
-	pub fn bind_dynamic<'c>(
-		&'c mut self,
+	pub fn bind_dynamic(
+		&mut self,
 		name: Option<Name>,
 		is_crisp: bool,
 		grade: Cost,
 		ty: DynamicValue,
 		kind: KindValue,
-	) -> ExtendedContext<'c> {
+	) -> ExtendedContext<'_> {
 		ExtendedContext::new(
 			self,
 			name,
@@ -317,15 +317,15 @@ impl Context {
 		)
 	}
 
-	pub fn extend_static<'c>(
-		&'c mut self,
+	pub fn extend_static(
+		&mut self,
 		name: Option<Name>,
 		is_crisp: bool,
 		grade: Cost,
 		copy: Cpy,
 		ty: StaticValue,
 		value: StaticValue,
-	) -> ExtendedContext<'c> {
+	) -> ExtendedContext<'_> {
 		ExtendedContext::new(
 			self,
 			name,
@@ -338,15 +338,15 @@ impl Context {
 		)
 	}
 
-	pub fn extend_dynamic<'c>(
-		&'c mut self,
+	pub fn extend_dynamic(
+		&mut self,
 		name: Option<Name>,
 		is_crisp: bool,
 		grade: Cost,
 		ty: DynamicValue,
 		kind: KindValue,
 		value: DynamicValue,
-	) -> ExtendedContext<'c> {
+	) -> ExtendedContext<'_> {
 		ExtendedContext::new(
 			self,
 			name,
@@ -368,7 +368,7 @@ fn synthesize_static(
 	let ParsedPreterm(preterm) = expr.preterm;
 	Ok(match preterm {
 		// Variables.
-		Preterm::Variable(name) => 'var: loop {
+		Preterm::Variable(name) => 'var: {
 			for (i, (name_1, entry)) in ctx.tys.iter().rev().enumerate() {
 				if &Some(name) == name_1 {
 					if let ContextType::Static(ty) = &entry.ty {
@@ -381,7 +381,7 @@ fn synthesize_static(
 				}
 			}
 			return Err(ElaborationErrorKind::NotInScope.at(expr.range));
-		},
+		}
 
 		// Let-expressions.
 		Preterm::Let { is_meta: true, grade, ty, argument, tail } => {
@@ -401,7 +401,7 @@ fn synthesize_static(
 				let mut context = ctx.extend_static(
 					parameters[0],
 					false,
-					(grade * (fragment as usize).into()).into(),
+					grade * (fragment as usize).into(),
 					ty_c,
 					ty_value,
 					argument_value,
@@ -419,7 +419,7 @@ fn synthesize_static(
 		// Quoting.
 		Preterm::SwitchLevel(quotee) => {
 			let (quotee, quotee_ty, kind) = synthesize_dynamic(ctx, *quotee, fragment)?;
-			(StaticTerm::Quote(bx!(quotee)), StaticValue::Lift { ty: quotee_ty.into(), kind: kind.into() })
+			(StaticTerm::Quote(bx!(quotee)), StaticValue::Lift { ty: quotee_ty, kind: kind.into() })
 		}
 
 		// Dependent functions.
@@ -434,12 +434,7 @@ fn synthesize_static(
 				family
 			};
 			(
-				StaticTerm::Pi {
-					grade: grade.into(),
-					base_copy,
-					base: base.into(),
-					family: bind([parameter], family),
-				},
+				StaticTerm::Pi { grade, base_copy, base: base.into(), family: bind([parameter], family) },
 				StaticValue::Universe(family_copy),
 			)
 		}
@@ -502,6 +497,7 @@ fn synthesize_static(
 						fiberpoint,
 					);
 					let result = synthesize_static(&mut ctx, *tail.body, fragment)?;
+					ctx.free().map_err(|e| e.at(expr.range))?;
 					result
 				};
 				ctx.free().map_err(|e| e.at(expr.range))?;
@@ -726,7 +722,7 @@ fn synthesize_static(
 							let mut ctx = ctx.bind_static(
 								witness,
 								false,
-								(1 * fragment as usize).into(),
+								(fragment as usize).into(),
 								motive_c,
 								motive_value.evaluate_with([(index, index_level).into()]),
 							);
@@ -790,7 +786,7 @@ fn verify_static(
 				let mut context = ctx.extend_static(
 					parameters[0],
 					false,
-					(grade * (fragment as usize).into()).into(),
+					grade * (fragment as usize).into(),
 					ty_c,
 					ty_value,
 					argument_value,
@@ -876,6 +872,7 @@ fn verify_static(
 						fiberpoint,
 					);
 					let result = verify_static(&mut ctx, *tail.body, fragment, tail_ty)?;
+					ctx.free().map_err(|e| e.at(expr.range))?;
 					result
 				};
 				ctx.free().map_err(|e| e.at(expr.range))?;
@@ -913,7 +910,7 @@ fn synthesize_dynamic(
 	let ParsedPreterm(preterm) = expr.preterm;
 	Ok(match preterm {
 		// Variables.
-		Preterm::Variable(name) => 'var: loop {
+		Preterm::Variable(name) => 'var: {
 			for (i, (name_1, entry)) in ctx.tys.iter().rev().enumerate() {
 				if &Some(name) == name_1 {
 					if let ContextType::Dynamic(ty, kind) = &entry.ty {
@@ -926,7 +923,7 @@ fn synthesize_dynamic(
 				}
 			}
 			return Err(ElaborationErrorKind::NotInScope.at(expr.range));
-		},
+		}
 
 		// Let-expressions.
 		Preterm::Let { is_meta, grade, ty, argument, tail } => {
@@ -947,7 +944,7 @@ fn synthesize_dynamic(
 					let mut context = ctx.extend_static(
 						parameters[0],
 						false,
-						(grade * (fragment as usize).into()).into(),
+						grade * (fragment as usize).into(),
 						ty_c,
 						ty_value,
 						argument_value,
@@ -1032,13 +1029,13 @@ fn synthesize_dynamic(
 			};
 
 			// Ensure that the inferred fiber axes are independent of the basepoint, or error otherwise.
-			let Ok(family_kind) = family_kind.try_unevaluate_in(ctx.len()).into() else {
+			let Ok(family_kind) = family_kind.try_unevaluate_in(ctx.len()) else {
 				return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
 			};
 
 			(
 				DynamicTerm::Pi {
-					grade: grade.into(),
+					grade,
 					base_kind: base_kind.unevaluate_in(ctx.len()).into(),
 					base: base.into(),
 					family_kind: family_kind.into(),
@@ -1088,7 +1085,7 @@ fn synthesize_dynamic(
 			let kind = KindValue::pair(ctx.len(), base_kind.clone(), family_kind.clone());
 
 			// Ensure that the inferred fiber axes are independent of the basepoint, or error otherwise.
-			let Ok(family_kind) = family_kind.try_unevaluate_in(ctx.len()).into() else {
+			let Ok(family_kind) = family_kind.try_unevaluate_in(ctx.len()) else {
 				return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
 			};
 
@@ -1134,6 +1131,7 @@ fn synthesize_dynamic(
 						fiberpoint,
 					);
 					let result = synthesize_dynamic(&mut ctx, *tail.body, fragment)?;
+					ctx.free().map_err(|e| e.at(expr.range))?;
 					result
 				};
 				ctx.free().map_err(|e| e.at(expr.range))?;
@@ -1573,7 +1571,7 @@ fn synthesize_dynamic(
 								let mut ctx = ctx.bind_dynamic(
 									witness,
 									false,
-									(1 * fragment as usize).into(),
+									(fragment as usize).into(),
 									motive.evaluate_with([(index, index_level).into()]),
 									motive_kind.clone(),
 								);
@@ -1582,7 +1580,7 @@ fn synthesize_dynamic(
 									case_suc,
 									fragment,
 									motive.evaluate_with([DynamicValue::Neutral(DynamicNeutral::Suc(Rc::new(
-										DynamicNeutral::Variable(index, index_level).into(),
+										DynamicNeutral::Variable(index, index_level),
 									)))]),
 								)?;
 								ctx.free().map_err(|e| e.at(expr.range))?;
@@ -1642,7 +1640,7 @@ fn verify_dynamic(
 					let mut context = ctx.extend_static(
 						parameters[0],
 						false,
-						(grade * (fragment as usize).into()).into(),
+						grade * (fragment as usize).into(),
 						ty_c,
 						ty_value,
 						argument_value,
@@ -1762,6 +1760,7 @@ fn verify_dynamic(
 						fiberpoint,
 					);
 					let result = verify_dynamic(&mut ctx, *tail.body, fragment, tail_ty)?;
+					ctx.free().map_err(|e| e.at(expr.range))?;
 					result
 				};
 				ctx.free().map_err(|e| e.at(expr.range))?;

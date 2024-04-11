@@ -39,11 +39,11 @@ pub fn parse(source: &str) -> (LexedSource, ParsedProgram, RodeoResolver) {
 }
 pub fn format_lex_error(source: &str, LexError(location, kind): LexError) -> String {
 	fn char_list_string(chars: &[char]) -> String {
-		if let Some(c) = chars.get(0) {
+		if let Some(c) = chars.first() {
 			use std::fmt::Write;
 			let mut string = String::new();
 			write!(string, "`{}`", c).unwrap();
-			for c in chars.into_iter().skip(1) {
+			for c in chars.iter().skip(1) {
 				write!(string, ", `{}`", c).unwrap();
 			}
 			string
@@ -63,16 +63,14 @@ pub fn format_lex_error(source: &str, LexError(location, kind): LexError) -> Str
 		LexErrorKind::UnexpectedEnd(expected) => {
 			format!("lex error: expected one of {}; found end of input", char_list_string(expected))
 		}
-		LexErrorKind::InvalidPragma => {
-			format!("invalid pragma")
-		}
+		LexErrorKind::InvalidPragma => "invalid pragma".to_owned(),
 	}
 }
 
 pub fn report_line_error(source: &str, range: (usize, usize), error_string: &str) {
 	const TAB_WIDTH: usize = 3;
 	// SAFETY: Repeated spaces form a valid string.
-	const TAB_REPLACEMENT: &'static str = unsafe { std::str::from_utf8_unchecked(&[b' '; TAB_WIDTH]) };
+	const TAB_REPLACEMENT: &str = unsafe { std::str::from_utf8_unchecked(&[b' '; TAB_WIDTH]) };
 
 	let mut lines = source.split_inclusive('\n');
 	let mut line_number: usize = 0;
@@ -96,9 +94,9 @@ pub fn report_line_error(source: &str, range: (usize, usize), error_string: &str
 	print!("[{}:{}] ", line_number, bytes_left);
 	println!("error: {error_string}");
 
-	let visual_line = line.replace('\t', &TAB_REPLACEMENT).trim_end().to_owned();
+	let visual_line = line.replace('\t', TAB_REPLACEMENT).trim_end().to_owned();
 	let visual_offset: usize =
-		unicode_width::UnicodeWidthStr::width(line[0..bytes_left].replace('\t', &TAB_REPLACEMENT).as_str());
+		unicode_width::UnicodeWidthStr::width(line[0..bytes_left].replace('\t', TAB_REPLACEMENT).as_str());
 
 	let displayed_line_number = line_number.to_string();
 	let dummy_line_number = " ".repeat(displayed_line_number.len());
@@ -233,7 +231,7 @@ peg::parser! {
 				/ callee:spine() _ argument:atom()
 					{ Preterm::Call { callee: callee.into(), argument: argument.into() } }
 				// Case splits.
-				/ scrutinee:spine() _ cast:([Token::Keyword(Keyword::Cast)] {()})? _ [Token::TwoColon] _ motive:bound_spine_headed() _ [Token::CurlyL] (_ [Token::Pipe])? _ cases:case()**(_ [Token::Pipe] _) _ [Token::CurlyR]
+				/ scrutinee:spine() _ cast:([Token::Keyword(Keyword::Cast)] {})? _ [Token::TwoColon] _ motive:bound_spine_headed() _ [Token::CurlyL] (_ [Token::Pipe])? _ cases:case()**(_ [Token::Pipe] _) _ [Token::CurlyR]
 					{ Preterm::Split { scrutinee: scrutinee.into(), is_cast: cast.is_some(), motive, cases} }
 				// Projections.
 				/ spine:spine() _ projector:projector() { Preterm::Project(spine.into(), projector) }

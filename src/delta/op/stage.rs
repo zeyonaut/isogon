@@ -160,7 +160,7 @@ impl Stage for DynamicTerm {
 			},
 			Function { grade, body, domain_kind, codomain_kind } => DynamicValue::Function {
 				grade,
-				body: body.stage_in(environment).into(),
+				body: body.stage_in(environment),
 				domain_kind: domain_kind.map(|kind| kind.stage_in(environment)),
 				codomain_kind: codomain_kind.map(|kind| kind.stage_in(environment)),
 			},

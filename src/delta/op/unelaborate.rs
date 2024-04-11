@@ -35,7 +35,7 @@ impl Unelaborate for StaticTerm {
 			StaticTerm::CpyNt => Preterm::Constructor(Constructor::Cpy(Cpy::Nt), vec![]),
 			StaticTerm::CpyMax(set) => {
 				let set: Vec<_> = set.into_iter().map(|x| x.unelaborate()).collect();
-				if set.len() == 0 {
+				if set.is_empty() {
 					Preterm::Constructor(Constructor::Cpy(Cpy::Tr), vec![])
 				} else if set.len() == 1 {
 					let Ok(set) = <Box<[_; 1]>>::try_from(set) else {
@@ -67,14 +67,13 @@ impl Unelaborate for StaticTerm {
 			},
 
 			StaticTerm::Pi { grade, base_copy: _, base, family } =>
-				Preterm::Pi { grade, base: base.unelaborate().into(), family: family.unelaborate().into() },
-			StaticTerm::Function(grade, function) =>
-				Preterm::Lambda { grade, body: function.unelaborate().into() },
+				Preterm::Pi { grade, base: base.unelaborate().into(), family: family.unelaborate() },
+			StaticTerm::Function(grade, function) => Preterm::Lambda { grade, body: function.unelaborate() },
 			StaticTerm::Apply { scrutinee, argument } =>
 				Preterm::Call { callee: scrutinee.unelaborate().into(), argument: argument.unelaborate().into() },
 
 			StaticTerm::Sg { base_copy: _, base, family_copy: _, family } =>
-				Preterm::Sg { base: base.unelaborate().into(), family: family.unelaborate().into() },
+				Preterm::Sg { base: base.unelaborate().into(), family: family.unelaborate() },
 			StaticTerm::Pair { basepoint, fiberpoint } => Preterm::Pair {
 				basepoint: basepoint.unelaborate().into(),
 				fiberpoint: fiberpoint.unelaborate().into(),
@@ -137,7 +136,7 @@ impl Unelaborate for DynamicTerm {
 
 			DynamicTerm::Def { grade, ty, argument, tail } => Preterm::Let {
 				is_meta: true,
-				grade: Some(grade.into()),
+				grade: Some(grade),
 				ty: ty.unelaborate().into(),
 				argument: argument.unelaborate().into(),
 				tail: tail.unelaborate(),
@@ -166,14 +165,14 @@ impl Unelaborate for DynamicTerm {
 			},
 
 			DynamicTerm::Pi { grade, base_kind: _, base, family_kind: _, family } =>
-				Preterm::Pi { grade, base: base.unelaborate().into(), family: family.unelaborate().into() },
+				Preterm::Pi { grade, base: base.unelaborate().into(), family: family.unelaborate() },
 			DynamicTerm::Function { grade, body, domain_kind: _, codomain_kind: _ } =>
-				Preterm::Lambda { grade, body: body.unelaborate().into() },
+				Preterm::Lambda { grade, body: body.unelaborate() },
 			DynamicTerm::Apply { scrutinee, grade: _, argument, family_kind: _ } =>
 				Preterm::Call { callee: scrutinee.unelaborate().into(), argument: argument.unelaborate().into() },
 
 			DynamicTerm::Sg { base_kind: _, base, family_kind: _, family } =>
-				Preterm::Sg { base: base.unelaborate().into(), family: family.unelaborate().into() },
+				Preterm::Sg { base: base.unelaborate().into(), family: family.unelaborate() },
 			DynamicTerm::Pair { basepoint, fiberpoint } => Preterm::Pair {
 				basepoint: basepoint.unelaborate().into(),
 				fiberpoint: fiberpoint.unelaborate().into(),

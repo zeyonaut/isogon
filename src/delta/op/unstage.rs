@@ -88,7 +88,7 @@ impl Unstage for DynamicValue {
 			EnumValue(k, v) => DynamicTerm::EnumValue(*k, *v),
 			CaseEnum { scrutinee, cases, motive_kind, motive } => DynamicTerm::CaseEnum {
 				scrutinee: scrutinee.unstage_in(level).into(),
-				cases: cases.into_iter().map(|case| case.unstage_in(level)).collect(),
+				cases: cases.iter().map(|case| case.unstage_in(level)).collect(),
 				motive_kind: motive_kind.as_ref().map(|kind| kind.unstage_in(level).into()),
 				motive: motive.unstage_in(level),
 			},

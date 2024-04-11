@@ -14,7 +14,6 @@ pub trait Unevaluate {
 	/// Transforms a value into a core term.
 	fn unevaluate(&self) -> Self::Term { self.unevaluate_in(Level(0)) }
 
-	#[must_use]
 	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()>;
 
 	fn unevaluate_in(&self, level: Level) -> Self::Term { self.try_unevaluate_in(level).unwrap() }
@@ -58,7 +57,7 @@ impl Unevaluate for StaticValue {
 				if ns.len() == 1 {
 					ns[0].try_unevaluate_in(level)?
 				} else {
-					StaticTerm::CpyMax(ns.into_iter().map(|n| n.unevaluate_in(level)).collect())
+					StaticTerm::CpyMax(ns.iter().map(|n| n.unevaluate_in(level)).collect())
 				},
 
 			V::ReprType => StaticTerm::Repr,
@@ -137,7 +136,7 @@ impl Unevaluate for StaticNeutral {
 			CaseEnum { scrutinee, motive, cases } => StaticTerm::CaseEnum {
 				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
 				motive: motive.try_unevaluate_in(level)?,
-				cases: cases.into_iter().map(|case| case.try_unevaluate_in(level)).collect::<Result<_, _>>()?,
+				cases: cases.iter().map(|case| case.try_unevaluate_in(level)).collect::<Result<_, _>>()?,
 			},
 
 			// Natural numbers.
@@ -177,7 +176,7 @@ impl Unevaluate for DynamicValue {
 			},
 			Function { grade, body } => DynamicTerm::Function {
 				grade: *grade,
-				body: body.try_unevaluate_in(level)?.into(),
+				body: body.try_unevaluate_in(level)?,
 				domain_kind: None,
 				codomain_kind: None,
 			},
@@ -258,7 +257,7 @@ impl Unevaluate for DynamicNeutral {
 				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
 				motive_kind: None,
 				motive: motive.try_unevaluate_in(level)?,
-				cases: cases.into_iter().map(|case| case.try_unevaluate_in(level)).collect::<Result<_, _>>()?,
+				cases: cases.iter().map(|case| case.try_unevaluate_in(level)).collect::<Result<_, _>>()?,
 			},
 
 			// Paths.

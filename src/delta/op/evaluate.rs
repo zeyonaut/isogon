@@ -152,7 +152,7 @@ impl Evaluate for StaticTerm {
 				StaticValue::Neutral(neutral) => {
 					let mut neutrals = vec![&neutral];
 					while let StaticNeutral::Suc(previous) = neutrals.last().unwrap() {
-						neutrals.push(&previous);
+						neutrals.push(previous);
 					}
 					let result = StaticValue::Neutral(StaticNeutral::CaseNat {
 						scrutinee: rc!(neutrals.pop().unwrap().clone()),
@@ -301,7 +301,7 @@ impl Evaluate for DynamicTerm {
 					DynamicValue::Neutral(neutral) => {
 						let mut neutrals = vec![&neutral];
 						while let DynamicNeutral::Suc(previous) = neutrals.last().unwrap() {
-							neutrals.push(&previous);
+							neutrals.push(previous);
 						}
 						let result = DynamicValue::Neutral(DynamicNeutral::CaseNat {
 							scrutinee: rc!(neutrals.pop().unwrap().clone()),

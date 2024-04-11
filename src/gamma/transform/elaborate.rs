@@ -256,7 +256,7 @@ fn synthesize_static(
 	expr: Expression,
 ) -> Result<(StaticTerm, StaticValue), ElaborationError> {
 	Ok(match expr.preterm {
-		Preterm::Variable(name) => 'var: loop {
+		Preterm::Variable(name) => 'var: {
 			for (i, (name_1, entry)) in context.tys.iter().rev().enumerate() {
 				if &Some(name) == name_1 {
 					if context.len().0 - 1 - i >= context.lock || entry.is_crisp {
@@ -271,7 +271,7 @@ fn synthesize_static(
 				}
 			}
 			return Err(ElaborationErrorKind::NotInScope.at(expr.range));
-		},
+		}
 		Preterm::Quote(quotee) => {
 			let (quotee, quotee_ty, copy, repr) = synthesize_dynamic(context, *quotee)?;
 			(
@@ -589,7 +589,7 @@ fn synthesize_dynamic(
 	expr: Expression,
 ) -> Result<(DynamicTerm, DynamicValue, StaticValue, StaticValue), ElaborationError> {
 	Ok(match expr.preterm {
-		Preterm::Variable(name) => 'var: loop {
+		Preterm::Variable(name) => 'var: {
 			for (i, (name_1, entry)) in context.tys.iter().rev().enumerate() {
 				if &Some(name) == name_1 {
 					if context.len().0 - 1 - i >= context.lock || entry.is_crisp {
@@ -609,7 +609,7 @@ fn synthesize_dynamic(
 				}
 			}
 			return Err(ElaborationErrorKind::NotInScope.at(expr.range));
-		},
+		}
 
 		Preterm::Splice(splicee) => {
 			let (splicee, StaticValue::Lift { ty: liftee, copy, repr }) = synthesize_static(context, *splicee)?

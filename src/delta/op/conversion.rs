@@ -47,7 +47,7 @@ impl Conversion<StaticValue> for Level {
 					}
 					return false;
 				}
-				return true;
+				true
 			}
 			(V::CpyValue(CpyValue::Max(left)), V::Neutral(right)) if left.len() == 1 =>
 				self.can_convert(&left[0], right),
@@ -95,11 +95,10 @@ impl Conversion<StaticValue> for Level {
 				self.can_convert(&**left_base, right_base)
 					&& (self + 1).can_convert(&left_family.evaluate_auto(self), &right_family.evaluate_auto(self)),
 			(V::Pair(left_bp, left_fp), V::Pair(right_bp, right_fp)) =>
-				self.can_convert(&**left_bp, &right_bp) && self.can_convert(&**left_fp, &right_fp),
+				self.can_convert(&**left_bp, right_bp) && self.can_convert(&**left_fp, right_fp),
 			(V::Neutral(left), V::Pair(br, fr)) =>
-				self.can_convert(&V::Neutral(StaticNeutral::Project(left.clone().into(), Field::Base)), &br)
-					&& self
-						.can_convert(&V::Neutral(StaticNeutral::Project(left.clone().into(), Field::Fiber)), &fr),
+				self.can_convert(&V::Neutral(StaticNeutral::Project(left.clone().into(), Field::Base)), br)
+					&& self.can_convert(&V::Neutral(StaticNeutral::Project(left.clone().into(), Field::Fiber)), fr),
 			(V::Pair(bl, fl), V::Neutral(right)) =>
 				self.can_convert(&**bl, &V::Neutral(StaticNeutral::Project(right.clone().into(), Field::Base)))
 					&& self
@@ -131,7 +130,7 @@ impl Conversion<StaticNeutral> for Level {
 
 			// Dependent functions.
 			(Apply(left, left_argument), Apply(right, right_argument)) =>
-				self.can_convert(&**left, &right) && self.can_convert(&**left_argument, &right_argument),
+				self.can_convert(&**left, right) && self.can_convert(&**left_argument, right_argument),
 
 			// Dependent pairs.
 			(Project(left, left_projection), Project(right, right_projection)) =>
@@ -187,7 +186,7 @@ impl Conversion<DynamicValue> for Level {
 				IndexedProduct { base: left_base, family: left_family, .. },
 				IndexedProduct { base: right_base, family: right_family, .. },
 			) =>
-				self.can_convert(&**left_base, &right_base)
+				self.can_convert(&**left_base, right_base)
 					&& (self + 1).can_convert(&left_family.evaluate_auto(self), &right_family.evaluate_auto(self)),
 			(Function { body: left, .. }, Function { body: right, .. }) =>
 				(self + 1).can_convert(&left.evaluate_auto(self), &right.evaluate_auto(self)),
@@ -206,16 +205,15 @@ impl Conversion<DynamicValue> for Level {
 				IndexedSum { base: left_base, family: left_family, .. },
 				IndexedSum { base: right_base, family: right_family, .. },
 			) =>
-				self.can_convert(&**left_base, &right_base)
+				self.can_convert(&**left_base, right_base)
 					&& (self + 1).can_convert(&left_family.evaluate_auto(self), &right_family.evaluate_auto(self)),
 			(Pair(left_bp, left_fp), Pair(right_bp, right_fp)) =>
-				self.can_convert(&**left_bp, &right_bp) && self.can_convert(&**left_fp, &right_fp),
+				self.can_convert(&**left_bp, right_bp) && self.can_convert(&**left_fp, right_fp),
 			(Neutral(left), Pair(right_bp, right_fp)) =>
-				self
-					.can_convert(&Neutral(Project { scrutinee: left.clone().into(), projection: Base }), &right_bp)
+				self.can_convert(&Neutral(Project { scrutinee: left.clone().into(), projection: Base }), right_bp)
 					&& self.can_convert(
 						&Neutral(Project { scrutinee: left.clone().into(), projection: Fiber }),
-						&right_fp,
+						right_fp,
 					),
 			(Pair(left_bp, left_fp), Neutral(right)) =>
 				self.can_convert(
@@ -285,7 +283,7 @@ impl Conversion<DynamicNeutral> for Level {
 			(
 				CasePath { scrutinee: scrutinee_l, case_refl: case_l, .. },
 				CasePath { scrutinee: scrutinee_r, case_refl: case_r, .. },
-			) => self.can_convert(&**scrutinee_l, scrutinee_r) && self.can_convert(&**case_l, &case_r),
+			) => self.can_convert(&**scrutinee_l, scrutinee_r) && self.can_convert(&**case_l, case_r),
 
 			// Natural numbers.
 			(Suc(a), Suc(b)) => self.can_convert(&**a, b),
