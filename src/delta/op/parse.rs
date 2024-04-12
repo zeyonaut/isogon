@@ -153,7 +153,7 @@ peg::parser! {
 			/ [Token::Keyword(Keyword::Repr)] {Former::Repr}
 			// Repeated programs.
 			/ [Token::Ast] {Former::Universe}
-			/ [Token::Bang] grade:finite_grade_annotation() {Former::Exp(grade)}
+			/ [Token::Bang] grade:cost_annotation() {Former::Exp(grade)}
 			// Enumerated numbers.
 			/ [Token::Keyword(Keyword::Bool)] {Former::Enum(2)}
 			/ [Token::Hash] card:number() { assert!(card <= 256); Former::Enum(card as u16)}
@@ -178,7 +178,7 @@ peg::parser! {
 			/ [Token::Keyword(Keyword::RMax)] {Constructor::ReprMax}
 			// Repeated programs.
 			/ [Token::Keyword(Keyword::RExp)] grade:finite_grade_annotation() {Constructor::ReprExp(grade)}
-			/ [Token::At] grade:finite_grade_annotation() {Constructor::Exp(grade)}
+			/ [Token::At] grade:cost_annotation() {Constructor::Exp(grade)}
 			// Enumerated numbers.
 			/ number:number() [Token::LowDash] card:number() {assert!(card <= 256 && number < card); Constructor::Enum(card as _, number as _)}
 			/ [Token::Keyword(Keyword::False)] {Constructor::Enum(2, 0)}
@@ -193,7 +193,8 @@ peg::parser! {
 			/ [Token::Keyword(Keyword::WrapValue)] {Constructor::Wrap}
 
 		rule projector() -> Projector
-			= [Token::Keyword(Keyword::BxProject)] {Projector::Bx}
+			= [Token::Keyword(Keyword::ExpProject)] {Projector::Exp}
+			/ [Token::Keyword(Keyword::BxProject)] {Projector::Bx}
 			/ [Token::Keyword(Keyword::WrapProject)] {Projector::Wrap}
 			/ [Token::Project(projection)] {Projector::Field(projection)}
 
@@ -255,8 +256,8 @@ peg::parser! {
 				is_meta:([Token::Keyword(Keyword::Let)] {false} / [Token::Keyword(Keyword::Def)] {true})
 					_ grade:(cost_annotation())? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
 				{ Preterm::Let { is_meta, grade, ty: ty.into(), argument: argument.into(), tail: bind([name], tail) }}
-				/ [Token::Keyword(Keyword::Let)] _ grade:(finite_grade_annotation())? _ [Token::At] grade_argument:finite_grade_annotation() _ [Token::ParenL] _ name:optional_parameter() _ [Token::ParenR] _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() {
-					Preterm::LetExp { grade: grade.unwrap_or(name.is_some() as _), grade_argument, argument: argument.into(), tail: bind([name], tail) }
+				/ [Token::Keyword(Keyword::Let)] _ grade:(cost_annotation())? _ [Token::At] grade_argument:cost_annotation() _ [Token::ParenL] _ name:optional_parameter() _ [Token::ParenR] _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() {
+					Preterm::ExpLet { grade, grade_argument, argument: argument.into(), tail: bind([name], tail) }
 				}
 				/ [Token::Keyword(Keyword::Let)] _ grade:(finite_grade_annotation())? _ [Token::ParenL] _ a:parameter() _ [Token::Comma] _ b:parameter() _ [Token::ParenR] _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() {
 					Preterm::SgLet { grade: grade.unwrap_or(1), argument: argument.into(), tail: bind([a, b], tail) }

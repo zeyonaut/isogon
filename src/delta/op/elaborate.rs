@@ -80,6 +80,7 @@ struct ElaborationError {
 #[derive(Debug, Clone)]
 enum ExpectedFormer {
 	Universe,
+	Exp,
 	Sigma,
 	Pi,
 	Lift,
@@ -536,7 +537,7 @@ fn synthesize_static(
 			Constructor::Exp(grade) => {
 				let [tm] = arguments.try_into().unwrap();
 				let (tm, ty) = synthesize_static(ctx, tm, 0)?;
-				(StaticTerm::Exp(grade, tm.into()), StaticValue::Exp(grade, ty.into()))
+				(StaticTerm::Repeat(grade, tm.into()), StaticValue::Exp(grade, ty.into()))
 			}
 
 			// Enumerated numbers.
@@ -1016,11 +1017,11 @@ fn synthesize_dynamic(
 			}
 
 			// Repeated programs.
-			Former::Exp(grade) => {
+			Former::Exp(Cost::Fin(grade)) => {
 				let [ty] = arguments.try_into().unwrap();
 				let (ty, kind) = elaborate_dynamic_type(ctx, ty)?;
 				(
-					DynamicTerm::Exp(grade, ty.into()),
+					DynamicTerm::Exp(grade, kind.unevaluate_in(ctx.len()).into(), ty.into()),
 					DynamicValue::Universe { kind: kind.exp(grade).into() },
 					KindValue::ty(),
 				)
@@ -1083,10 +1084,14 @@ fn synthesize_dynamic(
 		// Generic term constructors.
 		Preterm::Constructor(constructor, arguments) => match constructor {
 			// Repeated programs.
-			Constructor::Exp(grade) => {
+			Constructor::Exp(Cost::Fin(grade)) => {
 				let [tm] = arguments.try_into().unwrap();
 				let (tm, ty, kind) = synthesize_dynamic(ctx, tm, fragment)?;
-				(DynamicTerm::Exp(grade, tm.into()), DynamicValue::Exp(grade, ty.into()), kind.exp(grade))
+				(
+					DynamicTerm::Repeat(grade, tm.into()),
+					DynamicValue::Exp(grade, kind.clone().into(), ty.into()),
+					kind.exp(grade),
+				)
 			}
 
 			// Enumerated numbers.
@@ -1132,6 +1137,15 @@ fn synthesize_dynamic(
 
 		// Generic projectors.
 		Preterm::Project(scrutinee, projector) => match projector {
+			// Repeated programs.
+			Projector::Exp if fragment == 0 => {
+				let (scrutinee, scrutinee_ty, _) = synthesize_dynamic(ctx, *scrutinee, 0)?;
+				let DynamicValue::Exp(n, kind, ty) = scrutinee_ty else {
+					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Exp).at(expr.range));
+				};
+				(DynamicTerm::ExpProject(scrutinee.into()), ty.as_ref().clone(), (*kind).clone())
+			}
+
 			// Dependent pairs.
 			Projector::Field(field) if fragment == 0 => {
 				let (scrutinee, scrutinee_ty, _) = synthesize_dynamic(ctx, *scrutinee, 0)?;

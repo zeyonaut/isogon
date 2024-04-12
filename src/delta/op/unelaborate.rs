@@ -59,12 +59,13 @@ impl Unelaborate for StaticTerm {
 
 			StaticTerm::Exp(n, t) => Preterm::Former(Former::Exp(n), vec![t.unelaborate()]),
 			StaticTerm::Repeat(n, e) => Preterm::Constructor(Constructor::Exp(n), vec![e.unelaborate()]),
-			StaticTerm::LetExp { grade, grade_argument, argument, tail } => Preterm::LetExp {
-				grade,
+			StaticTerm::ExpLet { grade, grade_argument, argument, tail } => Preterm::ExpLet {
+				grade: Some(grade),
 				grade_argument,
 				argument: argument.unelaborate().into(),
 				tail: tail.unelaborate(),
 			},
+			StaticTerm::ExpProject(t) => Preterm::Project(t.unelaborate().into(), Projector::Exp),
 
 			StaticTerm::Pi { grade, base_copy: _, base, family } =>
 				Preterm::Pi { grade, base: base.unelaborate().into(), family: family.unelaborate() },
@@ -155,14 +156,15 @@ impl Unelaborate for DynamicTerm {
 
 			DynamicTerm::Splice(s) => Preterm::SwitchLevel(s.unelaborate().into()),
 
-			DynamicTerm::Exp(n, t) => Preterm::Former(Former::Exp(n), vec![t.unelaborate()]),
-			DynamicTerm::Repeat(n, e) => Preterm::Constructor(Constructor::Exp(n), vec![e.unelaborate()]),
-			DynamicTerm::LetExp { grade, grade_argument, argument, tail } => Preterm::LetExp {
-				grade,
-				grade_argument,
+			DynamicTerm::Exp(n, _, t) => Preterm::Former(Former::Exp(n.into()), vec![t.unelaborate()]),
+			DynamicTerm::Repeat(n, e) => Preterm::Constructor(Constructor::Exp(n.into()), vec![e.unelaborate()]),
+			DynamicTerm::ExpLet { grade, grade_argument, argument, kind: _, tail } => Preterm::ExpLet {
+				grade: Some(grade.into()),
+				grade_argument: grade_argument.into(),
 				argument: argument.unelaborate().into(),
 				tail: tail.unelaborate(),
 			},
+			DynamicTerm::ExpProject(t) => Preterm::Project(t.unelaborate().into(), Projector::Exp),
 
 			DynamicTerm::Pi { grade, base_kind: _, base, family_kind: _, family } =>
 				Preterm::Pi { grade, base: base.unelaborate().into(), family: family.unelaborate() },

@@ -3,7 +3,7 @@ use std::rc::Rc;
 use super::syntax::{DynamicTerm, StaticTerm};
 use crate::{
 	delta::{
-		common::{Closure, Cpy, Field, Index, Level, Name, Repr, ReprAtom},
+		common::{Closure, Cost, Cpy, Field, Index, Level, Name, Repr, ReprAtom},
 		op::conversion::Conversion,
 	},
 	utility::rc,
@@ -83,8 +83,8 @@ pub enum StaticValue {
 	Quote(DynamicValue),
 
 	// Repeated programs.
-	Exp(usize, Rc<Self>),
-	Repeat(usize, Rc<Self>),
+	Exp(Cost, Rc<Self>),
+	Repeat(Cost, Rc<Self>),
 
 	// Dependent functions.
 	IndexedProduct {
@@ -191,7 +191,7 @@ pub enum DynamicValue {
 	},
 
 	// Repeated programs.
-	Exp(usize, Rc<Self>),
+	Exp(usize, Rc<KindValue>, Rc<Self>),
 	Repeat(usize, Rc<Self>),
 
 	// Dependent functions.

@@ -41,6 +41,16 @@ impl Unstage for DynamicValue {
 			Universe(kind) => DynamicTerm::Universe { kind: kind.unstage_in(level).into() },
 
 			// Repeated programs.
+			Exp(n, kind, t) => DynamicTerm::Exp(*n, kind.unstage_in(level).into(), t.unstage_in(level).into()),
+			Repeat(n, t) => DynamicTerm::Repeat(*n, t.unstage_in(level).into()),
+			ExpLet { grade, grade_argument, argument, kind, tail } => DynamicTerm::ExpLet {
+				grade: *grade,
+				grade_argument: *grade_argument,
+				argument: argument.unstage_in(level).into(),
+				kind: kind.unstage_in(level).into(),
+				tail: tail.unstage_in(level),
+			},
+			ExpProject(t) => DynamicTerm::ExpProject(t.unstage_in(level).into()),
 
 			// Dependent functions.
 			Pi { grade, base_kind, base, family_kind, family } => DynamicTerm::Pi {

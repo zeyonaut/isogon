@@ -120,7 +120,7 @@ impl Unevaluate for StaticNeutral {
 				StaticTerm::Variable(*name, Index(context_length.checked_sub(level + 1).ok_or(())?)),
 
 			// Repeated programs.
-			ExpProject(_) => unimplemented!(),
+			ExpProject(scrutinee) => StaticTerm::ExpProject(scrutinee.try_unevaluate_in(level)?.into()),
 
 			// Dependent functions.
 			Apply(callee, argument) => StaticTerm::Apply {
@@ -163,7 +163,8 @@ impl Unevaluate for DynamicValue {
 			Universe { kind } => DynamicTerm::Universe { kind: kind.try_unevaluate_in(level)?.into() },
 
 			// Repeated programs.
-			Exp(grade, ty) => DynamicTerm::Exp(*grade, ty.unevaluate_in(level).into()),
+			Exp(grade, kind, ty) =>
+				DynamicTerm::Exp(*grade, kind.unevaluate_in(level).into(), ty.unevaluate_in(level).into()),
 			Repeat(grade, value) => DynamicTerm::Repeat(*grade, value.unevaluate_in(level).into()),
 
 			// Dependent functions.
@@ -238,7 +239,7 @@ impl Unevaluate for DynamicNeutral {
 			Splice(splicee) => DynamicTerm::Splice(splicee.try_unevaluate_in(level)?.into()),
 
 			// Repeated programs.
-			ExpProject(scrutinee) => unimplemented!(),
+			ExpProject(scrutinee) => DynamicTerm::ExpProject(scrutinee.try_unevaluate_in(level)?.into()),
 
 			// Dependent functions.
 			Apply { scrutinee, argument } => DynamicTerm::Apply {

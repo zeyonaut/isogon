@@ -1,3 +1,5 @@
+use core::panic;
+
 use crate::{
 	delta::{
 		common::{Binder, Closure, Field, Level},
@@ -72,10 +74,11 @@ impl Evaluate for StaticTerm {
 			// Repeated programs.
 			S::Exp(grade, ty) => StaticValue::Exp(grade, ty.evaluate_in(environment).into()),
 			S::Repeat(grade, argument) => StaticValue::Repeat(grade, argument.evaluate_in(environment).into()),
-			S::LetExp { grade: _, grade_argument: _, argument, tail } => match argument.evaluate_in(environment)
-			{
-				StaticValue::Repeat(_, argument) => tail.evaluate_at(environment, [(*argument).clone()]),
-				StaticValue::Neutral(neutral) => unimplemented!(),
+			S::ExpLet { grade: _, grade_argument: _, argument, tail } =>
+				tail.evaluate_at(environment, [S::ExpProject(argument).evaluate_in(environment)]),
+			S::ExpProject(t) => match t.evaluate_in(environment) {
+				StaticValue::Repeat(_, v) => v.as_ref().clone(),
+				StaticValue::Neutral(n) => StaticValue::Neutral(StaticNeutral::ExpProject(n.into())),
 				_ => panic!(),
 			},
 
@@ -120,7 +123,7 @@ impl Evaluate for StaticTerm {
 				environment,
 				[
 					S::SgField(argument.clone(), Field::Base).evaluate_in(environment),
-					S::SgField(argument.clone(), Field::Fiber).evaluate_in(environment),
+					S::SgField(argument, Field::Fiber).evaluate_in(environment),
 				],
 			),
 
@@ -197,11 +200,14 @@ impl Evaluate for DynamicTerm {
 			},
 
 			// Repeated programs.
-			Exp(grade, ty) => DynamicValue::Exp(grade, ty.evaluate_in(environment).into()),
+			Exp(grade, kind, ty) =>
+				DynamicValue::Exp(grade, kind.evaluate_in(environment).into(), ty.evaluate_in(environment).into()),
 			Repeat(grade, argument) => DynamicValue::Repeat(grade, argument.evaluate_in(environment).into()),
-			LetExp { grade: _, grade_argument: _, argument, tail } => match argument.evaluate_in(environment) {
-				DynamicValue::Repeat(_, argument) => tail.evaluate_at(environment, [(*argument).clone()]),
-				DynamicValue::Neutral(neutral) => unimplemented!(),
+			ExpLet { grade: _, grade_argument: _, argument, kind, tail } =>
+				tail.evaluate_at(environment, [ExpProject(argument).evaluate_in(environment)]),
+			ExpProject(t) => match t.evaluate_in(environment) {
+				DynamicValue::Repeat(_, v) => v.as_ref().clone(),
+				DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::ExpProject(n.into())),
 				_ => panic!(),
 			},
 
@@ -249,7 +255,7 @@ impl Evaluate for DynamicTerm {
 				environment,
 				[
 					SgField { scrutinee: argument.clone(), field: Field::Base }.evaluate_in(environment),
-					SgField { scrutinee: argument.clone(), field: Field::Fiber }.evaluate_in(environment),
+					SgField { scrutinee: argument, field: Field::Fiber }.evaluate_in(environment),
 				],
 			),
 

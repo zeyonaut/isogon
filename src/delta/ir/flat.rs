@@ -18,6 +18,15 @@ pub enum Term {
 		tail: Binder<Box<Self>>,
 	},
 
+	// Repeated programs.
+	Repeat(usize, Box<Self>),
+	ExpLet {
+		grade: usize,
+		grade_argument: usize,
+		argument: Box<Self>,
+		tail: Binder<Box<Self>>,
+	},
+
 	// Dependent functions.
 	Function(Function),
 	Apply {
@@ -121,6 +130,13 @@ impl Substitute for Term {
 
 			// Let-expressions.
 			Term::Let { grade: _, argument_repr: _, argument, tail } => {
+				argument.substitute(substitution, minimum_level);
+				tail.substitute(substitution, minimum_level);
+			}
+
+			// Repeated programs.
+			Term::Repeat(_, t) => t.substitute(substitution, minimum_level),
+			Term::ExpLet { grade: _, grade_argument: _, argument, tail } => {
 				argument.substitute(substitution, minimum_level);
 				tail.substitute(substitution, minimum_level);
 			}

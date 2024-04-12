@@ -65,8 +65,15 @@ impl Stage for StaticTerm {
 
 			// Repeated programs.
 			StaticTerm::Exp(..) => StaticValue::Type,
-			StaticTerm::Repeat(..) => unimplemented!(),
-			StaticTerm::LetExp { .. } => unimplemented!(),
+			StaticTerm::Repeat(_, t) => StaticValue::Repeat(t.stage_in(environment).into()),
+			StaticTerm::ExpLet { grade: _, grade_argument: _, argument, tail } => {
+				let StaticValue::Repeat(v) = argument.stage_in(environment) else { panic!() };
+				tail.stage_at(environment, [(*v).clone()])
+			}
+			StaticTerm::ExpProject(t) => {
+				let StaticValue::Repeat(v) = t.stage_in(environment) else { panic!() };
+				v.as_ref().clone()
+			}
 
 			// Dependent functions.
 			StaticTerm::Pi { .. } => StaticValue::Type,
@@ -146,9 +153,20 @@ impl Stage for DynamicTerm {
 			}
 
 			// Repeated programs.
-			Exp(n, ty) => unimplemented!(),
-			Repeat(n, tm) => unimplemented!(),
-			LetExp { grade, grade_argument, argument, tail } => unimplemented!(),
+			Exp(n, kind, ty) =>
+				DynamicValue::Exp(n, kind.stage_in(environment).into(), ty.stage_in(environment).into()),
+			Repeat(n, tm) => DynamicValue::Repeat(n, tm.stage_in(environment).into()),
+			ExpLet { grade, grade_argument, argument, kind, tail } => DynamicValue::ExpLet {
+				grade,
+				grade_argument,
+				argument: argument.stage_in(environment).into(),
+				kind: kind.stage_in(environment),
+				tail: tail.stage_in(environment),
+			},
+			ExpProject(t) => {
+				let DynamicValue::Repeat(_, v) = t.stage_in(environment) else { panic!() };
+				v.as_ref().clone()
+			}
 
 			// Dependent functions.
 			Pi { grade, base_kind, base, family_kind, family } => DynamicValue::Pi {

@@ -13,6 +13,9 @@ pub enum StaticValue {
 	// Quoted programs.
 	Quote(Rc<DynamicValue>),
 
+	// Repeated programs.
+	Repeat(Rc<Self>),
+
 	// Dependent functions.
 	Function(Closure<Environment, StaticTerm>),
 
@@ -86,6 +89,16 @@ pub enum DynamicValue {
 	Universe(UniverseKind),
 
 	// Repeated programs.
+	Exp(usize, UniverseKind, Rc<Self>),
+	Repeat(usize, Rc<Self>),
+	ExpLet {
+		grade: usize,
+		grade_argument: usize,
+		argument: Rc<Self>,
+		kind: UniverseKind,
+		tail: Closure<Environment, DynamicTerm>,
+	},
+	ExpProject(Box<Self>),
 
 	// Dependent functions.
 	Pi {

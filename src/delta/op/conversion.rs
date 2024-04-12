@@ -177,7 +177,8 @@ impl Conversion<DynamicValue> for Level {
 			(Universe { kind: kl }, Universe { kind: kr }) => self.can_convert(&**kl, kr),
 
 			// Exponentials.
-			(Exp(grade_l, ty_l), Exp(grade_r, ty_r)) => grade_l == grade_r && self.can_convert(&**ty_l, ty_r),
+			(Exp(grade_l, _, ty_l), Exp(grade_r, _, ty_r)) =>
+				grade_l == grade_r && self.can_convert(&**ty_l, ty_r),
 			(Repeat(_, left), Repeat(_, right)) => self.can_convert(&**left, right),
 
 			// Dependent functions.

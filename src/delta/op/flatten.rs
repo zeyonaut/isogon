@@ -74,8 +74,27 @@ impl Flattener {
 
 			// Repeated programs.
 			DynamicTerm::Exp(..) => panic!("irrelevant"),
-			DynamicTerm::Repeat(_, _) => unimplemented!(),
-			DynamicTerm::LetExp { grade, grade_argument, argument, tail } => unimplemented!(),
+			DynamicTerm::Repeat(n, t) => Term::Repeat(*n, self.flatten(t, occurrences).into()),
+			DynamicTerm::ExpLet { grade, grade_argument, argument, kind, tail } => Term::ExpLet {
+				grade: *grade,
+				grade_argument: *grade_argument,
+				argument: if *grade == 0 {
+					Term::Irrelevant
+				} else {
+					self.amplifiers.push((self.context.len(), Cost::Fin(*grade)));
+					let argument = self.flatten(argument, occurrences);
+					self.amplifiers.pop();
+					argument
+				}
+				.into(),
+				tail: self.flatten_with(
+					tail,
+					[Cost::Fin(grade * grade_argument)],
+					[kind.clone().stage().repr],
+					occurrences,
+				),
+			},
+			DynamicTerm::ExpProject(_) => panic!("irrelevant"),
 
 			// Dependent functions.
 			DynamicTerm::Pi { .. } => panic!("irrelevant"),

@@ -60,6 +60,8 @@ pub enum Keyword {
 	RExp,
 	RNone,
 
+	ExpProject,
+
 	// Wrappers.
 	Bx,
 	BxValue,
@@ -146,6 +148,8 @@ impl LexedSource {
 			"rpair" => Keyword(RPair),
 			"rmax" => Keyword(RMax),
 			"rexp" => Keyword(RExp),
+
+			"unexp" => Keyword(ExpProject),
 
 			"Box" => Keyword(Bx),
 			"box" => Keyword(BxValue),

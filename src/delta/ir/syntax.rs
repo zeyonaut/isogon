@@ -34,14 +34,15 @@ pub enum StaticTerm {
 	Quote(Box<DynamicTerm>),
 
 	// Repeated programs.
-	Exp(usize, Box<Self>),
-	Repeat(usize, Box<Self>),
-	LetExp {
-		grade: usize,
-		grade_argument: usize,
+	Exp(Cost, Box<Self>),
+	Repeat(Cost, Box<Self>),
+	ExpLet {
+		grade: Cost,
+		grade_argument: Cost,
 		argument: Box<Self>,
 		tail: Binder<Box<Self>>,
 	},
+	ExpProject(Box<Self>),
 
 	// Dependent functions.
 	Pi {
@@ -124,14 +125,16 @@ pub enum DynamicTerm {
 	Splice(Box<StaticTerm>),
 
 	// Repeated programs.
-	Exp(usize, Box<Self>),
+	Exp(usize, Box<KindTerm>, Box<Self>),
 	Repeat(usize, Box<Self>),
-	LetExp {
+	ExpLet {
 		grade: usize,
 		grade_argument: usize,
 		argument: Box<Self>,
+		kind: Box<KindTerm>,
 		tail: Binder<Box<Self>>,
 	},
+	ExpProject(Box<Self>),
 
 	// Dependent functions.
 	Pi {

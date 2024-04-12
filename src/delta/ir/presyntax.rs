@@ -25,7 +25,7 @@ pub enum Preterm<E> {
 
 	SwitchLevel(Box<E>),
 
-	LetExp { grade: usize, grade_argument: usize, argument: Box<E>, tail: Binder<Box<E>> },
+	ExpLet { grade: Option<Cost>, grade_argument: Cost, argument: Box<E>, tail: Binder<Box<E>> },
 
 	Pi { grade: usize, base: Box<E>, family: Binder<Box<E>> },
 	Lambda { grade: usize, body: Binder<Box<E>> },
@@ -52,7 +52,7 @@ pub enum Former {
 	Lift,
 
 	// Repeated programs.
-	Exp(usize),
+	Exp(Cost),
 
 	// Enumerated numbers.
 	Enum(u16),
@@ -80,7 +80,7 @@ pub enum Constructor {
 	ReprMax,
 
 	// Quoted programs.
-	Exp(usize),
+	Exp(Cost),
 
 	// Enumerated numbers.
 	Enum(u16, u8),
@@ -99,6 +99,7 @@ pub enum Constructor {
 
 #[derive(Debug, Clone)]
 pub enum Projector {
+	Exp,
 	Bx,
 	Wrap,
 	Field(Field),

@@ -35,13 +35,13 @@ pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver
 			print(t, f, interner)?;
 			write!(f, ">")?;
 		}
-		Preterm::LetExp { grade, grade_argument, argument, tail } => {
+		Preterm::ExpLet { grade, grade_argument, argument, tail } => {
 			let parameter = resolve(interner, &tail.parameter());
 			write!(
 				f,
 				"let {}![{}] {{{parameter}}} = ",
-				grade_argument,
-				optional_grade_prefix(*grade, parameter)
+				if let Some(grade) = grade { optional_grade_prefix(*grade, parameter) } else { "".into() },
+				cost(*grade_argument),
 			)?;
 			print(argument, f, interner)?;
 			write!(f, "; ")?;
@@ -163,7 +163,7 @@ fn print_atom(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolve
 			print(preterm, f, interner)?,
 
 		Preterm::Let { .. }
-		| Preterm::LetExp { .. }
+		| Preterm::ExpLet { .. }
 		| Preterm::Pi { .. }
 		| Preterm::Lambda { .. }
 		| Preterm::Call { .. }
@@ -188,7 +188,7 @@ fn print_former(former: &Former, f: &mut impl Write, _: &impl Resolver) -> std::
 		Former::Copy => write!(f, "copy"),
 		Former::Repr => write!(f, "repr"),
 		Former::Lift => write!(f, "'"),
-		Former::Exp(grade) => write!(f, "![{grade}] "),
+		Former::Exp(grade) => write!(f, "![{}] ", cost(*grade)),
 		Former::Enum(k) => write!(f, "#{k}"),
 		Former::Id => write!(f, "Id"),
 		Former::Nat => write!(f, "Nat"),
@@ -216,7 +216,7 @@ fn print_constructor(constructor: &Constructor, f: &mut impl Write, _: &impl Res
 		Constructor::ReprExp(grade) => write!(f, "rexp[{grade}] "),
 		Constructor::ReprPair => write!(f, "rpair"),
 		Constructor::ReprMax => write!(f, "rmax"),
-		Constructor::Exp(grade) => write!(f, "@[{grade}]"),
+		Constructor::Exp(grade) => write!(f, "@[{}]", cost(*grade)),
 		Constructor::Enum(k, v) => write!(f, "{v}_{k}"),
 		Constructor::Refl => write!(f, "refl"),
 		Constructor::Num(n) => write!(f, "{n}"),
@@ -228,6 +228,7 @@ fn print_constructor(constructor: &Constructor, f: &mut impl Write, _: &impl Res
 
 fn print_projector(projector: &Projector, f: &mut impl Write, _: &impl Resolver) -> std::fmt::Result {
 	match projector {
+		Projector::Exp => write!(f, "unexp"),
 		Projector::Bx => write!(f, "unbox"),
 		Projector::Wrap => write!(f, "wrap"),
 		Projector::Field(Field::Base) => write!(f, "/."),
@@ -276,6 +277,14 @@ fn resolve<'a>(interner: &'a impl Resolver, name: &Option<Name>) -> &'a str {
 		interner.resolve(name)
 	} else {
 		"_"
+	}
+}
+
+fn cost(grade: Cost) -> String {
+	if let Cost::Fin(grade) = grade {
+		format!("{grade}")
+	} else {
+		"* ".to_owned()
 	}
 }
 
