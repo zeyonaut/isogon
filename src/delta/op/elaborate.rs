@@ -334,6 +334,7 @@ impl Context {
 		copy: Cpy,
 		ty: StaticValue,
 	) -> ExtendedContext<'_> {
+		let grade = grade * (self.fragment as usize).into();
 		ExtendedContext::new(
 			self,
 			name,
@@ -354,6 +355,7 @@ impl Context {
 		ty: DynamicValue,
 		kind: KindValue,
 	) -> ExtendedContext<'_> {
+		let grade = grade * (self.fragment as usize).into();
 		ExtendedContext::new(
 			self,
 			name,
@@ -375,6 +377,7 @@ impl Context {
 		ty: StaticValue,
 		value: StaticValue,
 	) -> ExtendedContext<'_> {
+		let grade = grade * (self.fragment as usize).into();
 		ExtendedContext::new(
 			self,
 			name,
@@ -396,6 +399,7 @@ impl Context {
 		kind: KindValue,
 		value: DynamicValue,
 	) -> ExtendedContext<'_> {
+		let grade = grade * (self.fragment as usize).into();
 		ExtendedContext::new(
 			self,
 			name,
@@ -720,12 +724,11 @@ fn synthesize_static(
 						let mut ctx = ctx.amplify(Cost::Inf);
 						let mut ctx = ctx.bind_static(index, false, Cost::Inf, Cpy::Tr, StaticValue::Nat);
 						let index_level = ctx.len().index(0);
-						let fragment = ctx.fragment;
 						let result = {
 							let mut ctx = ctx.bind_static(
 								witness,
 								false,
-								(fragment as usize).into(),
+								1.into(),
 								motive_c,
 								motive_value.evaluate_with([(index, index_level).into()]),
 							);
@@ -798,17 +801,12 @@ fn verify_static(
 			Preterm::Lambda { grade, body },
 			StaticValue::IndexedProduct { grade: grade_v, base_copy, base, family },
 		) => {
-			(grade * ctx.fragment as usize == grade_v * ctx.fragment as usize)
+			(ctx.fragment == Fragment::Logical || grade == grade_v)
 				.then_some(())
 				.ok_or_else(|| ElaborationErrorKind::LambdaGradeMismatch(grade, grade_v).at(expr.range))?;
 			let parameters = body.parameters;
-			let mut context = ctx.bind_static(
-				parameters[0],
-				false,
-				(grade * ctx.fragment as usize).into(),
-				base_copy,
-				base.as_ref().clone(),
-			);
+			let mut context =
+				ctx.bind_static(parameters[0], false, grade.into(), base_copy, base.as_ref().clone());
 			let basepoint_level = context.len().index(0);
 			let body = verify_static(
 				&mut context,
@@ -1171,7 +1169,7 @@ fn synthesize_dynamic(
 			// Repeated programs.
 			Projector::Exp if ctx.fragment == Fragment::Logical => {
 				let (scrutinee, scrutinee_ty, _) = synthesize_dynamic(&mut ctx.erase(), *scrutinee)?;
-				let DynamicValue::Exp(n, kind, ty) = scrutinee_ty else {
+				let DynamicValue::Exp(_, kind, ty) = scrutinee_ty else {
 					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Exp).at(expr.range));
 				};
 				(DynamicTerm::ExpProject(scrutinee.into()), ty.as_ref().clone(), (*kind).clone())
@@ -1456,11 +1454,10 @@ fn synthesize_dynamic(
 								ctx.bind_dynamic(index, false, Cost::Inf, DynamicValue::Nat, KindValue::nat());
 							let index_level = ctx.len().index(0);
 							let result = {
-								let fragment = ctx.fragment;
 								let mut ctx = ctx.bind_dynamic(
 									witness,
 									false,
-									(fragment as usize).into(),
+									1.into(),
 									motive.evaluate_with([(index, index_level).into()]),
 									motive_kind.clone(),
 								);
@@ -1546,17 +1543,12 @@ fn verify_dynamic(
 			Preterm::Lambda { grade, body },
 			DynamicValue::IndexedProduct { grade: grade_t, base, base_kind, family, family_kind },
 		) => {
-			(grade * ctx.fragment as usize == grade_t * ctx.fragment as usize)
+			(ctx.fragment == Fragment::Logical || grade == grade_t)
 				.then_some(())
 				.ok_or_else(|| ElaborationErrorKind::LambdaGradeMismatch(grade, grade_t).at(expr.range))?;
 			let parameters = body.parameters;
-			let mut context = ctx.bind_dynamic(
-				parameters[0],
-				false,
-				(grade * ctx.fragment as usize).into(),
-				base.as_ref().clone(),
-				(*base_kind).clone(),
-			);
+			let mut context =
+				ctx.bind_dynamic(parameters[0], false, grade.into(), base.as_ref().clone(), (*base_kind).clone());
 			let basepoint_level = context.len().index(0);
 			let body = verify_dynamic(
 				&mut context,
@@ -1683,14 +1675,7 @@ fn elaborate_static_let<A, B>(
 	let argument_value = argument.clone().evaluate_in(&ctx.environment);
 	let parameters = tail.parameters;
 	let tail_b = {
-		let mut context = ctx.extend_static(
-			parameters[0],
-			false,
-			grade * (ctx.fragment as usize).into(),
-			ty_c,
-			ty_value,
-			argument_value,
-		);
+		let mut context = ctx.extend_static(parameters[0], false, grade, ty_c, ty_value, argument_value);
 		let result = elaborate_tail(&mut context, *tail.body, tail_a)?;
 		context.free().map_err(|e| e.at(expr_range))?;
 		result
@@ -1720,7 +1705,7 @@ fn elaborate_dynamic_let<A, B>(
 		let mut context = ctx.extend_dynamic(
 			parameters[0],
 			false,
-			(grade * ctx.fragment as usize).into(),
+			grade.into(),
 			ty_value,
 			argument_kind.clone(),
 			argument_value,
@@ -1758,20 +1743,13 @@ fn elaborate_static_sg_let<A, B>(
 	let basepoint = StaticTerm::SgField(tm.clone().into(), Field::Base).evaluate_in(&ctx.environment);
 	let fiberpoint = StaticTerm::SgField(tm.clone().into(), Field::Fiber).evaluate_in(&ctx.environment);
 	let tail_b = {
-		let mut ctx = ctx.extend_static(
-			parameters[0],
-			false,
-			(grade * ctx.fragment as usize).into(),
-			base_copy,
-			(*base).clone(),
-			basepoint.clone(),
-		);
+		let mut ctx =
+			ctx.extend_static(parameters[0], false, grade.into(), base_copy, (*base).clone(), basepoint.clone());
 		let result = {
-			let fragment = ctx.fragment;
 			let mut ctx = ctx.extend_static(
 				parameters[1],
 				false,
-				(grade * fragment as usize).into(),
+				grade.into(),
 				family_copy,
 				family.evaluate_with([basepoint]),
 				fiberpoint,
@@ -1809,17 +1787,16 @@ fn elaborate_dynamic_sg_let<A, B>(
 		let mut ctx = ctx.extend_dynamic(
 			parameters[0],
 			false,
-			(grade * ctx.fragment as usize).into(),
+			grade.into(),
 			(*base).clone(),
 			(*base_kind).clone(),
 			basepoint.clone(),
 		);
 		let result = {
-			let fragment = ctx.fragment;
 			let mut ctx = ctx.extend_dynamic(
 				parameters[1],
 				false,
-				(grade * fragment as usize).into(),
+				grade.into(),
 				family.evaluate_with([basepoint]),
 				(*family_kind).clone(),
 				fiberpoint,
