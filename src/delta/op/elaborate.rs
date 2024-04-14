@@ -115,6 +115,9 @@ enum ElaborationErrorKind {
 	FiberAxesDependentOnBasepoint,
 	RanOutOfVariableUses,
 	WrongArity,
+	InvalidArgumentCount,
+	InvalidStaticUniverse,
+	InvalidGrade,
 }
 
 impl ElaborationErrorKind {
@@ -534,17 +537,23 @@ impl Context {
 			Preterm::Former(former, arguments) if self.fragment == Fragment::Logical => match former {
 				// Types and universe indices.
 				Former::Universe => {
-					let [c] = arguments.try_into().unwrap();
-					let ParsedPreterm(Preterm::Constructor(Constructor::Cpy(c), v)) = c.preterm else { panic!() };
-					assert!(v.is_empty());
-					(StaticTerm::Universe(c), StaticValue::Universe(Cpy::Tr))
+					let [c] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+					match c.preterm {
+						ParsedPreterm(Preterm::Constructor(Constructor::Cpy(c), v)) if v.is_empty() =>
+							(StaticTerm::Universe(c), StaticValue::Universe(Cpy::Tr)),
+						_ => return Err(ElaborationErrorKind::InvalidStaticUniverse.at(expr.range)),
+					}
 				}
 				Former::Copy if arguments.is_empty() => (StaticTerm::Cpy, StaticValue::Universe(Cpy::Tr)),
 				Former::Repr if arguments.is_empty() => (StaticTerm::Repr, StaticValue::Universe(Cpy::Tr)),
 
 				// Quoting.
 				Former::Lift => {
-					let [liftee] = arguments.try_into().unwrap();
+					let [liftee] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (liftee, kind) = self.elaborate_dynamic_type(liftee)?;
 					(
 						StaticTerm::Lift { liftee: liftee.into(), kind: kind.unevaluate_in(self.len()).into() },
@@ -554,7 +563,9 @@ impl Context {
 
 				// Repeated programs.
 				Former::Exp(grade) => {
-					let [ty] = arguments.try_into().unwrap();
+					let [ty] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (ty, c) = self.elaborate_static_type(ty)?;
 					(StaticTerm::Exp(grade, ty.into()), StaticValue::Universe(c))
 				}
@@ -592,7 +603,9 @@ impl Context {
 				Constructor::ReprAtom(r) if self.fragment == Fragment::Logical && arguments.is_empty() =>
 					(StaticTerm::ReprAtom(r), StaticValue::ReprType),
 				Constructor::ReprPair if self.fragment == Fragment::Logical => {
-					let [r0, r1] = arguments.try_into().unwrap();
+					let [r0, r1] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let r0 = self.erase().verify_static(r0, StaticValue::ReprType)?;
 					let r1 = self.erase().verify_static(r1, StaticValue::ReprType)?;
 					(StaticTerm::ReprPair(bx!(r0), bx!(r1)), StaticValue::ReprType)
@@ -600,7 +613,9 @@ impl Context {
 
 				// Repeated programs.
 				Constructor::Exp(grade) => {
-					let [tm] = arguments.try_into().unwrap();
+					let [tm] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (tm, ty) = self.erase().synthesize_static(tm)?;
 					(StaticTerm::Repeat(grade, tm.into()), StaticValue::Exp(grade, ty.into()))
 				}
@@ -612,7 +627,9 @@ impl Context {
 				// Natural numbers.
 				Constructor::Num(n) if arguments.is_empty() => (StaticTerm::Num(n), StaticValue::Nat),
 				Constructor::Suc => {
-					let [prev] = arguments.try_into().unwrap();
+					let [prev] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let prev = self.verify_static(prev, StaticValue::Nat)?;
 					if let StaticTerm::Num(p) = prev {
 						(StaticTerm::Num(p + 1), StaticValue::Nat)
@@ -668,20 +685,17 @@ impl Context {
 						let mut new_cases = Vec::new();
 						for v in 0..card {
 							let v = v as u8;
-							let case = cases[cases
-								.iter()
-								.position(|(pattern, _)| {
-									if let Pattern::Construction(Constructor::Enum(target_card, target_v), args) =
-										pattern
-									{
-										*target_card == card && *target_v == v && args.is_empty()
-									} else {
-										false
-									}
-								})
-								.unwrap()]
-							.1
-							.clone();
+							let Some(case_position) = cases.iter().position(|(pattern, _)| {
+								if let Pattern::Construction(Constructor::Enum(target_card, target_v), args) = pattern
+								{
+									*target_card == card && *target_v == v && args.is_empty()
+								} else {
+									false
+								}
+							}) else {
+								return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+							};
+							let case = cases[case_position].1.clone();
 							new_cases.push(
 								self.amplify(Cost::Inf).verify_static(
 									case,
@@ -714,16 +728,15 @@ impl Context {
 							.map_extra(|ctx, body| ctx.elaborate_static_type(*body))?;
 						let motive_value = motive.clone().map_into().evaluate_in(&self.environment);
 						// Avoid cloning.
-						let case_nil_position = cases
-							.iter()
-							.position(|(pattern, _)| {
-								if let Pattern::Construction(Constructor::Num(0), args) = pattern {
-									args.is_empty()
-								} else {
-									false
-								}
-							})
-							.unwrap();
+						let Some(case_nil_position) = cases.iter().position(|(pattern, _)| {
+							if let Pattern::Construction(Constructor::Num(0), args) = pattern {
+								args.is_empty()
+							} else {
+								false
+							}
+						}) else {
+							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+						};
 						let case_nil = cases[case_nil_position].1.clone();
 						let case_suc_parameters = {
 							let Pattern::Construction(Constructor::Suc, args) =
@@ -731,7 +744,9 @@ impl Context {
 							else {
 								return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
 							};
-							let [arg] = args.try_into().unwrap();
+							let [arg] = args
+								.try_into()
+								.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 							let Pattern::Witness { index, witness } = arg else {
 								return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
 							};
@@ -1019,7 +1034,9 @@ impl Context {
 			Preterm::Former(former, arguments) if self.fragment == Fragment::Logical => match former {
 				// Types.
 				Former::Universe => {
-					let [copy, repr] = arguments.try_into().unwrap();
+					let [copy, repr] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let copy = self.erase().verify_static(copy, StaticValue::Cpy)?;
 					let repr = self.erase().verify_static(repr, StaticValue::ReprType)?;
 					(
@@ -1031,7 +1048,9 @@ impl Context {
 
 				// Repeated programs.
 				Former::Exp(Cost::Fin(grade)) => {
-					let [ty] = arguments.try_into().unwrap();
+					let [ty] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (ty, kind) = self.elaborate_dynamic_type(ty)?;
 					(
 						DynamicTerm::Exp(grade, kind.unevaluate_in(self.len()).into(), ty.into()),
@@ -1049,7 +1068,9 @@ impl Context {
 
 				// Paths.
 				Former::Id => {
-					let [ty, x, y] = arguments.try_into().unwrap();
+					let [ty, x, y] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (ty, kind) = self.elaborate_dynamic_type(ty)?;
 					let ty_value = ty.clone().evaluate_in(&self.environment);
 					let x = self.erase().verify_dynamic(x, ty_value.clone())?;
@@ -1072,7 +1093,9 @@ impl Context {
 
 				// Wrappers.
 				Former::Bx => {
-					let [ty] = arguments.try_into().unwrap();
+					let [ty] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (ty, kind) = self.elaborate_dynamic_type(ty)?;
 					(
 						DynamicTerm::Bx { kind: kind.unevaluate_in(self.len()).into(), inner: ty.into() },
@@ -1081,7 +1104,9 @@ impl Context {
 					)
 				}
 				Former::Wrap => {
-					let [ty] = arguments.try_into().unwrap();
+					let [ty] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (ty, kind) = self.elaborate_dynamic_type(ty)?;
 					(
 						DynamicTerm::Wrap { inner: ty.into(), kind: kind.unevaluate_in(self.len()).into() },
@@ -1098,7 +1123,9 @@ impl Context {
 			Preterm::Constructor(constructor, arguments) => match constructor {
 				// Repeated programs.
 				Constructor::Exp(Cost::Fin(grade)) => {
-					let [tm] = arguments.try_into().unwrap();
+					let [tm] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (tm, ty, kind) = self.synthesize_dynamic(tm)?;
 					(
 						DynamicTerm::Repeat(grade, tm.into()),
@@ -1115,7 +1142,9 @@ impl Context {
 				Constructor::Num(n) if arguments.is_empty() =>
 					(DynamicTerm::Num(n), DynamicValue::Nat, KindValue::nat()),
 				Constructor::Suc => {
-					let [prev] = arguments.try_into().unwrap();
+					let [prev] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let prev = self.verify_dynamic(prev, DynamicValue::Nat)?;
 					if let DynamicTerm::Num(p) = prev {
 						(DynamicTerm::Num(p + 1), DynamicValue::Nat, KindValue::nat())
@@ -1126,7 +1155,9 @@ impl Context {
 
 				// Wrappers.
 				Constructor::Bx => {
-					let [tm] = arguments.try_into().unwrap();
+					let [tm] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (tm, ty, kind) = self.synthesize_dynamic(tm)?;
 					(
 						DynamicTerm::BxValue(bx!(tm)),
@@ -1135,7 +1166,9 @@ impl Context {
 					)
 				}
 				Constructor::Wrap => {
-					let [tm] = arguments.try_into().unwrap();
+					let [tm] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (tm, ty, kind) = self.synthesize_dynamic(tm)?;
 					(
 						DynamicTerm::WrapValue(bx!(tm)),
@@ -1227,14 +1260,13 @@ impl Context {
 						let motive = motive
 							.try_resolve::<2>()
 							.map_err(|_| ElaborationErrorKind::WrongArity.at(expr.range))?;
-						let Ok([(Pattern::Construction(Constructor::Refl, pattern), case_refl)]) =
+						let Ok([(Pattern::Construction(Constructor::Refl, patterns), case_refl)]) =
 							<[_; 1]>::try_from(cases)
 						else {
 							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
 						};
-						let Ok([]) = <[_; 0]>::try_from(pattern) else {
-							panic!();
-						};
+						let [] =
+							patterns.try_into().map_err(|_| ElaborationErrorKind::WrongArity.at(expr.range))?;
 
 						// TODO: Throw specific error if copy/repr depend on the motive.
 						let (motive_term, motive_kind) = self
@@ -1284,20 +1316,18 @@ impl Context {
 						let mut new_cases = Vec::new();
 						for v in 0..card {
 							let v = v as u8;
-							let case = cases[cases
-								.iter()
-								.position(|(pattern, _)| {
-									if let Pattern::Construction(Constructor::Enum(target_card, target_v), args) =
-										pattern
-									{
-										*target_card == card && *target_v == v && args.is_empty()
-									} else {
-										false
-									}
-								})
-								.unwrap()]
-							.1
-							.clone();
+							let Some(case_position) = cases.iter().position(|(pattern, _)| {
+								if let Pattern::Construction(Constructor::Enum(target_card, target_v), patterns) =
+									pattern
+								{
+									*target_card == card && *target_v == v && patterns.is_empty()
+								} else {
+									false
+								}
+							}) else {
+								return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+							};
+							let case = cases[case_position].1.clone();
 							new_cases.push(
 								self
 									.amplify(Cost::Inf)
@@ -1332,16 +1362,15 @@ impl Context {
 							.map_extra(|ctx, body| ctx.elaborate_dynamic_type(*body))?;
 						let motive = motive_term.clone().map_into().evaluate_in(&self.environment);
 						// Avoid cloning.
-						let case_nil_position = cases
-							.iter()
-							.position(|(pattern, _)| {
-								if let Pattern::Construction(Constructor::Num(0), args) = pattern {
-									args.is_empty()
-								} else {
-									false
-								}
-							})
-							.unwrap();
+						let Some(case_nil_position) = cases.iter().position(|(pattern, _)| {
+							if let Pattern::Construction(Constructor::Num(0), args) = pattern {
+								args.is_empty()
+							} else {
+								false
+							}
+						}) else {
+							return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
+						};
 						let case_nil = cases[case_nil_position].1.clone();
 						let case_suc_parameters = {
 							let Pattern::Construction(Constructor::Suc, args) =
@@ -1349,7 +1378,9 @@ impl Context {
 							else {
 								return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
 							};
-							let [arg] = args.try_into().unwrap();
+							let [arg] = args
+								.try_into()
+								.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 							let Pattern::Witness { index, witness } = arg else {
 								return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
 							};
@@ -1477,7 +1508,7 @@ impl Context {
 				};
 				assert!(self.len().can_convert(&*left, &right));
 
-				let [] = tms.try_into().unwrap();
+				let [] = tms.try_into().map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 				DynamicTerm::Refl
 			}
 
@@ -1486,7 +1517,8 @@ impl Context {
 				let DynamicValue::Bx { inner: ty, .. } = ty else {
 					return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Bx).at(expr.range));
 				};
-				let [tm] = tms.try_into().unwrap();
+				let [tm] =
+					tms.try_into().map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 				let tm = self.verify_dynamic(tm, ty.as_ref().clone())?;
 				DynamicTerm::BxValue(bx!(tm))
 			}
@@ -1494,7 +1526,8 @@ impl Context {
 				let DynamicValue::Wrap { inner: ty, .. } = ty else {
 					return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Wrap).at(expr.range));
 				};
-				let [tm] = tms.try_into().unwrap();
+				let [tm] =
+					tms.try_into().map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 				let tm = self.verify_dynamic(tm, ty.as_ref().clone())?;
 				DynamicTerm::WrapValue(bx!(tm))
 			}
@@ -1566,7 +1599,9 @@ impl Context {
 	) -> Result<B, ElaborationError> {
 		let grade = grade.unwrap_or_else(|| if tail.parameter().label.is_some() { 1 } else { 0 }.into());
 		let Cost::Fin(grade) = grade else {
-			panic!();
+			return Err(
+				ElaborationErrorKind::InvalidGrade.at((tail.parameter().locus, tail.parameter().locus + 1)),
+			);
 		};
 		let (ty, argument_kind) = self.elaborate_dynamic_type(ty)?;
 		let ty_value = ty.clone().evaluate_in(&self.environment);
