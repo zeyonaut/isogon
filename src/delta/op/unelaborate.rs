@@ -1,6 +1,6 @@
 use super::super::ir::presyntax::Preterm;
 use crate::delta::{
-	common::{AnyBinder, Binder, Cpy},
+	common::{AnyBinder, Binder, Cpy, Label},
 	ir::{
 		presyntax::{Constructor, Former, Pattern, Projector, PurePreterm},
 		syntax::{DynamicTerm, StaticTerm},
@@ -250,12 +250,12 @@ impl Unelaborate for DynamicTerm {
 	}
 }
 
-impl<const N: usize, T: Unelaborate> Unelaborate for Binder<Box<T>, N> {
-	type Pre = Binder<Box<T::Pre>, N>;
+impl<const N: usize, T: Unelaborate> Unelaborate for Binder<Label, Box<T>, N> {
+	type Pre = Binder<Label, Box<T::Pre>, N>;
 	fn unelaborate(self) -> Self::Pre { Binder::new(self.parameters, self.body.unelaborate().into()) }
 }
 
-impl<T: Unelaborate> Unelaborate for AnyBinder<Box<T>> {
-	type Pre = AnyBinder<Box<T::Pre>>;
+impl<T: Unelaborate> Unelaborate for AnyBinder<Label, Box<T>> {
+	type Pre = AnyBinder<Label, Box<T::Pre>>;
 	fn unelaborate(self) -> Self::Pre { AnyBinder::new(self.parameters, self.body.unelaborate().into()) }
 }

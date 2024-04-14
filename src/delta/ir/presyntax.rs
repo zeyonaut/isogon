@@ -1,4 +1,4 @@
-use crate::delta::common::{AnyBinder, Binder, Cost, Cpy, Field, Name, ReprAtom};
+use crate::delta::common::{AnyBinder, Binder, Cost, Cpy, Field, Label, Name, ReprAtom};
 
 #[derive(Debug, Clone)]
 pub struct ParsedProgram {
@@ -12,33 +12,39 @@ pub struct Expression {
 	pub preterm: ParsedPreterm,
 }
 
-#[derive(Debug, Clone)]
-pub struct ParsedPreterm(pub Preterm<Expression>);
+#[derive(Debug, Clone, Copy)]
+pub struct ParsedLabel {
+	pub locus: usize,
+	pub label: Label,
+}
 
-pub struct PurePreterm(pub Preterm<Self>);
+#[derive(Debug, Clone)]
+pub struct ParsedPreterm(pub Preterm<ParsedLabel, Expression>);
+
+pub struct PurePreterm(pub Preterm<Label, Self>);
 
 #[derive(Debug, Clone)]
-pub enum Preterm<E> {
+pub enum Preterm<L, E> {
 	Variable(Name),
 
-	Let { is_meta: bool, grade: Option<Cost>, ty: Box<E>, argument: Box<E>, tail: Binder<Box<E>> },
+	Let { is_meta: bool, grade: Option<Cost>, ty: Box<E>, argument: Box<E>, tail: Binder<L, Box<E>> },
 
 	SwitchLevel(Box<E>),
 
-	ExpLet { grade: Option<Cost>, grade_argument: Cost, argument: Box<E>, tail: Binder<Box<E>> },
+	ExpLet { grade: Option<Cost>, grade_argument: Cost, argument: Box<E>, tail: Binder<L, Box<E>> },
 
-	Pi { grade: usize, base: Box<E>, family: Binder<Box<E>> },
-	Lambda { grade: usize, body: Binder<Box<E>> },
+	Pi { grade: usize, base: Box<E>, family: Binder<L, Box<E>> },
+	Lambda { grade: usize, body: Binder<L, Box<E>> },
 	Call { callee: Box<E>, argument: Box<E> },
 
-	Sg { base: Box<E>, family: Binder<Box<E>> },
+	Sg { base: Box<E>, family: Binder<L, Box<E>> },
 	Pair { basepoint: Box<E>, fiberpoint: Box<E> },
-	SgLet { grade: usize, argument: Box<E>, tail: Binder<Box<E>, 2> },
+	SgLet { grade: usize, argument: Box<E>, tail: Binder<L, Box<E>, 2> },
 
 	Former(Former, Vec<E>),
 	Constructor(Constructor, Vec<E>),
 	Project(Box<E>, Projector),
-	Split { scrutinee: Box<E>, is_cast: bool, motive: AnyBinder<Box<E>>, cases: Vec<(Pattern, E)> },
+	Split { scrutinee: Box<E>, is_cast: bool, motive: AnyBinder<L, Box<E>>, cases: Vec<(Pattern<L>, E)> },
 }
 
 #[derive(Debug, Clone)]
@@ -106,13 +112,13 @@ pub enum Projector {
 }
 
 #[derive(Debug, Clone)]
-pub enum Pattern {
-	Variable(Option<Name>),
+pub enum Pattern<L> {
+	Variable(L),
 	// Inductive hypothesis witness.
-	Witness { index: Option<Name>, witness: Option<Name> },
-	Construction(Constructor, Vec<Pattern>),
+	Witness { index: L, witness: L },
+	Construction(Constructor, Vec<Self>),
 }
 
-impl Preterm<Expression> {
+impl Preterm<ParsedLabel, Expression> {
 	pub fn at(self, range: (usize, usize)) -> Expression { Expression { range, preterm: ParsedPreterm(self) } }
 }

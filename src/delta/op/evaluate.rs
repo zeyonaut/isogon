@@ -2,7 +2,7 @@ use core::panic;
 
 use crate::{
 	delta::{
-		common::{Binder, Closure, Field, Level},
+		common::{Binder, Closure, Field, Label, Level},
 		ir::{
 			semantics::{
 				CpyValue, DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue, Value,
@@ -26,7 +26,7 @@ pub trait Evaluate {
 	fn evaluate_in(self, environment: &Environment) -> Self::Value;
 }
 
-impl<T, const N: usize> Evaluate for Binder<Box<T>, N> {
+impl<T, const N: usize> Evaluate for Binder<Label, Box<T>, N> {
 	type Value = Closure<Environment, T, N>;
 	fn evaluate_in(self, environment: &Environment) -> Self::Value {
 		Closure::new(environment.clone(), self.parameters, *self.body)
@@ -376,14 +376,14 @@ pub trait EvaluateAt<const N: usize> {
 	fn evaluate_at(self, environment: &Environment, arguments: [Self::Value; N]) -> Self::Value;
 }
 
-impl<const N: usize> EvaluateAt<N> for &Binder<Box<StaticTerm>, N> {
+impl<const N: usize> EvaluateAt<N> for &Binder<Label, Box<StaticTerm>, N> {
 	type Value = StaticValue;
 	fn evaluate_at(self, environment: &Environment, arguments: [Self::Value; N]) -> Self::Value {
 		self.body.clone().evaluate_in(&environment.extend(arguments.map(Value::Static)))
 	}
 }
 
-impl<const N: usize> EvaluateAt<N> for &Binder<Box<DynamicTerm>, N> {
+impl<const N: usize> EvaluateAt<N> for &Binder<Label, Box<DynamicTerm>, N> {
 	type Value = DynamicValue;
 	fn evaluate_at(self, environment: &Environment, arguments: [Self::Value; N]) -> Self::Value {
 		self.body.clone().evaluate_in(&environment.extend(arguments.map(Value::Dynamic)))

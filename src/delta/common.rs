@@ -34,53 +34,80 @@ pub enum Field {
 }
 
 pub type Name = Spur;
+pub type Label = Option<Name>;
 
 #[derive(Clone, Debug)]
-pub struct Binder<T, const N: usize = 1> {
-	pub parameters: [Option<Name>; N],
+pub struct Binder<P, T, const N: usize = 1> {
+	pub parameters: [P; N],
 	pub body: T,
 }
 
-impl<T, const N: usize> Binder<T, N> {
-	pub fn new(parameters: [Option<Name>; N], body: T) -> Self { Self { parameters, body } }
+impl<P, T, const N: usize> Binder<P, T, N> {
+	pub fn new(parameters: [P; N], body: T) -> Self { Self { parameters, body } }
 }
 
-pub fn bind<T, const N: usize>(parameters: [Option<Name>; N], body: impl Into<T>) -> Binder<T, N> {
+pub fn bind<P, T, const N: usize>(parameters: [P; N], body: impl Into<T>) -> Binder<P, T, N> {
 	Binder::new(parameters, body.into())
 }
 
-impl<T> Binder<T, 1> {
-	pub fn parameter(&self) -> Option<Name> {
+impl<P: Copy, T> Binder<P, T, 1> {
+	pub fn parameter(&self) -> P {
 		let [parameter] = self.parameters;
 		parameter
 	}
 }
 
-impl<A, const N: usize> Binder<A, N> {
-	pub fn map_ref<B, C: From<B>>(&self, f: impl FnOnce(&A) -> B) -> Binder<C, N> {
+impl<P, A, const N: usize> Binder<P, A, N> {
+	pub fn map_ref<B, C: From<B>>(&self, f: impl FnOnce(&A) -> B) -> Binder<P, C, N>
+	where
+		P: Copy,
+	{
 		Binder { parameters: self.parameters, body: f(&self.body).into() }
 	}
 
-	pub fn mapv<B, C: From<B>>(self, f: impl FnOnce([Option<Name>; N], A) -> B) -> Binder<C, N> {
+	pub fn mapv<B, C: From<B>>(self, f: impl FnOnce([P; N], A) -> B) -> Binder<P, C, N>
+	where
+		P: Copy,
+	{
 		Binder { parameters: self.parameters, body: f(self.parameters, self.body).into() }
+	}
+
+	pub fn map_into<B: From<A>>(self) -> Binder<P, B, N> {
+		Binder { parameters: self.parameters, body: self.body.into() }
+	}
+}
+
+impl<P, A, B, const N: usize> Binder<P, (A, B), N> {
+	pub fn retract(self) -> (Binder<P, A, N>, B) {
+		(Binder { parameters: self.parameters, body: self.body.0 }, self.body.1)
+	}
+}
+
+impl<P, A, B, C, const N: usize> Binder<P, (A, B, C), N> {
+	pub fn retract2(self) -> (Binder<P, A, N>, B, C) {
+		(Binder { parameters: self.parameters, body: self.body.0 }, self.body.1, self.body.2)
 	}
 }
 
 #[derive(Clone, Debug)]
-pub struct AnyBinder<T> {
-	pub parameters: Box<[Option<Name>]>,
+pub struct AnyBinder<P, T> {
+	pub parameters: Box<[P]>,
 	pub body: T,
 }
 
-impl<T> AnyBinder<T> {
-	pub fn new(parameters: Box<[Option<Name>]>, body: T) -> Self { Self { parameters, body } }
+impl<P, T> AnyBinder<P, T> {
+	pub fn new(parameters: Box<[P]>, body: T) -> Self { Self { parameters, body } }
+
+	pub fn try_resolve<const N: usize>(self) -> Result<Binder<P, T, N>, Box<[P]>> {
+		Ok(Binder { parameters: *(<Box<_>>::try_from(self.parameters)?), body: self.body })
+	}
 }
 
-impl<T, const N: usize> From<Binder<T, N>> for AnyBinder<T> {
-	fn from(value: Binder<T, N>) -> Self { Self { parameters: value.parameters.into(), body: value.body } }
+impl<P, T, const N: usize> From<Binder<P, T, N>> for AnyBinder<P, T> {
+	fn from(value: Binder<P, T, N>) -> Self { Self { parameters: value.parameters.into(), body: value.body } }
 }
 
-pub fn any_bind<T>(parameters: impl Into<Box<[Option<Name>]>>, body: impl Into<T>) -> AnyBinder<T> {
+pub fn any_bind<P, T>(parameters: impl Into<Box<[P]>>, body: impl Into<T>) -> AnyBinder<P, T> {
 	AnyBinder::new(parameters.into(), body.into())
 }
 

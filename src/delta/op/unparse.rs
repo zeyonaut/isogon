@@ -3,7 +3,7 @@ use std::fmt::Write;
 use lasso::Resolver;
 
 use crate::delta::{
-	common::{Cost, Cpy, Field, Name, ReprAtom},
+	common::{Cost, Cpy, Field, Label, Name, ReprAtom},
 	ir::presyntax::{Constructor, Former, Pattern, Preterm, Projector, PurePreterm},
 };
 
@@ -236,7 +236,7 @@ fn print_projector(projector: &Projector, f: &mut impl Write, _: &impl Resolver)
 	}
 }
 
-fn print_pattern(pattern: &Pattern, f: &mut impl Write, interner: &impl Resolver) -> std::fmt::Result {
+fn print_pattern(pattern: &Pattern<Label>, f: &mut impl Write, interner: &impl Resolver) -> std::fmt::Result {
 	match pattern {
 		Pattern::Variable(name) => write!(f, "{}", resolve(interner, name))?,
 		Pattern::Witness { index, witness } => {

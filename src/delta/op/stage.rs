@@ -1,6 +1,6 @@
 use crate::{
 	delta::{
-		common::{Binder, Closure, Cpy, Field, Level, Repr, UniverseKind},
+		common::{Binder, Closure, Cpy, Field, Label, Level, Repr, UniverseKind},
 		ir::{
 			object::{DynamicValue, Environment, StaticValue, Value},
 			syntax::{DynamicTerm, KindTerm, StaticTerm},
@@ -273,14 +273,14 @@ impl Stage for KindTerm {
 	}
 }
 
-impl<const N: usize> Stage for Binder<Box<StaticTerm>, N> {
+impl<const N: usize> Stage for Binder<Label, Box<StaticTerm>, N> {
 	type ObjectTerm = Closure<Environment, StaticTerm, N>;
 	fn stage_in(self, environment: &Environment) -> Self::ObjectTerm {
 		Closure::new(environment.clone(), self.parameters, *self.body)
 	}
 }
 
-impl<const N: usize> Stage for Binder<Box<DynamicTerm>, N> {
+impl<const N: usize> Stage for Binder<Label, Box<DynamicTerm>, N> {
 	type ObjectTerm = Closure<Environment, DynamicTerm, N>;
 	fn stage_in(self, environment: &Environment) -> Self::ObjectTerm {
 		Closure::new(environment.clone(), self.parameters, *self.body)
@@ -313,14 +313,14 @@ pub trait StageAt<const N: usize> {
 	fn stage_at(self, environment: &Environment, arguments: [Self::ObjectTerm; N]) -> Self::ObjectTerm;
 }
 
-impl<const N: usize> StageAt<N> for Binder<Box<DynamicTerm>, N> {
+impl<const N: usize> StageAt<N> for Binder<Label, Box<DynamicTerm>, N> {
 	type ObjectTerm = DynamicValue;
 	fn stage_at(self, environment: &Environment, terms: [Self::ObjectTerm; N]) -> Self::ObjectTerm {
 		self.body.stage_in(&environment.extend(terms.map(Value::Dynamic)))
 	}
 }
 
-impl<const N: usize> StageAt<N> for Binder<Box<StaticTerm>, N> {
+impl<const N: usize> StageAt<N> for Binder<Label, Box<StaticTerm>, N> {
 	type ObjectTerm = StaticValue;
 	fn stage_at(self, environment: &Environment, terms: [Self::ObjectTerm; N]) -> Self::ObjectTerm {
 		self.body.stage_in(&environment.extend(terms.map(Value::Static)))

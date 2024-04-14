@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::stage::Stage;
 use crate::delta::{
-	common::{Binder, Cost, Index, Level, Repr, ReprAtom},
+	common::{Binder, Cost, Index, Label, Level, Repr, ReprAtom},
 	ir::{
 		flat::{Capture, Function, Parameter, Procedure, Program, Substitute, Term, Variable},
 		syntax::DynamicTerm,
@@ -200,7 +200,7 @@ impl Flattener {
 		&mut self,
 		grade: Cost,
 		repr: Option<Repr>,
-		body: &Binder<Box<DynamicTerm>>,
+		body: &Binder<Label, Box<DynamicTerm>>,
 		result_repr: Option<Repr>,
 		occurrences: &mut [Cost],
 	) -> Function {
@@ -260,11 +260,11 @@ impl Flattener {
 
 	fn flatten_with<const N: usize>(
 		&mut self,
-		binder: &Binder<Box<DynamicTerm>, N>,
+		binder: &Binder<Label, Box<DynamicTerm>, N>,
 		grades: [Cost; N],
 		reprs: [Option<Repr>; N],
 		occurrences: &mut Vec<Cost>,
-	) -> Binder<Box<Term>, N> {
+	) -> Binder<Label, Box<Term>, N> {
 		let level = self.context.len();
 		self.context.extend(
 			binder

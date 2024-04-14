@@ -3,7 +3,7 @@ use lasso::{Rodeo, RodeoResolver};
 use crate::delta::{
 	common::{any_bind, bind, AnyBinder, Cost, Cpy, Name, ReprAtom},
 	ir::{
-		presyntax::{Constructor, Expression, Former, ParsedProgram, Pattern, Preterm, Projector},
+		presyntax::{Constructor, Expression, Former, ParsedLabel, ParsedProgram, Pattern, Preterm, Projector},
 		source::{Keyword, LexError, LexErrorKind, LexedSource, Pragma, Token},
 	},
 };
@@ -135,11 +135,11 @@ peg::parser! {
 		rule number() -> usize
 			= pos:position!() [Token::Number] {parser.number(pos).unwrap()}
 
-		rule parameter() -> Option<Name>
-			= name:identifier() {Some(name)}
+		rule parameter() -> ParsedLabel
+			= locus:position!() name:identifier() {ParsedLabel { locus, label: Some(name) }}
 
-		rule optional_parameter() -> Option<Name>
-			= name:identifier() {Some(name)} / [Token::LowDash] {None}
+		rule optional_parameter() -> ParsedLabel
+			= locus:position!() label:(name:identifier() {Some(name)} / [Token::LowDash] {None}) {ParsedLabel { locus, label }}
 
 		rule cost_annotation() -> Cost
 			= [Token::SquareL] _ cost:([Token::Ast] {Cost::Inf} / number:number() {Cost::Fin(number)}) _ [Token::SquareR] {cost}
@@ -207,19 +207,19 @@ peg::parser! {
 				/ constructor:constructor() {Preterm::Constructor(constructor, vec![])}
 			) fini:position!() {preterm.at((init, fini))}
 
-		rule bound_spine_headed() -> AnyBinder<Box<Expression>>
+		rule bound_spine_headed() -> AnyBinder<ParsedLabel, Box<Expression>>
 			= [Token::Pipe] _ variables:(variable:optional_parameter())**[Token::Period] _ [Token::Pipe] _ body:spine_headed() {any_bind(variables, body)}
 
 		// Case arms.
-		rule atomic_pattern() -> Pattern
+		rule atomic_pattern() -> Pattern<ParsedLabel>
 			// TODO: Refactor longest match.
 			= [Token::At] index:optional_parameter() _ [Token::Period] witness:optional_parameter() {Pattern::Witness {index, witness}}
 			/ [Token::At] variable:optional_parameter() {Pattern::Variable(variable)}
 
-		rule pattern() -> Pattern
+		rule pattern() -> Pattern<ParsedLabel>
 			= constructor:constructor() patterns:(_ p:atomic_pattern() {p})* {Pattern::Construction(constructor, patterns)}
 
-		rule case() -> (Pattern, Expression)
+		rule case() -> (Pattern<ParsedLabel>, Expression)
 			= pattern:pattern() _ [Token::Arrow] _ preterm:preterm() {(pattern, preterm)}
 
 		// Spines: projections, calls, and case-splits.
@@ -242,11 +242,11 @@ peg::parser! {
 		#[cache]
 		rule spine_headed() -> Expression
 			= init:position!() preterm:(
-				  [Token::Pipe] _ grade:(finite_grade_annotation())? _ parameter:optional_parameter() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { grade: grade.unwrap_or(parameter.is_some() as _), body: bind([parameter], body) }}
+				  [Token::Pipe] _ grade:(finite_grade_annotation())? _ parameter:optional_parameter() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { grade: grade.unwrap_or(parameter.label.is_some() as _), body: bind([parameter], body) }}
 				/ [Token::Pipe] _ grade:(finite_grade_annotation())? _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { grade: grade.unwrap_or(1), base: base.into(), family: bind([parameter], right) }}
-				/ left:spine() _ grade:(finite_grade_annotation())? _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { grade: grade.unwrap_or(1), base: left.into(), family: bind([None], right) }}
+				/ locus:position!() left:spine() _ grade:(finite_grade_annotation())? _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { grade: grade.unwrap_or(1), base: left.into(), family: bind([ParsedLabel {locus, label: None}], right) }}
 				/ [Token::Pipe] _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Amp] _ right:spine_headed() {Preterm::Sg { base: base.into(), family: bind([parameter], right) }}
-				/ left:spine() _ [Token::Amp] _ right:spine_headed() {Preterm::Sg { base: left.into(), family: bind([None], right) }}
+				/ locus:position!() left:spine() _ [Token::Amp] _ right:spine_headed() {Preterm::Sg { base: left.into(), family: bind([ParsedLabel {locus, label: None}], right) }}
 				/ left:spine() _ [Token::Comma] _ right:spine_headed() {Preterm::Pair { basepoint: left.into(), fiberpoint: right.into() }}
 			) fini:position!() {preterm.at((init, fini))}
 			/ spine()

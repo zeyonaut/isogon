@@ -1,6 +1,6 @@
 use super::evaluate::EvaluateAuto;
 use crate::delta::{
-	common::{bind, Binder, Closure, Index, Level},
+	common::{bind, Binder, Closure, Index, Label, Level},
 	ir::{
 		semantics::{
 			CpyValue, DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue,
@@ -20,14 +20,14 @@ pub trait Unevaluate {
 }
 
 impl<const N: usize> Unevaluate for Closure<Environment, StaticTerm, N> {
-	type Term = Binder<Box<StaticTerm>, N>;
+	type Term = Binder<Label, Box<StaticTerm>, N>;
 	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
 		Ok(bind(self.parameters, self.evaluate_auto(level).try_unevaluate_in(level + N)?))
 	}
 }
 
 impl<const N: usize> Unevaluate for Closure<Environment, DynamicTerm, N> {
-	type Term = Binder<Box<DynamicTerm>, N>;
+	type Term = Binder<Label, Box<DynamicTerm>, N>;
 	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
 		Ok(bind(self.parameters, self.evaluate_auto(level).try_unevaluate_in(level + N)?))
 	}

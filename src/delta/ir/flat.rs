@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, collections::HashMap};
 
-use crate::delta::common::{Binder, Cost, Level, Name, Repr};
+use crate::delta::common::{Binder, Cost, Label, Level, Name, Repr};
 
 #[derive(Clone, Debug)]
 pub enum Term {
@@ -15,7 +15,7 @@ pub enum Term {
 		grade: usize,
 		argument_repr: Option<Repr>,
 		argument: Box<Self>,
-		tail: Binder<Box<Self>>,
+		tail: Binder<Label, Box<Self>>,
 	},
 
 	// Repeated programs.
@@ -24,7 +24,7 @@ pub enum Term {
 		grade: usize,
 		grade_argument: usize,
 		argument: Box<Self>,
-		tail: Binder<Box<Self>>,
+		tail: Binder<Label, Box<Self>>,
 	},
 
 	// Dependent functions.
@@ -44,7 +44,7 @@ pub enum Term {
 		grade: usize,
 		argument: Box<Self>,
 		bound_reprs: [Option<Repr>; 2],
-		tail: Binder<Box<Self>, 2>,
+		tail: Binder<Label, Box<Self>, 2>,
 	},
 
 	// Enumerated numbers.
@@ -61,7 +61,7 @@ pub enum Term {
 	CaseNat {
 		scrutinee: Box<Self>,
 		case_nil: Box<Self>,
-		case_suc: Binder<Box<Self>, 2>,
+		case_suc: Binder<Label, Box<Self>, 2>,
 		motive_repr: Option<Repr>,
 	},
 
@@ -186,7 +186,7 @@ impl Substitute for Term {
 	}
 }
 
-impl<const N: usize> Substitute for Binder<Box<Term>, N> {
+impl<const N: usize> Substitute for Binder<Label, Box<Term>, N> {
 	fn substitute(&mut self, substitution: &HashMap<Level, Level>, minimum_level: Level) {
 		self.body.substitute(substitution, minimum_level);
 	}
