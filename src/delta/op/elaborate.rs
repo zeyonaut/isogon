@@ -946,7 +946,6 @@ impl Context {
 					.bind_dynamic(false, 0.into(), base_kind.clone(), base_value)
 					.map(|ctx, body| ctx.elaborate_dynamic_type(*body))?
 					.retract();
-				// Ensure that the inferred fiber axes are independent of the basepoint, or error otherwise.
 				let Ok(family_kind) = family_kind.try_unevaluate_in(self.len()) else {
 					return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
 				};
@@ -992,7 +991,6 @@ impl Context {
 					.bind_dynamic(false, 0.into(), base_kind.clone(), base_value)
 					.map_extra(|ctx, body| ctx.elaborate_dynamic_type(*body))?;
 				let kind = KindValue::pair(self.len(), base_kind.clone(), family_kind.clone());
-				// Ensure that the inferred fiber axes are independent of the basepoint, or error otherwise.
 				let Ok(family_kind) = family_kind.try_unevaluate_in(self.len()) else {
 					return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
 				};
@@ -1261,7 +1259,6 @@ impl Context {
 						let [] =
 							patterns.try_into().map_err(|_| ElaborationErrorKind::WrongArity.at(expr.range))?;
 
-						// TODO: Throw specific error if copy/repr depend on the motive.
 						let (motive_term, motive_kind) = self
 							.extend(motive)
 							.bind_dynamic(false, 0.into(), (*kind).clone(), (*space).clone())
@@ -1272,6 +1269,9 @@ impl Context {
 								right: Rc::new(ctx.var(0)),
 							})
 							.map_extra(|ctx, body| ctx.elaborate_dynamic_type(*body))?;
+						let Ok(_) = motive_kind.try_unevaluate_in(self.len()) else {
+							return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
+						};
 						let motive = motive_term.clone().map_into().evaluate_in(&self.environment);
 
 						let case_refl = self.verify_dynamic(
@@ -1298,11 +1298,13 @@ impl Context {
 						(cases.len() == card as _)
 							.then_some(())
 							.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
-						// TODO: Throw specific error if copy/repr depend on the motive.
 						let (motive_term, motive_kind) = self
 							.extend(motive)
 							.bind_dynamic(false, 0.into(), KindValue::enu(), DynamicValue::Enum(card))
 							.map_extra(|ctx, body| ctx.elaborate_dynamic_type(*body))?;
+						let Ok(_) = motive_kind.try_unevaluate_in(self.len()) else {
+							return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
+						};
 						let motive = motive_term.clone().map_into().evaluate_in(&self.environment);
 						// TODO: Avoid cloning.
 						let mut new_cases = Vec::new();
@@ -1346,11 +1348,13 @@ impl Context {
 						(cases.len() == 2)
 							.then_some(())
 							.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
-						// TODO: Throw specific error if copy/repr depend on the motive.
 						let (motive_term, motive_kind) = self
 							.extend(motive)
 							.bind_dynamic(false, 0.into(), KindValue::nat(), DynamicValue::Nat)
 							.map_extra(|ctx, body| ctx.elaborate_dynamic_type(*body))?;
+						let Ok(_) = motive_kind.try_unevaluate_in(self.len()) else {
+							return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
+						};
 						let motive_value = motive_term.clone().map_into().evaluate_in(&self.environment);
 						// Avoid cloning.
 						let Some(case_nil_position) = cases.iter().position(|(pattern, _)| {
