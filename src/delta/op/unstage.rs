@@ -1,6 +1,6 @@
 use super::stage::StageAuto;
 use crate::delta::{
-	common::{bind, Binder, Closure, Cpy, Index, Label, Level, Repr, UniverseKind},
+	common::{bind, Binder, Closure, Cpy, Index, Label, Level, UniverseKind},
 	ir::{
 		object::{DynamicValue, Environment},
 		syntax::{DynamicTerm, KindTerm, StaticTerm},
@@ -165,16 +165,5 @@ impl<const N: usize> Unstage for Closure<Environment, DynamicTerm, N> {
 	type CoreTerm = Binder<Label, Box<DynamicTerm>, N>;
 	fn unstage_in(&self, level: Level) -> Self::CoreTerm {
 		bind(self.parameters, self.stage_auto(level).unstage_in(level + N))
-	}
-}
-
-impl Unstage for Repr {
-	type CoreTerm = StaticTerm;
-	fn unstage_in(&self, level: Level) -> Self::CoreTerm {
-		match self {
-			Repr::Atom(r) => StaticTerm::ReprAtom(Some(*r)),
-			Repr::Pair(r0, r1) => StaticTerm::ReprPair(r0.unstage_in(level).into(), r1.unstage_in(level).into()),
-			Repr::Exp(n, r) => StaticTerm::ReprExp(*n, r.unstage_in(level).into()),
-		}
 	}
 }

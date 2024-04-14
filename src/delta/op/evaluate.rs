@@ -1,16 +1,13 @@
 use core::panic;
 
-use crate::{
-	delta::{
-		common::{Binder, Closure, Field, Label, Level},
-		ir::{
-			semantics::{
-				CpyValue, DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue, Value,
-			},
-			syntax::{DynamicTerm, KindTerm, StaticTerm},
+use crate::delta::{
+	common::{Binder, Closure, Field, Label, Level},
+	ir::{
+		semantics::{
+			CpyValue, DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue, Value,
 		},
+		syntax::{DynamicTerm, KindTerm, StaticTerm},
 	},
-	utility::rc,
 };
 
 pub trait Evaluate {
@@ -72,25 +69,27 @@ impl Evaluate for StaticTerm {
 			S::Quote(quotee) => StaticValue::Quote(quotee.evaluate_in(environment)),
 
 			// Repeated programs.
-			S::Exp(grade, ty) => StaticValue::Exp(grade, ty.evaluate_in(environment).into()),
+			S::Exp(grade, c, ty) => StaticValue::Exp(grade, c, ty.evaluate_in(environment).into()),
 			S::Repeat(grade, argument) => StaticValue::Repeat(grade, argument.evaluate_in(environment).into()),
 			S::ExpLet { grade: _, grade_argument: _, argument, tail } =>
 				tail.evaluate_at(environment, [argument.evaluate_in(environment).exp_project()]),
 			S::ExpProject(t) => t.evaluate_in(environment).exp_project(),
 
 			// Dependent functions.
-			S::Pi { grade, base_copy, base, family } => StaticValue::IndexedProduct {
+			S::Pi { grade, base_copy, base, family_copy, family } => StaticValue::IndexedProduct {
 				grade,
 				base_copy,
 				base: base.evaluate_in(environment).into(),
+				family_copy,
 				family: family.evaluate_in(environment).into(),
 			},
-			S::Function(grade, function) => StaticValue::Function(grade, rc!(function.evaluate_in(environment))),
+			S::Function(grade, function) =>
+				StaticValue::Function(grade, function.evaluate_in(environment).into()),
 			S::Apply { scrutinee, argument } => match scrutinee.evaluate_in(environment) {
 				StaticValue::Function(_, function) => function.evaluate_with([argument.evaluate_in(environment)]),
 				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::Apply(
-					rc!(neutral),
-					rc!(argument.evaluate_in(environment)),
+					neutral.into(),
+					argument.evaluate_in(environment).into(),
 				)),
 				_ => panic!(),
 			},
@@ -121,8 +120,8 @@ impl Evaluate for StaticTerm {
 			S::CaseEnum { scrutinee, motive, cases } => match scrutinee.evaluate_in(environment) {
 				StaticValue::EnumValue(_, v) => cases.into_iter().nth(v.into()).unwrap().evaluate_in(environment),
 				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::CaseEnum {
-					scrutinee: rc!(neutral),
-					motive: rc!(motive.evaluate_in(environment)),
+					scrutinee: neutral.into(),
+					motive: motive.evaluate_in(environment).into(),
 					cases: cases.into_iter().map(|case| case.evaluate_in(environment)).collect(),
 				}),
 				_ => panic!(),
@@ -174,7 +173,7 @@ impl Evaluate for DynamicTerm {
 			Let { argument, tail, .. } => tail.evaluate_at(environment, [argument.evaluate_in(environment)]),
 
 			// Types.
-			Universe { kind } => DynamicValue::Universe { kind: rc!(kind.evaluate_in(environment)) },
+			Universe { kind } => DynamicValue::Universe { kind: kind.evaluate_in(environment).into() },
 
 			// Quoted programs.
 			Splice(splicee) => match splicee.evaluate_in(environment) {
@@ -198,8 +197,8 @@ impl Evaluate for DynamicTerm {
 				match scrutinee.evaluate_in(environment) {
 					DynamicValue::Function { body, .. } => body.evaluate_with([argument.evaluate_in(environment)]),
 					DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Apply {
-						scrutinee: rc!(neutral),
-						argument: rc!(argument.evaluate_in(environment)),
+						scrutinee: neutral.into(),
+						argument: argument.evaluate_in(environment).into(),
 					}),
 					_ => panic!(),
 				},
@@ -235,8 +234,8 @@ impl Evaluate for DynamicTerm {
 				DynamicValue::EnumValue(_, v) =>
 					cases.into_iter().nth(v.into()).unwrap().evaluate_in(environment),
 				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::CaseEnum {
-					scrutinee: rc!(neutral),
-					motive: rc!(motive.evaluate_in(environment)),
+					scrutinee: neutral.into(),
+					motive: motive.evaluate_in(environment).into(),
 					cases: cases.into_iter().map(|case| case.evaluate_in(environment)).collect(),
 				}),
 				_ => panic!(),
@@ -275,10 +274,10 @@ impl Evaluate for DynamicTerm {
 							neutrals.push(previous);
 						}
 						let result = DynamicValue::Neutral(DynamicNeutral::CaseNat {
-							scrutinee: rc!(neutrals.pop().unwrap().clone()),
-							motive: rc!(motive.evaluate_in(environment)),
-							case_nil: rc!(case_nil.evaluate_in(environment)),
-							case_suc: rc!(case_suc.clone().evaluate_in(environment)),
+							scrutinee: neutrals.pop().unwrap().clone().into(),
+							motive: motive.evaluate_in(environment).into(),
+							case_nil: case_nil.evaluate_in(environment).into(),
+							case_suc: case_suc.clone().evaluate_in(environment).into(),
 						});
 						neutrals
 							.into_iter()
@@ -295,7 +294,7 @@ impl Evaluate for DynamicTerm {
 				kind: kind.evaluate_in(environment).into(),
 				inner: inner.evaluate_in(environment).into(),
 			},
-			BxValue(tm) => DynamicValue::BxValue(rc!(tm.evaluate_in(environment))),
+			BxValue(tm) => DynamicValue::BxValue(tm.evaluate_in(environment).into()),
 			BxProject { scrutinee, kind: _ } => match scrutinee.evaluate_in(environment) {
 				DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::BxProject(n.into())),
 				DynamicValue::BxValue(v) => v.as_ref().clone(),
@@ -305,7 +304,7 @@ impl Evaluate for DynamicTerm {
 				inner: inner.evaluate_in(environment).into(),
 				kind: kind.evaluate_in(environment).into(),
 			},
-			WrapValue(tm) => DynamicValue::WrapValue(rc!(tm.evaluate_in(environment))),
+			WrapValue(tm) => DynamicValue::WrapValue(tm.evaluate_in(environment).into()),
 			WrapProject { scrutinee, kind: _ } => match scrutinee.evaluate_in(environment) {
 				DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::WrapProject(n.into())),
 				DynamicValue::WrapValue(v) => v.as_ref().clone(),

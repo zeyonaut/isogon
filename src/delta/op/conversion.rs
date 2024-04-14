@@ -1,10 +1,9 @@
-use crate::{
-	delta::{
-		common::{Field, Level},
-		ir::semantics::{CpyValue, DynamicNeutral, DynamicValue, KindValue, StaticNeutral, StaticValue},
-		op::evaluate::EvaluateAuto,
-	},
-	utility::rc,
+use std::rc::Rc;
+
+use crate::delta::{
+	common::{Field, Level},
+	ir::semantics::{CpyValue, DynamicNeutral, DynamicValue, KindValue, StaticNeutral, StaticValue},
+	op::evaluate::EvaluateAuto,
 };
 
 pub trait Conversion<T> {
@@ -64,7 +63,7 @@ impl Conversion<StaticValue> for Level {
 				self.can_convert(left, right),
 
 			// Repeated programs.
-			(V::Exp(grade_l, ty_l), V::Exp(grade_r, ty_r)) =>
+			(V::Exp(grade_l, _, ty_l), V::Exp(grade_r, _, ty_r)) =>
 				grade_l == grade_r && self.can_convert(&**ty_l, ty_r),
 			(V::Repeat(_, left), V::Repeat(_, right)) => self.can_convert(&**left, right),
 
@@ -79,12 +78,12 @@ impl Conversion<StaticValue> for Level {
 			(V::Function(_, left), V::Function(_, right)) =>
 				(self + 1).can_convert(&left.evaluate_auto(self), &right.evaluate_auto(self)),
 			(V::Neutral(left), V::Function(_, right)) => (self + 1).can_convert(
-				&V::Neutral(StaticNeutral::Apply(rc!(left.clone()), rc!((right.parameter(), self).into()))),
+				&V::Neutral(StaticNeutral::Apply(left.clone().into(), Rc::new((right.parameter(), self).into()))),
 				&right.evaluate_auto(self),
 			),
 			(V::Function(_, left), V::Neutral(right)) => (self + 1).can_convert(
 				&left.evaluate_auto(self),
-				&V::Neutral(StaticNeutral::Apply(rc!(right.clone()), rc!((left.parameter(), self).into()))),
+				&V::Neutral(StaticNeutral::Apply(right.clone().into(), Rc::new((left.parameter(), self).into()))),
 			),
 
 			// Dependent pairs.
@@ -192,12 +191,18 @@ impl Conversion<DynamicValue> for Level {
 			(Function { body: left, .. }, Function { body: right, .. }) =>
 				(self + 1).can_convert(&left.evaluate_auto(self), &right.evaluate_auto(self)),
 			(Neutral(left), Function { body: right, .. }) => (self + 1).can_convert(
-				&Neutral(Apply { scrutinee: rc!(left.clone()), argument: rc!((right.parameter(), self).into()) }),
+				&Neutral(Apply {
+					scrutinee: left.clone().into(),
+					argument: Rc::new((right.parameter(), self).into()),
+				}),
 				&right.evaluate_auto(self),
 			),
 			(Function { body: left, .. }, Neutral(right)) => (self + 1).can_convert(
 				&left.evaluate_auto(self),
-				&Neutral(Apply { scrutinee: rc!(right.clone()), argument: rc!((left.parameter(), self).into()) }),
+				&Neutral(Apply {
+					scrutinee: right.clone().into(),
+					argument: Rc::new((left.parameter(), self).into()),
+				}),
 			),
 
 			// Dependent pairs.

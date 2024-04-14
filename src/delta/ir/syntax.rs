@@ -34,7 +34,7 @@ pub enum StaticTerm {
 	Quote(Box<DynamicTerm>),
 
 	// Repeated programs.
-	Exp(Cost, Box<Self>),
+	Exp(Cost, Cpy, Box<Self>),
 	Repeat(Cost, Box<Self>),
 	ExpLet {
 		grade: Cost,
@@ -49,6 +49,7 @@ pub enum StaticTerm {
 		grade: usize,
 		base_copy: Cpy,
 		base: Box<Self>,
+		family_copy: Cpy,
 		family: Binder<Label, Box<Self>>,
 	},
 	Function(usize, Binder<Label, Box<Self>>),
@@ -152,7 +153,6 @@ pub enum DynamicTerm {
 	},
 	Apply {
 		scrutinee: Box<Self>,
-		// TODO: None doesn't mean Inf here, but irrelevance. Use Cost where applicable (i.e. during elaboration, not here) to avoid confusion.
 		grade: Option<usize>,
 		argument: Box<Self>,
 		family_kind: Option<Box<KindTerm>>,

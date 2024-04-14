@@ -1,12 +1,9 @@
-use crate::{
-	delta::{
-		common::{Binder, Closure, Cpy, Field, Label, Level, Repr, UniverseKind},
-		ir::{
-			object::{DynamicValue, Environment, StaticValue, Value},
-			syntax::{DynamicTerm, KindTerm, StaticTerm},
-		},
+use crate::delta::{
+	common::{Binder, Closure, Cpy, Field, Label, Level, Repr, UniverseKind},
+	ir::{
+		object::{DynamicValue, Environment, StaticValue, Value},
+		syntax::{DynamicTerm, KindTerm, StaticTerm},
 	},
-	utility::rc,
 };
 
 pub trait Stage {
@@ -154,7 +151,7 @@ impl Stage for DynamicTerm {
 
 			// Repeated programs.
 			Exp(n, kind, ty) =>
-				DynamicValue::Exp(n, kind.stage_in(environment).into(), ty.stage_in(environment).into()),
+				DynamicValue::Exp(n, kind.stage_in(environment), ty.stage_in(environment).into()),
 			Repeat(n, tm) => DynamicValue::Repeat(n, tm.stage_in(environment).into()),
 			ExpLet { grade, grade_argument, argument, kind, tail } => DynamicValue::ExpLet {
 				grade,
@@ -235,7 +232,7 @@ impl Stage for DynamicTerm {
 			// Natural numbers.
 			Nat => DynamicValue::Nat,
 			Num(n) => DynamicValue::Num(n),
-			Suc(prev) => DynamicValue::Suc(rc!(prev.stage_in(environment))),
+			Suc(prev) => DynamicValue::Suc(prev.stage_in(environment).into()),
 			CaseNat { scrutinee, motive_kind, motive, case_nil, case_suc } => DynamicValue::CaseNat {
 				scrutinee: scrutinee.stage_in(environment).into(),
 				motive_kind: motive_kind.map(|kind| kind.stage_in(environment)),

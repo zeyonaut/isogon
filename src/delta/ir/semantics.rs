@@ -1,12 +1,9 @@
 use std::rc::Rc;
 
 use super::syntax::{DynamicTerm, StaticTerm};
-use crate::{
-	delta::{
-		common::{Closure, Cost, Cpy, Field, Index, Level, Name, Repr, ReprAtom},
-		op::conversion::Conversion,
-	},
-	utility::rc,
+use crate::delta::{
+	common::{Closure, Cost, Cpy, Field, Index, Level, Name, Repr, ReprAtom},
+	op::conversion::Conversion,
 };
 
 #[derive(Clone, Debug)]
@@ -41,7 +38,7 @@ pub enum StaticValue {
 	Quote(DynamicValue),
 
 	// Repeated programs.
-	Exp(Cost, Rc<Self>),
+	Exp(Cost, Cpy, Rc<Self>),
 	Repeat(Cost, Rc<Self>),
 
 	// Dependent functions.
@@ -49,6 +46,7 @@ pub enum StaticValue {
 		grade: usize,
 		base_copy: Cpy,
 		base: Rc<Self>,
+		family_copy: Cpy,
 		family: Rc<Closure<Environment, StaticTerm>>,
 	},
 	Function(usize, Rc<Closure<Environment, StaticTerm>>),
@@ -286,7 +284,7 @@ impl StaticValue {
 		match (a, b) {
 			(Self::ReprNone, b) => b,
 			(a, Self::ReprNone) => a,
-			(a, b) => Self::ReprPair(rc!(a), rc!(b)),
+			(a, b) => Self::ReprPair(a.into(), b.into()),
 		}
 	}
 
@@ -404,7 +402,7 @@ impl KindValue {
 
 	pub const fn ty() -> Self { Self { copy: StaticValue::cpy(Cpy::Tr), repr: StaticValue::ReprNone } }
 
-	// TODO: Only consider nat to be trivial for slightly simpler implementation.
+	// NOTE: Only consider nat to be trivial for slightly simpler implementation.
 	pub const fn nat() -> Self {
 		Self { copy: StaticValue::cpy(Cpy::Tr), repr: StaticValue::ReprAtom(ReprAtom::Nat) }
 	}
@@ -416,7 +414,10 @@ impl KindValue {
 	pub fn wrap(self) -> Self { Self { copy: Cpy::Nt.into(), repr: self.repr } }
 
 	pub fn exp(self, grade: usize) -> Self {
-		Self { copy: self.copy, repr: StaticValue::ReprExp(grade, self.repr.into()) }
+		Self {
+			copy: if grade == 0 { StaticValue::cpy(Cpy::Tr) } else { self.copy },
+			repr: StaticValue::ReprExp(grade, self.repr.into()),
+		}
 	}
 
 	pub fn pair(level: Level, a: Self, b: Self) -> Self {

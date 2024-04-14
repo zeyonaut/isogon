@@ -1,0 +1,10 @@
+let a : Box Bool = box true;
+let clone_box : Box Bool -> ![2] (Box Bool) =
+	|e| (
+		let inner : Bool = e unbox;
+		@[2] (box inner)
+	);
+let b : ![2] (Box Bool) = clone_box a;
+let @[2] c = b;
+let d : (Box Bool & Box Bool) = (c, c);
+d

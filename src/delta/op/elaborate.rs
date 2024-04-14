@@ -6,28 +6,23 @@ use std::{
 use lasso::Resolver;
 
 use super::{unelaborate::Unelaborate, unparse::print};
-use crate::{
-	delta::{
-		common::{bind, Binder, Cost, Cpy, Field, Index, Label, Level, Name},
-		ir::{
-			presyntax::{
-				Constructor, Expression, Former, ParsedLabel, ParsedPreterm, ParsedProgram, Pattern, Preterm,
-				Projector,
-			},
-			semantics::{
-				DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue, Value,
-			},
-			source::LexedSource,
-			syntax::{DynamicTerm, KindTerm, StaticTerm},
+use crate::delta::{
+	common::{bind, Binder, Cost, Cpy, Field, Index, Label, Level, Name},
+	ir::{
+		presyntax::{
+			Constructor, Expression, Former, ParsedLabel, ParsedPreterm, ParsedProgram, Pattern, Preterm,
+			Projector,
 		},
-		op::{
-			conversion::Conversion,
-			evaluate::{Evaluate, EvaluateWith},
-			parse::report_line_error,
-			unevaluate::Unevaluate,
-		},
+		semantics::{DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue, Value},
+		source::LexedSource,
+		syntax::{DynamicTerm, KindTerm, StaticTerm},
 	},
-	utility::bx,
+	op::{
+		conversion::Conversion,
+		evaluate::{Evaluate, EvaluateWith},
+		parse::report_line_error,
+		unevaluate::Unevaluate,
+	},
 };
 
 /// Elaborates a dynamic preterm to a dynamic term and synthesizes its type.
@@ -125,8 +120,7 @@ impl ElaborationErrorKind {
 
 #[derive(Clone, Debug)]
 pub enum ContextType {
-	Static(StaticValue),
-	// Type, kind.
+	Static(StaticValue, Cpy),
 	Dynamic(DynamicValue, KindValue),
 }
 
@@ -218,7 +212,7 @@ impl<'c, T, const N: usize> ExtendedContext<'c, T, N> {
 			ContextEntry::new(
 				is_crisp,
 				if copy == Cpy::Nt || grade == 0.into() { grade } else { Cost::Inf },
-				ContextType::Static(ty),
+				ContextType::Static(ty, copy),
 			),
 			Value::Static(StaticValue::Neutral(StaticNeutral::Variable(
 				self.binder.parameters[self.count].label,
@@ -279,7 +273,7 @@ impl<'c, T, const N: usize> ExtendedContext<'c, T, N> {
 			ContextEntry::new(
 				is_crisp,
 				if copy == Cpy::Nt || grade == 0.into() { grade } else { Cost::Inf },
-				ContextType::Static(ty),
+				ContextType::Static(ty, copy),
 			),
 			Value::Static(value),
 		);
@@ -290,8 +284,8 @@ impl<'c, T, const N: usize> ExtendedContext<'c, T, N> {
 		mut self,
 		is_crisp: bool,
 		grade: Cost,
-		ty: DynamicValue,
 		kind: KindValue,
+		ty: DynamicValue,
 		value: DynamicValue,
 	) -> Self {
 		let grade = grade * (self.context.fragment as usize).into();
@@ -441,15 +435,18 @@ impl Context {
 		ExtendedContext::new(self, binder)
 	}
 
-	fn synthesize_static(&mut self, expr: Expression) -> Result<(StaticTerm, StaticValue), ElaborationError> {
+	fn synthesize_static(
+		&mut self,
+		expr: Expression,
+	) -> Result<(StaticTerm, StaticValue, Cpy), ElaborationError> {
 		let ParsedPreterm(preterm) = expr.preterm;
 		Ok(match preterm {
 			// Variables.
 			Preterm::Variable(name) => 'var: {
 				for (i, (name_1, entry)) in self.tys.iter().rev().enumerate() {
 					if &Some(name) == name_1 {
-						if let ContextType::Static(ty) = &entry.ty {
-							let result = (StaticTerm::Variable(Some(name), Index(i)), ty.clone());
+						if let ContextType::Static(ty, c) = &entry.ty {
+							let result = (StaticTerm::Variable(Some(name), Index(i)), ty.clone(), *c);
 							self.take_index(i).map_err(|e| e.at(expr.range))?;
 							break 'var result;
 						} else {
@@ -466,10 +463,11 @@ impl Context {
 				(),
 				|ctx, tail_body, ()| ctx.synthesize_static(tail_body),
 				|grade, ty, argument, tail| {
-					let (tail, tail_ty) = tail.retract();
+					let (tail, tail_ty, c) = tail.retract2();
 					(
-						StaticTerm::Let { grade, ty: bx!(ty), argument: bx!(argument), tail: tail.map_into() },
+						StaticTerm::Let { grade, ty: ty.into(), argument: argument.into(), tail: tail.map_into() },
 						tail_ty,
+						c,
 					)
 				},
 			)?,
@@ -477,7 +475,11 @@ impl Context {
 			// Quoting.
 			Preterm::SwitchLevel(quotee) => {
 				let (quotee, quotee_ty, kind) = self.synthesize_dynamic(*quotee)?;
-				(StaticTerm::Quote(bx!(quotee)), StaticValue::Lift { ty: quotee_ty, kind: kind.into() })
+				(
+					StaticTerm::Quote(quotee.into()),
+					StaticValue::Lift { ty: quotee_ty, kind: kind.into() },
+					Cpy::Nt,
+				)
 			}
 
 			// Dependent functions.
@@ -489,21 +491,23 @@ impl Context {
 					.bind_static(false, 0.into(), base_copy, base_value)
 					.map_extra(|ctx, body| ctx.elaborate_static_type(*body))?;
 				(
-					StaticTerm::Pi { grade, base_copy, base: base.into(), family: family.map_into() },
+					StaticTerm::Pi { grade, base_copy, base: base.into(), family_copy, family: family.map_into() },
 					StaticValue::Universe(family_copy),
+					Cpy::Tr,
 				)
 			}
 			Preterm::Lambda { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
 			Preterm::Call { callee, argument } => {
-				let (callee, scrutinee_ty) = self.synthesize_static(*callee)?;
-				let StaticValue::IndexedProduct { grade, base, family, .. } = scrutinee_ty else {
+				let (callee, scrutinee_ty, _) = self.synthesize_static(*callee)?;
+				let StaticValue::IndexedProduct { grade, base, family_copy, family, .. } = scrutinee_ty else {
 					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
 				};
 				let argument =
 					self.amplify(grade).erase_if(grade == 0).verify_static(*argument, (*base).clone())?;
 				(
-					StaticTerm::Apply { scrutinee: bx!(callee), argument: bx!(argument.clone()) },
+					StaticTerm::Apply { scrutinee: callee.into(), argument: argument.clone().into() },
 					family.evaluate_with([argument.evaluate_in(&self.environment)]),
+					family_copy,
 				)
 			}
 
@@ -518,17 +522,17 @@ impl Context {
 				(
 					StaticTerm::Sg { base_copy, base: base.into(), family_copy, family: family.map_into() },
 					StaticValue::Universe(base_copy.max(family_copy)),
+					Cpy::Tr,
 				)
 			}
 			Preterm::Pair { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
 			Preterm::SgLet { grade, argument, tail } => self.elaborate_static_sg_let(
-				expr.range,
 				PreSgLet { grade, argument: *argument, tail },
 				(),
 				|ctx, tail_body, ()| ctx.synthesize_static(tail_body),
 				|grade, argument, tail| {
-					let (tail, tail_ty) = tail.retract();
-					(StaticTerm::SgLet { grade, argument: argument.into(), tail: tail.map_into() }, tail_ty)
+					let (tail, tail_ty, c) = tail.retract2();
+					(StaticTerm::SgLet { grade, argument: argument.into(), tail: tail.map_into() }, tail_ty, c)
 				},
 			)?,
 
@@ -541,12 +545,14 @@ impl Context {
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					match c.preterm {
 						ParsedPreterm(Preterm::Constructor(Constructor::Cpy(c), v)) if v.is_empty() =>
-							(StaticTerm::Universe(c), StaticValue::Universe(Cpy::Tr)),
+							(StaticTerm::Universe(c), StaticValue::Universe(Cpy::Tr), Cpy::Tr),
 						_ => return Err(ElaborationErrorKind::InvalidStaticUniverse.at(expr.range)),
 					}
 				}
-				Former::Copy if arguments.is_empty() => (StaticTerm::Cpy, StaticValue::Universe(Cpy::Tr)),
-				Former::Repr if arguments.is_empty() => (StaticTerm::Repr, StaticValue::Universe(Cpy::Tr)),
+				Former::Copy if arguments.is_empty() =>
+					(StaticTerm::Cpy, StaticValue::Universe(Cpy::Tr), Cpy::Tr),
+				Former::Repr if arguments.is_empty() =>
+					(StaticTerm::Repr, StaticValue::Universe(Cpy::Tr), Cpy::Tr),
 
 				// Quoting.
 				Former::Lift => {
@@ -557,6 +563,7 @@ impl Context {
 					(
 						StaticTerm::Lift { liftee: liftee.into(), kind: kind.unevaluate_in(self.len()).into() },
 						StaticValue::Universe(Cpy::Nt),
+						Cpy::Tr,
 					)
 				}
 
@@ -566,15 +573,19 @@ impl Context {
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (ty, c) = self.elaborate_static_type(ty)?;
-					(StaticTerm::Exp(grade, ty.into()), StaticValue::Universe(c))
+					(
+						StaticTerm::Exp(grade, c, ty.into()),
+						StaticValue::Universe(if grade == 0.into() { Cpy::Tr } else { c }),
+						Cpy::Tr,
+					)
 				}
 
 				// Enumerated numbers.
 				Former::Enum(card) if arguments.is_empty() =>
-					(StaticTerm::Enum(card), StaticValue::Universe(Cpy::Tr)),
+					(StaticTerm::Enum(card), StaticValue::Universe(Cpy::Tr), Cpy::Tr),
 
 				// Natural numbers.
-				Former::Nat if arguments.is_empty() => (StaticTerm::Nat, StaticValue::Universe(Cpy::Tr)),
+				Former::Nat if arguments.is_empty() => (StaticTerm::Nat, StaticValue::Universe(Cpy::Tr), Cpy::Tr),
 
 				// Invalid former.
 				_ => return Err(ElaborationErrorKind::InvalidFormer.at(expr.range)),
@@ -589,25 +600,27 @@ impl Context {
 						Cpy::Nt => StaticTerm::CpyNt,
 					},
 					StaticValue::Cpy,
+					Cpy::Tr,
 				),
 				Constructor::CpyMax if self.fragment == Fragment::Logical => (
 					StaticTerm::CpyMax(
 						arguments
 							.into_iter()
-							.map(|a| self.erase().verify_static(a, StaticValue::Cpy))
+							.map(|a| self.verify_static(a, StaticValue::Cpy))
 							.collect::<Result<_, _>>()?,
 					),
 					StaticValue::Cpy,
+					Cpy::Tr,
 				),
 				Constructor::ReprAtom(r) if self.fragment == Fragment::Logical && arguments.is_empty() =>
-					(StaticTerm::ReprAtom(r), StaticValue::ReprType),
+					(StaticTerm::ReprAtom(r), StaticValue::ReprType, Cpy::Tr),
 				Constructor::ReprPair if self.fragment == Fragment::Logical => {
 					let [r0, r1] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let r0 = self.erase().verify_static(r0, StaticValue::ReprType)?;
-					let r1 = self.erase().verify_static(r1, StaticValue::ReprType)?;
-					(StaticTerm::ReprPair(bx!(r0), bx!(r1)), StaticValue::ReprType)
+					let r0 = self.verify_static(r0, StaticValue::ReprType)?;
+					let r1 = self.verify_static(r1, StaticValue::ReprType)?;
+					(StaticTerm::ReprPair(r0.into(), r1.into()), StaticValue::ReprType, Cpy::Tr)
 				}
 
 				// Repeated programs.
@@ -615,25 +628,29 @@ impl Context {
 					let [tm] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let (tm, ty) = self.erase().synthesize_static(tm)?;
-					(StaticTerm::Repeat(grade, tm.into()), StaticValue::Exp(grade, ty.into()))
+					let (tm, ty, c) = self.synthesize_static(tm)?;
+					(
+						StaticTerm::Repeat(grade, tm.into()),
+						StaticValue::Exp(grade, c, ty.into()),
+						if grade == 0.into() { Cpy::Tr } else { c },
+					)
 				}
 
 				// Enumerated numbers.
 				Constructor::Enum(k, v) if arguments.is_empty() =>
-					(StaticTerm::EnumValue(k, v), StaticValue::Enum(k)),
+					(StaticTerm::EnumValue(k, v), StaticValue::Enum(k), Cpy::Tr),
 
 				// Natural numbers.
-				Constructor::Num(n) if arguments.is_empty() => (StaticTerm::Num(n), StaticValue::Nat),
+				Constructor::Num(n) if arguments.is_empty() => (StaticTerm::Num(n), StaticValue::Nat, Cpy::Tr),
 				Constructor::Suc => {
 					let [prev] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let prev = self.verify_static(prev, StaticValue::Nat)?;
 					if let StaticTerm::Num(p) = prev {
-						(StaticTerm::Num(p + 1), StaticValue::Nat)
+						(StaticTerm::Num(p + 1), StaticValue::Nat, Cpy::Tr)
 					} else {
-						(StaticTerm::Suc(prev.into()), StaticValue::Nat)
+						(StaticTerm::Suc(prev.into()), StaticValue::Nat, Cpy::Tr)
 					}
 				}
 
@@ -643,18 +660,29 @@ impl Context {
 
 			// Generic projectors.
 			Preterm::Project(scrutinee, projector) => match projector {
+				// Repeated programs.
+				Projector::Exp if self.fragment == Fragment::Logical => {
+					let (scrutinee, scrutinee_ty, _) = self.synthesize_static(*scrutinee)?;
+					let StaticValue::Exp(_, c, ty) = scrutinee_ty else {
+						return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Exp).at(expr.range));
+					};
+					(StaticTerm::ExpProject(scrutinee.into()), ty.as_ref().clone(), c)
+				}
+
 				// Dependent pairs.
 				Projector::Field(field) if self.fragment == Fragment::Logical => {
-					let (scrutinee, scrutinee_ty) = self.erase().synthesize_static(*scrutinee)?;
-					let StaticValue::IndexedSum { base, family, .. } = scrutinee_ty else {
+					let (scrutinee, scrutinee_ty, _) = self.synthesize_static(*scrutinee)?;
+					let StaticValue::IndexedSum { base_copy, base, family_copy, family, .. } = scrutinee_ty else {
 						return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
 					};
 					match field {
-						Field::Base => (StaticTerm::SgField(scrutinee.into(), field), base.as_ref().clone()),
+						Field::Base =>
+							(StaticTerm::SgField(scrutinee.into(), field), base.as_ref().clone(), base_copy),
 						Field::Fiber => (
-							StaticTerm::SgField(bx!(scrutinee.clone()), field),
+							StaticTerm::SgField(scrutinee.clone().into(), field),
 							family.evaluate_with([StaticTerm::SgField(scrutinee.clone().into(), Field::Base)
 								.evaluate_in(&self.environment)]),
+							family_copy,
 						),
 					}
 				}
@@ -665,7 +693,7 @@ impl Context {
 
 			// Generic case splits.
 			Preterm::Split { scrutinee, is_cast: false, motive, cases } => {
-				let (scrutinee, scrutinee_ty) = self.synthesize_static(*scrutinee)?;
+				let (scrutinee, scrutinee_ty, _) = self.synthesize_static(*scrutinee)?;
 				let scrutinee_value = scrutinee.clone().evaluate_in(&self.environment);
 				match scrutinee_ty {
 					StaticValue::Enum(card) => {
@@ -675,7 +703,7 @@ impl Context {
 						(cases.len() == card as _)
 							.then_some(())
 							.ok_or(ElaborationErrorKind::InvalidCaseSplit.at(expr.range))?;
-						let (motive_term, _) = self
+						let (motive_term, motive_copy) = self
 							.extend(motive)
 							.bind_static(false, 0.into(), Cpy::Tr, StaticValue::Enum(card))
 							.map_extra(|ctx, body| ctx.elaborate_static_type(*body))?;
@@ -705,11 +733,12 @@ impl Context {
 
 						(
 							StaticTerm::CaseEnum {
-								scrutinee: bx!(scrutinee),
+								scrutinee: scrutinee.into(),
 								motive: motive_term.map_into(),
 								cases: new_cases,
 							},
 							motive_value.evaluate_with([scrutinee_value]),
+							motive_copy,
 						)
 					}
 
@@ -772,6 +801,7 @@ impl Context {
 								case_suc: case_suc.map_into(),
 							},
 							motive_value.evaluate_with([scrutinee_value]),
+							motive_c,
 						)
 					}
 
@@ -806,13 +836,27 @@ impl Context {
 					return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Lift).at(expr.range));
 				};
 				let quotee = self.verify_dynamic(*quotee, liftee)?;
-				StaticTerm::Quote(bx!(quotee))
+				StaticTerm::Quote(quotee.into())
 			}
+
+			// Repeated programs.
+			(Preterm::ExpLet { grade, grade_argument, argument, tail }, tail_ty) => self
+				.elaborate_static_exp_let(
+					PreExpLet { grade: grade.unwrap_or(1.into()), grade_argument, argument: *argument, tail },
+					tail_ty,
+					Self::verify_static,
+					|grade, grade_argument, argument, tail| StaticTerm::ExpLet {
+						grade,
+						grade_argument,
+						argument: argument.into(),
+						tail: tail.map_into(),
+					},
+				)?,
 
 			// Dependent functions.
 			(
 				Preterm::Lambda { grade, body },
-				StaticValue::IndexedProduct { grade: grade_v, base_copy, base, family },
+				StaticValue::IndexedProduct { grade: grade_v, base_copy, base, family_copy: _, family },
 			) => {
 				(self.fragment == Fragment::Logical || grade == grade_v)
 					.then_some(())
@@ -835,7 +879,6 @@ impl Context {
 				StaticTerm::Pair { basepoint: basepoint.into(), fiberpoint: fiberpoint.into() }
 			}
 			(Preterm::SgLet { grade, argument, tail }, tail_ty) => self.elaborate_static_sg_let(
-				expr.range,
 				PreSgLet { grade, argument: *argument, tail },
 				tail_ty,
 				Self::verify_static,
@@ -848,7 +891,7 @@ impl Context {
 
 			// Synthesize and conversion-check.
 			(term, ty) => {
-				let (term, synthesized_ty) = self.synthesize_static(term.at(expr.range))?;
+				let (term, synthesized_ty, _) = self.synthesize_static(term.at(expr.range))?;
 				if self.len().can_convert(&synthesized_ty, &ty) {
 					term
 				} else {
@@ -931,11 +974,33 @@ impl Context {
 
 			// Splicing.
 			Preterm::SwitchLevel(splicee) => {
-				let (splicee, StaticValue::Lift { ty: liftee, kind }) = self.synthesize_static(*splicee)? else {
+				let (splicee, StaticValue::Lift { ty: liftee, kind }, _) = self.synthesize_static(*splicee)?
+				else {
 					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Lift).at(expr.range));
 				};
-				(DynamicTerm::Splice(bx!(splicee)), liftee, (*kind).clone())
+				(DynamicTerm::Splice(splicee.into()), liftee, (*kind).clone())
 			}
+
+			// Repeated programs.
+			Preterm::ExpLet { grade, grade_argument, argument, tail } => self.elaborate_dynamic_exp_let(
+				PreExpLet { grade: grade.unwrap_or(1.into()), grade_argument, argument: *argument, tail },
+				(),
+				|ctx, tail_body, ()| ctx.synthesize_dynamic(tail_body),
+				|grade, grade_argument, argument, kind_arg, tail| {
+					let (tail, tail_ty, kind) = tail.retract2();
+					(
+						DynamicTerm::ExpLet {
+							grade,
+							grade_argument,
+							argument: argument.into(),
+							kind: kind_arg.into(),
+							tail: tail.map_into(),
+						},
+						tail_ty,
+						kind,
+					)
+				},
+			)?,
 
 			// Dependent functions.
 			Preterm::Pi { grade, base, family } if self.fragment == Fragment::Logical => {
@@ -1007,7 +1072,6 @@ impl Context {
 			}
 			Preterm::Pair { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
 			Preterm::SgLet { grade, argument, tail } => self.elaborate_dynamic_sg_let(
-				expr.range,
 				PreSgLet { grade, argument: *argument, tail },
 				(),
 				|ctx, tail_body, ()| ctx.synthesize_dynamic(tail_body),
@@ -1028,8 +1092,8 @@ impl Context {
 					let [copy, repr] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let copy = self.erase().verify_static(copy, StaticValue::Cpy)?;
-					let repr = self.erase().verify_static(repr, StaticValue::ReprType)?;
+					let copy = self.verify_static(copy, StaticValue::Cpy)?;
+					let repr = self.verify_static(repr, StaticValue::ReprType)?;
 					(
 						DynamicTerm::Universe { kind: KindTerm { copy, repr }.into() },
 						DynamicValue::Universe { kind: KindValue::ty().into() },
@@ -1064,8 +1128,8 @@ impl Context {
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (ty, kind) = self.elaborate_dynamic_type(ty)?;
 					let ty_value = ty.clone().evaluate_in(&self.environment);
-					let x = self.erase().verify_dynamic(x, ty_value.clone())?;
-					let y = self.erase().verify_dynamic(y, ty_value.clone())?;
+					let x = self.verify_dynamic(x, ty_value.clone())?;
+					let y = self.verify_dynamic(y, ty_value.clone())?;
 					(
 						DynamicTerm::Id {
 							kind: kind.unevaluate_in(self.len()).into(),
@@ -1151,7 +1215,7 @@ impl Context {
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (tm, ty, kind) = self.synthesize_dynamic(tm)?;
 					(
-						DynamicTerm::BxValue(bx!(tm)),
+						DynamicTerm::BxValue(tm.into()),
 						DynamicValue::Bx { inner: ty.into(), kind: kind.into() },
 						KindValue::ptr(),
 					)
@@ -1162,7 +1226,7 @@ impl Context {
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (tm, ty, kind) = self.synthesize_dynamic(tm)?;
 					(
-						DynamicTerm::WrapValue(bx!(tm)),
+						DynamicTerm::WrapValue(tm.into()),
 						DynamicValue::Wrap { inner: ty.into(), kind: kind.clone().into() },
 						kind.wrap(),
 					)
@@ -1176,7 +1240,7 @@ impl Context {
 			Preterm::Project(scrutinee, projector) => match projector {
 				// Repeated programs.
 				Projector::Exp if self.fragment == Fragment::Logical => {
-					let (scrutinee, scrutinee_ty, _) = self.erase().synthesize_dynamic(*scrutinee)?;
+					let (scrutinee, scrutinee_ty, _) = self.synthesize_dynamic(*scrutinee)?;
 					let DynamicValue::Exp(_, kind, ty) = scrutinee_ty else {
 						return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Exp).at(expr.range));
 					};
@@ -1185,7 +1249,7 @@ impl Context {
 
 				// Dependent pairs.
 				Projector::Field(field) if self.fragment == Fragment::Logical => {
-					let (scrutinee, scrutinee_ty, _) = self.erase().synthesize_dynamic(*scrutinee)?;
+					let (scrutinee, scrutinee_ty, _) = self.synthesize_dynamic(*scrutinee)?;
 					let DynamicValue::IndexedSum { base_kind, base, family_kind, family } = scrutinee_ty else {
 						return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
 					};
@@ -1224,7 +1288,7 @@ impl Context {
 					};
 					(
 						DynamicTerm::WrapProject {
-							scrutinee: bx!(tm),
+							scrutinee: tm.into(),
 							kind: Some(kind.unevaluate_in(self.len()).into()),
 						},
 						ty.as_ref().clone(),
@@ -1457,7 +1521,7 @@ impl Context {
 			// Dependent functions.
 			(
 				Preterm::Lambda { grade, body },
-				DynamicValue::IndexedProduct { grade: grade_t, base, base_kind, family, family_kind },
+				DynamicValue::IndexedProduct { grade: grade_t, base_kind, base, family_kind, family },
 			) => {
 				(self.fragment == Fragment::Logical || grade == grade_t)
 					.then_some(())
@@ -1482,7 +1546,6 @@ impl Context {
 				DynamicTerm::Pair { basepoint: basepoint.into(), fiberpoint: fiberpoint.into() }
 			}
 			(Preterm::SgLet { grade, argument, tail }, tail_ty) => self.elaborate_dynamic_sg_let(
-				expr.range,
 				PreSgLet { grade, argument: *argument, tail },
 				tail_ty,
 				Self::verify_dynamic,
@@ -1513,7 +1576,7 @@ impl Context {
 				let [tm] =
 					tms.try_into().map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 				let tm = self.verify_dynamic(tm, ty.as_ref().clone())?;
-				DynamicTerm::BxValue(bx!(tm))
+				DynamicTerm::BxValue(tm.into())
 			}
 			(Preterm::Constructor(Constructor::Wrap, tms), ty) => {
 				let DynamicValue::Wrap { inner: ty, .. } = ty else {
@@ -1522,7 +1585,7 @@ impl Context {
 				let [tm] =
 					tms.try_into().map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 				let tm = self.verify_dynamic(tm, ty.as_ref().clone())?;
-				DynamicTerm::WrapValue(bx!(tm))
+				DynamicTerm::WrapValue(tm.into())
 			}
 
 			// Synthesize and conversion-check.
@@ -1545,7 +1608,7 @@ impl Context {
 
 	fn elaborate_static_type(&mut self, expr: Expression) -> Result<(StaticTerm, Cpy), ElaborationError> {
 		let expr_range = expr.range;
-		let (term, StaticValue::Universe(c)) = self.erase().synthesize_static(expr)? else {
+		let (term, StaticValue::Universe(c), _) = self.erase().synthesize_static(expr)? else {
 			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Universe).at(expr_range));
 		};
 		Ok((term, c))
@@ -1603,7 +1666,7 @@ impl Context {
 		let argument_value = argument.clone().evaluate_in(&self.environment);
 		let tail_b = self
 			.extend(tail)
-			.alias_dynamic(false, grade.into(), ty_value, argument_kind.clone(), argument_value)
+			.alias_dynamic(false, grade.into(), argument_kind.clone(), ty_value, argument_value)
 			.map(|ctx, body| elaborate_tail(ctx, *body, tail_a))?;
 
 		let argument_kind = argument_kind.unevaluate_in(self.len());
@@ -1611,17 +1674,70 @@ impl Context {
 		Ok(produce_let(grade, ty, argument_kind, argument, tail_b))
 	}
 
+	fn elaborate_static_exp_let<A, B>(
+		&mut self,
+		PreExpLet { grade, grade_argument, argument, tail }: PreExpLet,
+		tail_a: A,
+		elaborate_tail: impl FnOnce(&mut Context, Expression, A) -> Result<B, ElaborationError>,
+		produce_let: impl FnOnce(Cost, Cost, StaticTerm, Binder<Label, B>) -> B,
+	) -> Result<B, ElaborationError> {
+		let argument_range = argument.range;
+		let (tm, ty, _) = self.amplify(grade).erase_if(grade == 0.into()).synthesize_static(argument)?;
+		let StaticValue::Exp(n, c, ty) = ty else {
+			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Exp).at(argument_range));
+		};
+		if n != grade_argument {
+			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Exp).at(argument_range));
+		}
+		let rep_value = tm.clone().evaluate_in(&self.environment);
+		let inner_value = rep_value.clone().exp_project();
+		let tail_b = self
+			.extend(tail)
+			.alias_static(false, grade * grade_argument, c, (*ty).clone(), inner_value)
+			.map(|ctx, body| elaborate_tail(ctx, *body, tail_a))?;
+
+		Ok(produce_let(grade, grade_argument, tm, tail_b))
+	}
+
+	fn elaborate_dynamic_exp_let<A, B>(
+		&mut self,
+		PreExpLet { grade, grade_argument, argument, tail }: PreExpLet,
+		tail_a: A,
+		elaborate_tail: impl FnOnce(&mut Context, Expression, A) -> Result<B, ElaborationError>,
+		produce_let: impl FnOnce(usize, usize, DynamicTerm, KindTerm, Binder<Label, B>) -> B,
+	) -> Result<B, ElaborationError> {
+		let (Cost::Fin(grade), Cost::Fin(grade_argument)) = (grade, grade_argument) else {
+			return Err(ElaborationErrorKind::InvalidGrade.at(argument.range));
+		};
+		let argument_range = argument.range;
+		let (tm, ty, _) = self.amplify(grade).erase_if(grade == 0).synthesize_dynamic(argument)?;
+		let DynamicValue::Exp(n, kind, ty) = ty else {
+			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Exp).at(argument_range));
+		};
+		if n != grade_argument {
+			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Exp).at(argument_range));
+		}
+		let rep_value = tm.clone().evaluate_in(&self.environment);
+		let inner_value = rep_value.clone().exp_project();
+		let tail_b = self
+			.extend(tail)
+			.alias_dynamic(false, (grade * grade_argument).into(), (*kind).clone(), (*ty).clone(), inner_value)
+			.map(|ctx, body| elaborate_tail(ctx, *body, tail_a))?;
+
+		Ok(produce_let(grade, grade_argument, tm, kind.unevaluate_in(self.len()), tail_b))
+	}
+
 	fn elaborate_static_sg_let<A, B>(
 		&mut self,
-		expr_range: (usize, usize),
 		PreSgLet { grade, argument, tail }: PreSgLet,
 		tail_a: A,
 		elaborate_tail: impl FnOnce(&mut Context, Expression, A) -> Result<B, ElaborationError>,
 		produce_let: impl FnOnce(usize, StaticTerm, Binder<Label, B, 2>) -> B,
 	) -> Result<B, ElaborationError> {
-		let (tm, ty) = self.amplify(grade).erase_if(grade == 0).synthesize_static(argument)?;
+		let argument_range = argument.range;
+		let (tm, ty, _) = self.amplify(grade).erase_if(grade == 0).synthesize_static(argument)?;
 		let StaticValue::IndexedSum { base_copy, base, family_copy, family } = ty else {
-			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr_range));
+			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(argument_range));
 		};
 		let pair_value = tm.clone().evaluate_in(&self.environment);
 		let base = (*base).clone();
@@ -1639,15 +1755,15 @@ impl Context {
 
 	fn elaborate_dynamic_sg_let<A, B>(
 		&mut self,
-		expr_range: (usize, usize),
 		PreSgLet { grade, argument, tail }: PreSgLet,
 		tail_a: A,
 		elaborate_tail: impl FnOnce(&mut Context, Expression, A) -> Result<B, ElaborationError>,
 		produce_let: impl FnOnce(usize, [Box<KindTerm>; 2], DynamicTerm, Binder<Label, B, 2>) -> B,
 	) -> Result<B, ElaborationError> {
+		let argument_range = argument.range;
 		let (tm, ty, _) = self.amplify(grade).erase_if(grade == 0).synthesize_dynamic(argument)?;
 		let DynamicValue::IndexedSum { base_kind, base, family_kind, family } = ty else {
-			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr_range));
+			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(argument_range));
 		};
 		let pair_value = tm.clone().evaluate_in(&self.environment);
 		let base = (*base).clone();
@@ -1656,8 +1772,8 @@ impl Context {
 		let fiberpoint = pair_value.field(Field::Fiber);
 		let tail_b = self
 			.extend(tail)
-			.alias_dynamic(false, grade.into(), base, (*base_kind).clone(), basepoint)
-			.alias_dynamic(false, grade.into(), fiber, (*family_kind).clone(), fiberpoint)
+			.alias_dynamic(false, grade.into(), (*base_kind).clone(), base, basepoint)
+			.alias_dynamic(false, grade.into(), (*family_kind).clone(), fiber, fiberpoint)
 			.map(|ctx, body| elaborate_tail(ctx, *body, tail_a))?;
 
 		let kinds = [base_kind, family_kind].map(|x| x.unevaluate_in(self.len()).into());
@@ -1669,6 +1785,13 @@ impl Context {
 struct PreLet {
 	grade: Option<Cost>,
 	ty: Expression,
+	argument: Expression,
+	tail: Binder<ParsedLabel, Box<Expression>>,
+}
+
+struct PreExpLet {
+	grade: Cost,
+	grade_argument: Cost,
 	argument: Expression,
 	tail: Binder<ParsedLabel, Box<Expression>>,
 }

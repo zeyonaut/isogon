@@ -17,12 +17,7 @@ pub fn parse(source: &str) -> (LexedSource, ParsedProgram, RodeoResolver) {
 			panic!();
 		}
 	};
-	let mut parser = Parser {
-		source,
-		interner: Rodeo::new(),
-		// TODO: Remove this clone.
-		ranges: lexed_source.ranges.clone(),
-	};
+	let mut parser = Parser { source, interner: Rodeo::new(), ranges: lexed_source.ranges.clone() };
 	let program = match presyntax_parse::program(&lexed_source.tokens, &mut parser) {
 		Ok(preterm) => preterm,
 		Err(error) => {
@@ -212,7 +207,6 @@ peg::parser! {
 
 		// Case arms.
 		rule atomic_pattern() -> Pattern<ParsedLabel>
-			// TODO: Refactor longest match.
 			= [Token::At] index:optional_parameter() _ [Token::Period] witness:optional_parameter() {Pattern::Witness {index, witness}}
 			/ [Token::At] variable:optional_parameter() {Pattern::Variable(variable)}
 
@@ -256,7 +250,7 @@ peg::parser! {
 				is_meta:([Token::Keyword(Keyword::Let)] {false} / [Token::Keyword(Keyword::Def)] {true})
 					_ grade:(cost_annotation())? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
 				{ Preterm::Let { is_meta, grade, ty: ty.into(), argument: argument.into(), tail: bind([name], tail) }}
-				/ [Token::Keyword(Keyword::Let)] _ grade:(cost_annotation())? _ [Token::At] grade_argument:cost_annotation() _ [Token::ParenL] _ name:optional_parameter() _ [Token::ParenR] _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() {
+				/ [Token::Keyword(Keyword::Let)] _ grade:(cost_annotation())? _ [Token::At] grade_argument:cost_annotation() _ name:optional_parameter() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() {
 					Preterm::ExpLet { grade, grade_argument, argument: argument.into(), tail: bind([name], tail) }
 				}
 				/ [Token::Keyword(Keyword::Let)] _ grade:(finite_grade_annotation())? _ [Token::ParenL] _ a:parameter() _ [Token::Comma] _ b:parameter() _ [Token::ParenR] _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() {

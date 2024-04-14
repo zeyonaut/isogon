@@ -150,7 +150,7 @@ pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver
 
 fn print_spine(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver) -> std::fmt::Result {
 	match &preterm.0 {
-		Preterm::Call { .. } | Preterm::Project(..) | Preterm::Split { .. } => print(preterm, f, interner),
+		Preterm::Call { .. } | Preterm::Former(..) | Preterm::Constructor(..) | Preterm::Project(..) | Preterm::Split { .. } => print(preterm, f, interner),
 		_ => print_atom(preterm, f, interner),
 	}
 }

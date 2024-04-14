@@ -57,7 +57,7 @@ impl Unelaborate for StaticTerm {
 			StaticTerm::Lift { liftee, kind: _ } => Preterm::Former(Former::Lift, vec![liftee.unelaborate()]),
 			StaticTerm::Quote(q) => Preterm::SwitchLevel(q.unelaborate().into()),
 
-			StaticTerm::Exp(n, t) => Preterm::Former(Former::Exp(n), vec![t.unelaborate()]),
+			StaticTerm::Exp(n, _, t) => Preterm::Former(Former::Exp(n), vec![t.unelaborate()]),
 			StaticTerm::Repeat(n, e) => Preterm::Constructor(Constructor::Exp(n), vec![e.unelaborate()]),
 			StaticTerm::ExpLet { grade, grade_argument, argument, tail } => Preterm::ExpLet {
 				grade: Some(grade),
@@ -67,7 +67,7 @@ impl Unelaborate for StaticTerm {
 			},
 			StaticTerm::ExpProject(t) => Preterm::Project(t.unelaborate().into(), Projector::Exp),
 
-			StaticTerm::Pi { grade, base_copy: _, base, family } =>
+			StaticTerm::Pi { grade, base_copy: _, base, family_copy: _, family } =>
 				Preterm::Pi { grade, base: base.unelaborate().into(), family: family.unelaborate() },
 			StaticTerm::Function(grade, function) => Preterm::Lambda { grade, body: function.unelaborate() },
 			StaticTerm::Apply { scrutinee, argument } =>

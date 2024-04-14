@@ -75,14 +75,15 @@ impl Unevaluate for StaticValue {
 			V::Quote(quotee) => StaticTerm::Quote(quotee.try_unevaluate_in(level)?.into()),
 
 			// Repeated programs.
-			V::Exp(grade, ty) => StaticTerm::Exp(*grade, ty.unevaluate_in(level).into()),
+			V::Exp(grade, c, ty) => StaticTerm::Exp(*grade, *c, ty.unevaluate_in(level).into()),
 			V::Repeat(grade, value) => StaticTerm::Repeat(*grade, value.unevaluate_in(level).into()),
 
 			// Dependent functions.
-			V::IndexedProduct { grade, base_copy, base, family } => StaticTerm::Pi {
+			V::IndexedProduct { grade, base_copy, base, family_copy, family } => StaticTerm::Pi {
 				grade: *grade,
 				base_copy: *base_copy,
 				base: base.try_unevaluate_in(level)?.into(),
+				family_copy: *family_copy,
 				family: family.try_unevaluate_in(level)?,
 			},
 			V::Function(grade, function) => StaticTerm::Function(*grade, function.try_unevaluate_in(level)?),
