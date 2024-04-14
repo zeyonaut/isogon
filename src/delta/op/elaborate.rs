@@ -37,7 +37,6 @@ pub fn elaborate(
 	program: ParsedProgram,
 	interner: &impl Resolver,
 ) -> (DynamicTerm, DynamicValue) {
-	// TODO: Offer option to choose fragment, rather than force fragment to be 1.
 	match Context::empty(if program.fragment == 0 { Fragment::Logical } else { Fragment::Material })
 		.synthesize_dynamic(program.expr)
 	{
@@ -763,11 +762,7 @@ impl Context {
 								motive_value.evaluate_with([ctx.var(0)])
 							})
 							.map(|ctx, body| {
-								ctx.verify_static(
-									body,
-									motive_value
-										.evaluate_with([StaticValue::Neutral(StaticNeutral::Suc(Rc::new(ctx.var(1))))]),
-								)
+								ctx.verify_static(body, motive_value.evaluate_with([ctx.var::<StaticValue>(1).suc()]))
 							})?;
 						(
 							StaticTerm::CaseNat {
@@ -869,8 +864,6 @@ impl Context {
 		})
 	}
 
-	// TODO: Refactor to centralize assigning copy/repr to each type to prevent potential mistakes.
-	// Term, type, copyability, representation
 	fn synthesize_dynamic(
 		&mut self,
 		expr: Expression,
@@ -1299,7 +1292,6 @@ impl Context {
 
 					// Enumerated numbers.
 					DynamicValue::Enum(card) if !is_cast => {
-						// TODO: Handle this error.
 						let motive = motive
 							.try_resolve::<1>()
 							.map_err(|_| ElaborationErrorKind::WrongArity.at(expr.range))?;
@@ -1348,7 +1340,6 @@ impl Context {
 
 					// Natural numbers.
 					DynamicValue::Nat if !is_cast => {
-						// TODO: Handle this error.
 						let motive = motive
 							.try_resolve::<1>()
 							.map_err(|_| ElaborationErrorKind::WrongArity.at(expr.range))?;
@@ -1360,7 +1351,7 @@ impl Context {
 							.extend(motive)
 							.bind_dynamic(false, 0.into(), KindValue::nat(), DynamicValue::Nat)
 							.map_extra(|ctx, body| ctx.elaborate_dynamic_type(*body))?;
-						let motive = motive_term.clone().map_into().evaluate_in(&self.environment);
+						let motive_value = motive_term.clone().map_into().evaluate_in(&self.environment);
 						// Avoid cloning.
 						let Some(case_nil_position) = cases.iter().position(|(pattern, _)| {
 							if let Pattern::Construction(Constructor::Num(0), args) = pattern {
@@ -1388,7 +1379,7 @@ impl Context {
 						};
 						let case_suc = cases[1 - case_nil_position].1.clone();
 						let case_nil =
-							self.verify_dynamic(case_nil, motive.evaluate_with([DynamicValue::Num(0)]))?;
+							self.verify_dynamic(case_nil, motive_value.evaluate_with([DynamicValue::Num(0)]))?;
 						let case_suc = self
 							.amplify(Cost::Inf)
 							.extend(bind(case_suc_parameters, case_suc))
@@ -1396,14 +1387,12 @@ impl Context {
 							// For nontrivial Nat, we may wish to enclose the index with a thunk.
 							.bind_dynamic(false, Cost::Inf, KindValue::nat(), DynamicValue::Nat)
 							.bind_dynamic_with(false, 1.into(), motive_kind.clone(), |ctx| {
-								motive.evaluate_with([ctx.var(0)])
+								motive_value.evaluate_with([ctx.var(0)])
 							})
 							.map(|ctx, body| {
 								ctx.verify_dynamic(
 									body,
-									motive.evaluate_with([DynamicValue::Neutral(DynamicNeutral::Suc(Rc::new(
-										ctx.var(1),
-									)))]),
+									motive_value.evaluate_with([ctx.var::<DynamicValue>(1).suc()]),
 								)
 							})?;
 						(
@@ -1414,7 +1403,7 @@ impl Context {
 								case_nil: case_nil.into(),
 								case_suc: case_suc.map_into(),
 							},
-							motive.evaluate_with([scrutinee_value]),
+							motive_value.evaluate_with([scrutinee_value]),
 							motive_kind,
 						)
 					}
@@ -1630,11 +1619,11 @@ impl Context {
 		let StaticValue::IndexedSum { base_copy, base, family_copy, family } = ty else {
 			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr_range));
 		};
-		// This evaluates tm twice; may want to factor this out if convenient.
+		let pair_value = tm.clone().evaluate_in(&self.environment);
 		let base = (*base).clone();
-		let basepoint = StaticTerm::SgField(tm.clone().into(), Field::Base).evaluate_in(&self.environment);
+		let basepoint = pair_value.clone().field(Field::Base);
 		let fiber = family.evaluate_with([basepoint.clone()]);
-		let fiberpoint = StaticTerm::SgField(tm.clone().into(), Field::Fiber).evaluate_in(&self.environment);
+		let fiberpoint = pair_value.field(Field::Fiber);
 		let tail_b = self
 			.extend(tail)
 			.alias_static(false, grade.into(), base_copy, base, basepoint)
@@ -1656,13 +1645,11 @@ impl Context {
 		let DynamicValue::IndexedSum { base_kind, base, family_kind, family } = ty else {
 			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr_range));
 		};
-		// This evaluates tm twice; may want to factor this out if convenient.
+		let pair_value = tm.clone().evaluate_in(&self.environment);
 		let base = (*base).clone();
-		let basepoint = DynamicTerm::SgField { scrutinee: tm.clone().into(), field: Field::Base }
-			.evaluate_in(&self.environment);
+		let basepoint = pair_value.clone().field(Field::Base);
 		let fiber = family.evaluate_with([basepoint.clone()]);
-		let fiberpoint = DynamicTerm::SgField { scrutinee: tm.clone().into(), field: Field::Fiber }
-			.evaluate_in(&self.environment);
+		let fiberpoint = pair_value.field(Field::Fiber);
 		let tail_b = self
 			.extend(tail)
 			.alias_dynamic(false, grade.into(), base, (*base_kind).clone(), basepoint)

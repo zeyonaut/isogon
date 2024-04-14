@@ -75,12 +75,8 @@ impl Evaluate for StaticTerm {
 			S::Exp(grade, ty) => StaticValue::Exp(grade, ty.evaluate_in(environment).into()),
 			S::Repeat(grade, argument) => StaticValue::Repeat(grade, argument.evaluate_in(environment).into()),
 			S::ExpLet { grade: _, grade_argument: _, argument, tail } =>
-				tail.evaluate_at(environment, [S::ExpProject(argument).evaluate_in(environment)]),
-			S::ExpProject(t) => match t.evaluate_in(environment) {
-				StaticValue::Repeat(_, v) => v.as_ref().clone(),
-				StaticValue::Neutral(n) => StaticValue::Neutral(StaticNeutral::ExpProject(n.into())),
-				_ => panic!(),
-			},
+				tail.evaluate_at(environment, [argument.evaluate_in(environment).exp_project()]),
+			S::ExpProject(t) => t.evaluate_in(environment).exp_project(),
 
 			// Dependent functions.
 			S::Pi { grade, base_copy, base, family } => StaticValue::IndexedProduct {
@@ -110,22 +106,14 @@ impl Evaluate for StaticTerm {
 				basepoint.evaluate_in(environment).into(),
 				fiberpoint.evaluate_in(environment).into(),
 			),
-			S::SgField(scrutinee, projection) => match scrutinee.evaluate_in(environment) {
-				StaticValue::Pair(basepoint, fiberpoint) => match projection {
-					Field::Base => basepoint.as_ref().clone(),
-					Field::Fiber => fiberpoint.as_ref().clone(),
-				},
-				StaticValue::Neutral(neutral) =>
-					StaticValue::Neutral(StaticNeutral::Project(neutral.into(), projection)),
-				_ => panic!(),
-			},
-			S::SgLet { grade: _, argument, tail } => tail.evaluate_at(
-				environment,
-				[
-					S::SgField(argument.clone(), Field::Base).evaluate_in(environment),
-					S::SgField(argument, Field::Fiber).evaluate_in(environment),
-				],
-			),
+			S::SgLet { grade: _, argument, tail } => {
+				let argument = argument.evaluate_in(environment);
+				tail.evaluate_at(
+					environment,
+					[argument.clone().field(Field::Base), argument.clone().field(Field::Fiber)],
+				)
+			}
+			S::SgField(scrutinee, field) => scrutinee.evaluate_in(environment).field(field),
 
 			// Enumerated numbers.
 			S::Enum(card) => StaticValue::Enum(card),
@@ -143,11 +131,7 @@ impl Evaluate for StaticTerm {
 			// Natural numbers.
 			S::Nat => StaticValue::Nat,
 			S::Num(n) => StaticValue::Num(n),
-			S::Suc(prev) => match prev.evaluate_in(environment) {
-				StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::Suc(rc!(neutral))),
-				StaticValue::Num(n) => StaticValue::Num(n + 1),
-				_ => panic!(),
-			},
+			S::Suc(prev) => prev.evaluate_in(environment).suc(),
 			S::CaseNat { scrutinee, motive, case_nil, case_suc } => match scrutinee.evaluate_in(environment) {
 				StaticValue::Num(n) => (0..n).fold(case_nil.evaluate_in(environment), |previous, i| {
 					case_suc.evaluate_at(environment, [StaticValue::Num(i), previous])
@@ -158,10 +142,10 @@ impl Evaluate for StaticTerm {
 						neutrals.push(previous);
 					}
 					let result = StaticValue::Neutral(StaticNeutral::CaseNat {
-						scrutinee: rc!(neutrals.pop().unwrap().clone()),
-						motive: rc!(motive.evaluate_in(environment)),
-						case_nil: rc!(case_nil.evaluate_in(environment)),
-						case_suc: rc!(case_suc.clone().evaluate_in(environment)),
+						scrutinee: neutrals.pop().unwrap().clone().into(),
+						motive: motive.evaluate_in(environment).into(),
+						case_nil: case_nil.evaluate_in(environment).into(),
+						case_suc: case_suc.clone().evaluate_in(environment).into(),
 					});
 					neutrals
 						.into_iter()
@@ -203,13 +187,9 @@ impl Evaluate for DynamicTerm {
 			Exp(grade, kind, ty) =>
 				DynamicValue::Exp(grade, kind.evaluate_in(environment).into(), ty.evaluate_in(environment).into()),
 			Repeat(grade, argument) => DynamicValue::Repeat(grade, argument.evaluate_in(environment).into()),
-			ExpLet { grade: _, grade_argument: _, argument, kind, tail } =>
-				tail.evaluate_at(environment, [ExpProject(argument).evaluate_in(environment)]),
-			ExpProject(t) => match t.evaluate_in(environment) {
-				DynamicValue::Repeat(_, v) => v.as_ref().clone(),
-				DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::ExpProject(n.into())),
-				_ => panic!(),
-			},
+			ExpLet { grade: _, grade_argument: _, argument, kind: _, tail } =>
+				tail.evaluate_at(environment, [argument.evaluate_in(environment).exp_project()]),
+			ExpProject(t) => t.evaluate_in(environment).exp_project(),
 
 			// Dependent functions.
 			Function { grade, body, domain_kind: _, codomain_kind: _ } =>
@@ -242,22 +222,11 @@ impl Evaluate for DynamicTerm {
 				basepoint.evaluate_in(environment).into(),
 				fiberpoint.evaluate_in(environment).into(),
 			),
-			SgField { scrutinee, field } => match scrutinee.evaluate_in(environment) {
-				DynamicValue::Pair(basepoint, fiberpoint) => match field {
-					Field::Base => basepoint.as_ref().clone(),
-					Field::Fiber => fiberpoint.as_ref().clone(),
-				},
-				DynamicValue::Neutral(neutral) =>
-					DynamicValue::Neutral(DynamicNeutral::Project { scrutinee: neutral.into(), projection: field }),
-				_ => panic!(),
-			},
-			SgLet { grade: _, argument, kinds: _, tail } => tail.evaluate_at(
-				environment,
-				[
-					SgField { scrutinee: argument.clone(), field: Field::Base }.evaluate_in(environment),
-					SgField { scrutinee: argument, field: Field::Fiber }.evaluate_in(environment),
-				],
-			),
+			SgLet { grade: _, argument, kinds: _, tail } => {
+				let argument = argument.evaluate_in(environment);
+				tail.evaluate_at(environment, [argument.clone().field(Field::Base), argument.field(Field::Fiber)])
+			}
+			SgField { scrutinee, field } => scrutinee.evaluate_in(environment).field(field),
 
 			// Enumerated numbers.
 			Enum(k) => DynamicValue::Enum(k),
@@ -294,11 +263,7 @@ impl Evaluate for DynamicTerm {
 			// Natural numbers.
 			Nat => DynamicValue::Nat,
 			Num(n) => DynamicValue::Num(n),
-			Suc(prev) => match prev.evaluate_in(environment) {
-				DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Suc(rc!(neutral))),
-				DynamicValue::Num(n) => DynamicValue::Num(n + 1),
-				_ => panic!(),
-			},
+			Suc(prev) => prev.evaluate_in(environment).suc(),
 			CaseNat { scrutinee, motive_kind: _, motive, case_nil, case_suc } =>
 				match scrutinee.evaluate_in(environment) {
 					DynamicValue::Num(n) => (0..n).fold(case_nil.evaluate_in(environment), |previous, i| {

@@ -10,51 +10,9 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct KindValue {
-	pub copy: StaticValue,
-	pub repr: StaticValue,
-}
-
-impl KindValue {
-	pub const fn path() -> Self { Self { copy: StaticValue::cpy(Cpy::Tr), repr: StaticValue::ReprNone } }
-
-	pub const fn fun() -> Self {
-		Self { copy: StaticValue::cpy(Cpy::Nt), repr: StaticValue::ReprAtom(ReprAtom::Fun) }
-	}
-
-	pub const fn enu() -> Self {
-		Self { copy: StaticValue::cpy(Cpy::Tr), repr: StaticValue::ReprAtom(ReprAtom::Byte) }
-	}
-
-	pub const fn ty() -> Self { Self { copy: StaticValue::cpy(Cpy::Tr), repr: StaticValue::ReprNone } }
-
-	// TODO: Only consider nat to be trivial for slightly simpler implementation.
-	pub const fn nat() -> Self {
-		Self { copy: StaticValue::cpy(Cpy::Tr), repr: StaticValue::ReprAtom(ReprAtom::Nat) }
-	}
-
-	pub const fn ptr() -> Self {
-		Self { copy: StaticValue::cpy(Cpy::Nt), repr: StaticValue::ReprAtom(ReprAtom::Ptr) }
-	}
-
-	pub fn wrap(self) -> Self { Self { copy: Cpy::Nt.into(), repr: self.repr } }
-
-	pub fn exp(self, grade: usize) -> Self {
-		Self { copy: self.copy, repr: StaticValue::ReprExp(grade, self.repr.into()) }
-	}
-
-	pub fn pair(level: Level, a: Self, b: Self) -> Self {
-		Self {
-			copy: StaticValue::max_copyability(level, a.copy, b.copy),
-			repr: StaticValue::pair_representation(a.repr, b.repr),
-		}
-	}
-}
-
-#[derive(Clone, Debug)]
-pub enum CpyValue {
-	Nt,
-	Max(Vec<StaticNeutral>),
+pub enum Value {
+	Static(StaticValue),
+	Dynamic(DynamicValue),
 }
 
 #[derive(Clone, Debug)]
@@ -142,42 +100,6 @@ pub enum StaticNeutral {
 		case_nil: Rc<StaticValue>,
 		case_suc: Rc<Closure<Environment, StaticTerm, 2>>,
 	},
-}
-
-impl StaticValue {
-	pub const fn cpy(value: Cpy) -> Self {
-		match value {
-			Cpy::Nt => Self::CpyValue(CpyValue::Nt),
-			Cpy::Tr => Self::CpyValue(CpyValue::Max(Vec::new())),
-		}
-	}
-
-	pub fn is_trivial(&self) -> bool {
-		matches!(self, StaticValue::CpyValue(CpyValue::Max(v)) if v.is_empty())
-	}
-}
-
-impl From<Cpy> for StaticValue {
-	fn from(value: Cpy) -> Self { Self::cpy(value) }
-}
-
-impl From<&Repr> for StaticValue {
-	fn from(value: &Repr) -> Self {
-		match value {
-			Repr::Atom(atom) => Self::ReprAtom(*atom),
-			Repr::Pair(l, r) => Self::ReprPair(Self::from(&**l).into(), Self::from(&**r).into()),
-			Repr::Exp(n, r) => Self::ReprExp(*n, Self::from(&**r).into()),
-		}
-	}
-}
-
-impl From<Option<&Repr>> for StaticValue {
-	fn from(value: Option<&Repr>) -> Self {
-		match value {
-			Some(repr) => repr.into(),
-			None => Self::ReprNone,
-		}
-	}
 }
 
 #[derive(Clone, Debug)]
@@ -298,7 +220,33 @@ pub enum DynamicNeutral {
 	WrapProject(Rc<Self>),
 }
 
+#[derive(Clone, Debug)]
+pub struct KindValue {
+	pub copy: StaticValue,
+	pub repr: StaticValue,
+}
+
+#[derive(Clone, Debug)]
+pub struct Environment(pub Vec<Value>);
+
+#[derive(Clone, Debug)]
+pub enum CpyValue {
+	Nt,
+	Max(Vec<StaticNeutral>),
+}
+
 impl StaticValue {
+	pub const fn cpy(value: Cpy) -> Self {
+		match value {
+			Cpy::Nt => Self::CpyValue(CpyValue::Nt),
+			Cpy::Tr => Self::CpyValue(CpyValue::Max(Vec::new())),
+		}
+	}
+
+	pub fn is_trivial(&self) -> bool {
+		matches!(self, StaticValue::CpyValue(CpyValue::Max(v)) if v.is_empty())
+	}
+
 	fn combine_max_copyability(
 		level: Level,
 		mut a_set: Vec<StaticNeutral>,
@@ -341,6 +289,86 @@ impl StaticValue {
 			(a, b) => Self::ReprPair(rc!(a), rc!(b)),
 		}
 	}
+
+	pub fn field(self, field: Field) -> Self {
+		match self {
+			StaticValue::Pair(basepoint, fiberpoint) => match field {
+				Field::Base => basepoint.as_ref().clone(),
+				Field::Fiber => fiberpoint.as_ref().clone(),
+			},
+			StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::Project(neutral.into(), field)),
+			_ => panic!(),
+		}
+	}
+
+	pub fn suc(self) -> Self {
+		match self {
+			StaticValue::Neutral(neutral) => StaticValue::Neutral(StaticNeutral::Suc(neutral.into())),
+			StaticValue::Num(n) => StaticValue::Num(n + 1),
+			_ => panic!(),
+		}
+	}
+
+	pub fn exp_project(self) -> Self {
+		match self {
+			StaticValue::Repeat(_, v) => v.as_ref().clone(),
+			StaticValue::Neutral(n) => StaticValue::Neutral(StaticNeutral::ExpProject(n.into())),
+			_ => panic!(),
+		}
+	}
+}
+
+impl DynamicValue {
+	pub fn field(self, field: Field) -> Self {
+		match self {
+			DynamicValue::Pair(basepoint, fiberpoint) => match field {
+				Field::Base => basepoint.as_ref().clone(),
+				Field::Fiber => fiberpoint.as_ref().clone(),
+			},
+			DynamicValue::Neutral(neutral) =>
+				DynamicValue::Neutral(DynamicNeutral::Project { scrutinee: neutral.into(), projection: field }),
+			_ => panic!(),
+		}
+	}
+
+	pub fn suc(self) -> Self {
+		match self {
+			DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Suc(neutral.into())),
+			DynamicValue::Num(n) => DynamicValue::Num(n + 1),
+			_ => panic!(),
+		}
+	}
+
+	pub fn exp_project(self) -> Self {
+		match self {
+			DynamicValue::Repeat(_, v) => v.as_ref().clone(),
+			DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::ExpProject(n.into())),
+			_ => panic!(),
+		}
+	}
+}
+
+impl From<Cpy> for StaticValue {
+	fn from(value: Cpy) -> Self { Self::cpy(value) }
+}
+
+impl From<&Repr> for StaticValue {
+	fn from(value: &Repr) -> Self {
+		match value {
+			Repr::Atom(atom) => Self::ReprAtom(*atom),
+			Repr::Pair(l, r) => Self::ReprPair(Self::from(&**l).into(), Self::from(&**r).into()),
+			Repr::Exp(n, r) => Self::ReprExp(*n, Self::from(&**r).into()),
+		}
+	}
+}
+
+impl From<Option<&Repr>> for StaticValue {
+	fn from(value: Option<&Repr>) -> Self {
+		match value {
+			Some(repr) => repr.into(),
+			None => Self::ReprNone,
+		}
+	}
 }
 
 impl From<(Option<Name>, Level)> for StaticValue {
@@ -363,14 +391,41 @@ impl From<(Option<Name>, Level)> for DynamicNeutral {
 	fn from((name, level): (Option<Name>, Level)) -> Self { Self::Variable(name, level) }
 }
 
-#[derive(Clone, Debug)]
-pub enum Value {
-	Static(StaticValue),
-	Dynamic(DynamicValue),
-}
+impl KindValue {
+	pub const fn path() -> Self { Self { copy: StaticValue::cpy(Cpy::Tr), repr: StaticValue::ReprNone } }
 
-#[derive(Clone, Debug)]
-pub struct Environment(pub Vec<Value>);
+	pub const fn fun() -> Self {
+		Self { copy: StaticValue::cpy(Cpy::Nt), repr: StaticValue::ReprAtom(ReprAtom::Fun) }
+	}
+
+	pub const fn enu() -> Self {
+		Self { copy: StaticValue::cpy(Cpy::Tr), repr: StaticValue::ReprAtom(ReprAtom::Byte) }
+	}
+
+	pub const fn ty() -> Self { Self { copy: StaticValue::cpy(Cpy::Tr), repr: StaticValue::ReprNone } }
+
+	// TODO: Only consider nat to be trivial for slightly simpler implementation.
+	pub const fn nat() -> Self {
+		Self { copy: StaticValue::cpy(Cpy::Tr), repr: StaticValue::ReprAtom(ReprAtom::Nat) }
+	}
+
+	pub const fn ptr() -> Self {
+		Self { copy: StaticValue::cpy(Cpy::Nt), repr: StaticValue::ReprAtom(ReprAtom::Ptr) }
+	}
+
+	pub fn wrap(self) -> Self { Self { copy: Cpy::Nt.into(), repr: self.repr } }
+
+	pub fn exp(self, grade: usize) -> Self {
+		Self { copy: self.copy, repr: StaticValue::ReprExp(grade, self.repr.into()) }
+	}
+
+	pub fn pair(level: Level, a: Self, b: Self) -> Self {
+		Self {
+			copy: StaticValue::max_copyability(level, a.copy, b.copy),
+			repr: StaticValue::pair_representation(a.repr, b.repr),
+		}
+	}
+}
 
 impl Environment {
 	pub fn lookup_static(&self, Index(i): Index) -> StaticValue {
