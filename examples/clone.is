@@ -1,19 +1,19 @@
 def [0] Clone : |c : copy| -> |r : repr| -> '(* c r -> * c1 rfun)
-	= |c| |r| <|T| T -> ![2] T>;
+= |c| |r| <|T| T -> ![2] T>;
 
-let clone_box : <Clone c1 rptr> (Box Bool) =
-	|e| (
-		let inner : Bool = e unbox;
-		@[2] (box inner)
-	);
+let clone_box : <Clone c1 rptr> (Box Bool)
+= |e| (
+	let inner : Bool = e unbox;
+	@[2] (box inner)
+);
 	
-def [*] diagonal : |[0] c : copy| -> |[0] r : repr|
-	-> '(|[0] T : * c r| -> |clone : <Clone c r> T| -> T -> T & T)
-= |_| |_| <|[0] T| |clone| |x| (
-	let @[2] x = clone x;
+def [*] diagonal_static : |[0] c : copy| -> |[0] r : repr| -> |[0] T : '(* c r)| -> |clone : '(<Clone c r> <T>)|
+	-> '(<T> -> <T> & <T>)
+= |_| |_| |_| |clone| <|x| (
+	let @[2] x = <clone> x;
 	(x, x)
 )>;
 
 let a : Box Bool = box true;
 
-<diagonal c1 rptr> (Box Bool) clone_box a
+<diagonal_static c1 rptr <Box Bool> <clone_box>> a
