@@ -160,10 +160,7 @@ impl Stage for DynamicTerm {
 				kind: kind.stage_in(environment),
 				tail: tail.stage_in(environment),
 			},
-			ExpProject(t) => {
-				let DynamicValue::Repeat(_, v) = t.stage_in(environment) else { panic!() };
-				v.as_ref().clone()
-			}
+			ExpProject(t) => DynamicValue::ExpProject(t.stage_in(environment).into()),
 
 			// Dependent functions.
 			Pi { grade, base_kind, base, family_kind, family } => DynamicValue::Pi {

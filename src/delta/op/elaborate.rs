@@ -482,6 +482,26 @@ impl Context {
 				)
 			}
 
+			// Repeated programs.
+			Preterm::ExpLet { grade, grade_argument, argument, tail } => self.elaborate_static_exp_let(
+				PreExpLet { grade: grade.unwrap_or(1.into()), grade_argument, argument: *argument, tail },
+				(),
+				|ctx, tail, ()| ctx.synthesize_static(tail),
+				|grade, grade_argument, argument, tail| {
+					let (tail, tail_ty, c) = tail.retract2();
+					(
+						StaticTerm::ExpLet {
+							grade,
+							grade_argument,
+							argument: argument.into(),
+							tail: tail.map_into(),
+						},
+						tail_ty,
+						c,
+					)
+				},
+			)?,
+
 			// Dependent functions.
 			Preterm::Pi { grade, base, family } if self.fragment == Fragment::Logical => {
 				let (base, base_copy) = self.elaborate_static_type(*base)?;
@@ -614,6 +634,13 @@ impl Context {
 				),
 				Constructor::ReprAtom(r) if self.fragment == Fragment::Logical && arguments.is_empty() =>
 					(StaticTerm::ReprAtom(r), StaticValue::ReprType, Cpy::Tr),
+				Constructor::ReprExp(n) if self.fragment == Fragment::Logical => {
+					let [r] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+					let r = self.verify_static(r, StaticValue::ReprType)?;
+					(StaticTerm::ReprExp(n, r.into()), StaticValue::ReprType, Cpy::Tr)
+				}
 				Constructor::ReprPair if self.fragment == Fragment::Logical => {
 					let [r0, r1] = arguments
 						.try_into()
@@ -1517,6 +1544,21 @@ impl Context {
 						},
 					)?
 				},
+
+			// Repeated programs.
+			(Preterm::ExpLet { grade, grade_argument, argument, tail }, tail_ty) => self
+				.elaborate_dynamic_exp_let(
+					PreExpLet { grade: grade.unwrap_or(1.into()), grade_argument, argument: *argument, tail },
+					tail_ty,
+					Self::verify_dynamic,
+					|grade, grade_argument, argument, kind_arg, tail| DynamicTerm::ExpLet {
+						grade,
+						grade_argument,
+						argument: argument.into(),
+						kind: kind_arg.into(),
+						tail: tail.map_into(),
+					},
+				)?,
 
 			// Dependent functions.
 			(
