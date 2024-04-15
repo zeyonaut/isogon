@@ -1,5 +1,4 @@
-use super::evaluate::EvaluateAuto;
-use crate::delta::{
+use crate::{
 	common::{bind, Binder, Closure, Index, Label, Level},
 	ir::{
 		semantics::{
@@ -7,6 +6,7 @@ use crate::delta::{
 		},
 		syntax::{DynamicTerm, KindTerm, StaticTerm},
 	},
+	op::evaluate::EvaluateAuto,
 };
 
 pub trait Unevaluate {

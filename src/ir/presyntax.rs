@@ -1,4 +1,4 @@
-use crate::delta::common::{AnyBinder, Binder, Cost, Cpy, Field, Index, Label, Name, ReprAtom};
+use crate::common::{AnyBinder, Binder, Cost, Cpy, Field, Index, Label, Name, ReprAtom};
 
 #[derive(Debug, Clone)]
 pub struct ParsedProgram {

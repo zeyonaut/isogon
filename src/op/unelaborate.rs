@@ -1,5 +1,5 @@
 use super::super::ir::presyntax::Preterm;
-use crate::delta::{
+use crate::{
 	common::{AnyBinder, Binder, Cpy, Label},
 	ir::{
 		presyntax::{Constructor, Former, Pattern, Projector, PurePreterm},

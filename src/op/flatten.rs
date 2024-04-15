@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use super::stage::Stage;
-use crate::delta::{
+use crate::{
 	common::{Binder, Cost, Index, Label, Level, Repr, ReprAtom},
 	ir::{
 		flat::{Capture, Function, Parameter, Procedure, Program, Substitute, Term, Variable},
 		syntax::DynamicTerm,
 	},
+	op::stage::Stage,
 };
 
 /// Performs closure-conversion on an object term, hoisting all functions to top level.

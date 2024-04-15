@@ -1,42 +1,53 @@
 #![feature(array_methods)]
 
-// Non-staged; no unification.
-mod alpha;
-// Non-staged; with unification.
-//mod beta;
-// Staged.
-// FIXME: Silence warnings for clarity during development.
-#[allow(warnings, unused)]
-mod gamma;
-// Experimental.
-mod delta;
-mod utility;
-
-mod parse;
-use std::str::FromStr;
-
 use bpaf::{construct, short, Parser};
+mod common;
+mod ir;
+mod op;
 
-enum LanguageOption {
-	Alpha,
-	//	Beta,
-	Gamma,
-	Delta,
-}
+use op::{
+	elaborate, evaluate::Evaluate, flatten::flatten, parse::parse, stage::Stage, unelaborate::Unelaborate,
+	unevaluate::Unevaluate, unparse::pretty_print, unstage::Unstage,
+};
 
-impl FromStr for LanguageOption {
-	type Err = String;
+pub fn run(source: &str) {
+	// Parsing.
+	let (lexed_source, parsed_program, interner) = parse(source);
+	let fragment = parsed_program.fragment;
+	println!("Parsing complete.");
 
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		use LanguageOption::*;
-		match s {
-			"a" => Ok(Alpha),
-			//	"b" => Ok(Beta),
-			"c" => Ok(Gamma),
-			"d" => Ok(Delta),
-			_ => Err("no such language".to_owned()),
-		}
+	println!();
+
+	// Elaboration.
+	let (term, ty) = elaborate(source, &lexed_source, parsed_program, &interner);
+	println!("Elaboration complete.");
+	println!("Elaborated term: {}", pretty_print(&term.clone().unelaborate(), &interner));
+	println!("Synthesized type: {}", pretty_print(&ty.unevaluate().unelaborate(), &interner));
+	println!("Evaluation: {}", pretty_print(&term.clone().evaluate().unevaluate().unelaborate(), &interner));
+
+	println!();
+
+	// Staging.
+	let staged_term = term.stage();
+	println!("Staging complete.");
+	let unstaged_term = staged_term.unstage();
+	println!("Staged term: {}", pretty_print(&unstaged_term.clone().unelaborate(), &interner));
+	println!(
+		"Evaluation: {}",
+		pretty_print(&unstaged_term.clone().evaluate().unevaluate().unelaborate(), &interner)
+	);
+
+	// Early return for irrelevant programs.
+	if fragment == 0 {
+		return;
 	}
+
+	println!();
+
+	// Closure conversion.
+	let flat_term = flatten(&unstaged_term);
+	println!("Closure conversion complete.");
+	println!("Closure-converted program: {flat_term:?}")
 }
 
 enum InputOption {
@@ -45,14 +56,11 @@ enum InputOption {
 }
 
 struct Options {
-	language: LanguageOption,
 	input: InputOption,
 }
 
 fn main() {
-	let language = short('l').help("Choose language").argument::<LanguageOption>("{a, c}");
 	let options: Options = construct!(Options {
-		language,
 		input(construct!([
 			c(short('c').argument::<String>("\"preterm\"").help("Read input from argument").map(InputOption::Direct)),
 			f(short('f').argument::<String>("PATH").help("Read input from file").map(InputOption::FilePath)),
@@ -66,10 +74,5 @@ fn main() {
 		InputOption::FilePath(file_path) => std::fs::read_to_string(file_path).unwrap(),
 	};
 
-	match options.language {
-		LanguageOption::Alpha => alpha::run(&input),
-		//	LanguageOption::Beta => beta::run(&input),
-		LanguageOption::Gamma => gamma::run(&input),
-		LanguageOption::Delta => delta::run(&input),
-	}
+	run(&input);
 }

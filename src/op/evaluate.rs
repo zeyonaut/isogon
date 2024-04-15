@@ -1,6 +1,6 @@
 use core::panic;
 
-use crate::delta::{
+use crate::{
 	common::{Binder, Closure, Field, Label, Level},
 	ir::{
 		semantics::{

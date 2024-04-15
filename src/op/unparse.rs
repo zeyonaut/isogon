@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use lasso::Resolver;
 
-use crate::delta::{
+use crate::{
 	common::{Cost, Cpy, Field, Label, Name, ReprAtom},
 	ir::presyntax::{Constructor, Former, Pattern, Preterm, Projector, PurePreterm},
 };

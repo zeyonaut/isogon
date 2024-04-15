@@ -1,6 +1,6 @@
 use lasso::{Rodeo, RodeoResolver};
 
-use crate::delta::{
+use crate::{
 	common::{any_bind, bind, AnyBinder, Cost, Cpy, Name, ReprAtom},
 	ir::{
 		presyntax::{Constructor, Expression, Former, ParsedLabel, ParsedProgram, Pattern, Preterm, Projector},

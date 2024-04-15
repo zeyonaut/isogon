@@ -5,8 +5,7 @@ use std::{
 
 use lasso::Resolver;
 
-use super::{unelaborate::Unelaborate, unparse::print};
-use crate::delta::{
+use crate::{
 	common::{bind, Binder, Cost, Cpy, Field, Index, Label, Level, Name},
 	ir::{
 		presyntax::{
@@ -21,7 +20,9 @@ use crate::delta::{
 		conversion::Conversion,
 		evaluate::{Evaluate, EvaluateWith},
 		parse::report_line_error,
+		unelaborate::Unelaborate,
 		unevaluate::Unevaluate,
+		unparse::print,
 	},
 };
 

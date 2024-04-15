@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use super::syntax::{DynamicTerm, StaticTerm};
-use crate::delta::{
+use crate::{
 	common::{Closure, Cost, Cpy, Field, Index, Level, Name, Repr, ReprAtom},
 	op::conversion::Conversion,
 };

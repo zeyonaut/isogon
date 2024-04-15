@@ -1,4 +1,4 @@
-use crate::delta::{
+use crate::{
 	common::{Binder, Closure, Cpy, Field, Label, Level, Repr, UniverseKind},
 	ir::{
 		object::{DynamicValue, Environment, StaticValue, Value},

@@ -1,10 +1,10 @@
-use super::stage::StageAuto;
-use crate::delta::{
+use crate::{
 	common::{bind, Binder, Closure, Cpy, Index, Label, Level, UniverseKind},
 	ir::{
 		object::{DynamicValue, Environment},
 		syntax::{DynamicTerm, KindTerm, StaticTerm},
 	},
+	op::stage::StageAuto,
 };
 
 pub trait Unstage {

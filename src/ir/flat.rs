@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, collections::HashMap};
 
-use crate::delta::common::{Binder, Cost, Label, Level, Name, Repr};
+use crate::common::{Binder, Cost, Label, Level, Name, Repr};
 
 #[derive(Clone, Debug)]
 pub enum Term {

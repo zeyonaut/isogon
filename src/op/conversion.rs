@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::delta::{
+use crate::{
 	common::{Field, Level},
 	ir::semantics::{CpyValue, DynamicNeutral, DynamicValue, KindValue, StaticNeutral, StaticValue},
 	op::evaluate::EvaluateAuto,

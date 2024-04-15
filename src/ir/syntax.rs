@@ -1,4 +1,4 @@
-use crate::delta::common::{Binder, Cost, Cpy, Field, Index, Label, Name, Repr, ReprAtom};
+use crate::common::{Binder, Cost, Cpy, Field, Index, Label, Name, Repr, ReprAtom};
 
 #[derive(Clone, Debug)]
 pub enum StaticTerm {
