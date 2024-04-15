@@ -16,6 +16,7 @@ pub fn pretty_print(term: &PurePreterm, interner: &impl Resolver) -> String {
 pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver) -> std::fmt::Result {
 	match &preterm.0 {
 		Preterm::Variable(name) => write!(f, "{}", interner.resolve(name))?,
+		Preterm::Index(index) => write!(f, "_{}", index.0)?,
 		Preterm::Let { is_meta, grade, ty, argument, tail } => {
 			let parameter = resolve(interner, &tail.parameter());
 			write!(
@@ -150,14 +151,18 @@ pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver
 
 fn print_spine(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver) -> std::fmt::Result {
 	match &preterm.0 {
-		Preterm::Call { .. } | Preterm::Former(..) | Preterm::Constructor(..) | Preterm::Project(..) | Preterm::Split { .. } => print(preterm, f, interner),
+		Preterm::Call { .. }
+		| Preterm::Former(..)
+		| Preterm::Constructor(..)
+		| Preterm::Project(..)
+		| Preterm::Split { .. } => print(preterm, f, interner),
 		_ => print_atom(preterm, f, interner),
 	}
 }
 
 fn print_atom(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver) -> std::fmt::Result {
 	match &preterm.0 {
-		Preterm::Variable(_) | Preterm::SwitchLevel(_) => print(preterm, f, interner)?,
+		Preterm::Variable(_) | Preterm::Index(_) | Preterm::SwitchLevel(_) => print(preterm, f, interner)?,
 
 		Preterm::Constructor(_, args) | Preterm::Former(_, args) if args.is_empty() =>
 			print(preterm, f, interner)?,
@@ -213,7 +218,7 @@ fn print_constructor(constructor: &Constructor, f: &mut impl Write, _: &impl Res
 				self::ReprAtom::Fun => "rfun",
 			}
 		),
-		Constructor::ReprExp(grade) => write!(f, "rexp[{grade}] "),
+		Constructor::ReprExp(grade) => write!(f, "rexp[{grade}]"),
 		Constructor::ReprPair => write!(f, "rpair"),
 		Constructor::ReprMax => write!(f, "rmax"),
 		Constructor::Exp(grade) => write!(f, "@[{}]", cost(*grade)),

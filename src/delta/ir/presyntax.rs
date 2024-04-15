@@ -1,4 +1,4 @@
-use crate::delta::common::{AnyBinder, Binder, Cost, Cpy, Field, Label, Name, ReprAtom};
+use crate::delta::common::{AnyBinder, Binder, Cost, Cpy, Field, Index, Label, Name, ReprAtom};
 
 #[derive(Debug, Clone)]
 pub struct ParsedProgram {
@@ -26,6 +26,7 @@ pub struct PurePreterm(pub Preterm<Label, Self>);
 #[derive(Debug, Clone)]
 pub enum Preterm<L, E> {
 	Variable(Name),
+	Index(Index),
 
 	Let { is_meta: bool, grade: Option<Cost>, ty: Box<E>, argument: Box<E>, tail: Binder<L, Box<E>> },
 

@@ -16,7 +16,8 @@ impl Unelaborate for StaticTerm {
 	type Pre = PurePreterm;
 	fn unelaborate(self) -> Self::Pre {
 		PurePreterm(match self {
-			StaticTerm::Variable(name, _) => Preterm::Variable(name.unwrap()),
+			StaticTerm::Variable(Some(name), _) => Preterm::Variable(name),
+			StaticTerm::Variable(None, index) => Preterm::Index(index),
 
 			StaticTerm::Let { grade, ty, argument, tail } => Preterm::Let {
 				is_meta: true,
