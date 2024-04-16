@@ -1,8 +1,13 @@
 use std::rc::Rc;
 
 use crate::{
-	common::{Field, Level},
-	ir::semantics::{CpyValue, DynamicNeutral, DynamicValue, KindValue, StaticNeutral, StaticValue},
+	common::{Closure, Field, Level},
+	ir::{
+		semantics::{
+			CpyValue, DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue,
+		},
+		syntax::{DynamicTerm, StaticTerm},
+	},
 	op::evaluate::EvaluateAuto,
 };
 
@@ -74,9 +79,8 @@ impl Conversion<StaticValue> for Level {
 			) =>
 				left_grade == right_grade
 					&& self.can_convert(&**left_base, right_base)
-					&& (self + 1).can_convert(&left_family.evaluate_auto(self), &right_family.evaluate_auto(self)),
-			(V::Function(_, left), V::Function(_, right)) =>
-				(self + 1).can_convert(&left.evaluate_auto(self), &right.evaluate_auto(self)),
+					&& self.can_convert(left_family, right_family),
+			(V::Function(_, left), V::Function(_, right)) => self.can_convert(left, right),
 			(V::Neutral(left), V::Function(_, right)) => (self + 1).can_convert(
 				&V::Neutral(StaticNeutral::Apply(left.clone().into(), Rc::new((right.parameter(), self).into()))),
 				&right.evaluate_auto(self),
@@ -90,9 +94,7 @@ impl Conversion<StaticValue> for Level {
 			(
 				V::IndexedSum { base: left_base, family: left_family, .. },
 				V::IndexedSum { base: right_base, family: right_family, .. },
-			) =>
-				self.can_convert(&**left_base, right_base)
-					&& (self + 1).can_convert(&left_family.evaluate_auto(self), &right_family.evaluate_auto(self)),
+			) => self.can_convert(&**left_base, right_base) && self.can_convert(left_family, right_family),
 			(V::Pair(left_bp, left_fp), V::Pair(right_bp, right_fp)) =>
 				self.can_convert(&**left_bp, right_bp) && self.can_convert(&**left_fp, right_fp),
 			(V::Neutral(left), V::Pair(br, fr)) =>
@@ -153,9 +155,9 @@ impl Conversion<StaticNeutral> for Level {
 				CaseNat { scrutinee: r_scrutinee, motive: r_motive, case_nil: r_case_nil, case_suc: r_case_suc },
 			) =>
 				self.can_convert(&**l_scrutinee, r_scrutinee)
-					&& (self + 1).can_convert(&l_motive.evaluate_auto(self), &r_motive.evaluate_auto(self))
+					&& self.can_convert(l_motive, r_motive)
 					&& self.can_convert(&**l_case_nil, r_case_nil)
-					&& (self + 2).can_convert(&l_case_suc.evaluate_auto(self), &r_case_suc.evaluate_auto(self)),
+					&& self.can_convert(l_case_suc, r_case_suc),
 
 			// Inconvertible.
 			_ => false,
@@ -185,11 +187,8 @@ impl Conversion<DynamicValue> for Level {
 			(
 				IndexedProduct { base: left_base, family: left_family, .. },
 				IndexedProduct { base: right_base, family: right_family, .. },
-			) =>
-				self.can_convert(&**left_base, right_base)
-					&& (self + 1).can_convert(&left_family.evaluate_auto(self), &right_family.evaluate_auto(self)),
-			(Function { body: left, .. }, Function { body: right, .. }) =>
-				(self + 1).can_convert(&left.evaluate_auto(self), &right.evaluate_auto(self)),
+			) => self.can_convert(&**left_base, right_base) && self.can_convert(left_family, right_family),
+			(Function { body: left, .. }, Function { body: right, .. }) => self.can_convert(left, right),
 			(Neutral(left), Function { body: right, .. }) => (self + 1).can_convert(
 				&Neutral(Apply {
 					scrutinee: left.clone().into(),
@@ -210,9 +209,7 @@ impl Conversion<DynamicValue> for Level {
 			(
 				IndexedSum { base: left_base, family: left_family, .. },
 				IndexedSum { base: right_base, family: right_family, .. },
-			) =>
-				self.can_convert(&**left_base, right_base)
-					&& (self + 1).can_convert(&left_family.evaluate_auto(self), &right_family.evaluate_auto(self)),
+			) => self.can_convert(&**left_base, right_base) && self.can_convert(left_family, right_family),
 			(Pair(left_bp, left_fp), Pair(right_bp, right_fp)) =>
 				self.can_convert(&**left_bp, right_bp) && self.can_convert(&**left_fp, right_fp),
 			(Neutral(left), Pair(right_bp, right_fp)) =>
@@ -298,9 +295,9 @@ impl Conversion<DynamicNeutral> for Level {
 				CaseNat { scrutinee: r_scrutinee, motive: r_motive, case_nil: r_case_nil, case_suc: r_case_suc },
 			) =>
 				self.can_convert(&**l_scrutinee, r_scrutinee)
-					&& (self + 1).can_convert(&l_motive.evaluate_auto(self), &r_motive.evaluate_auto(self))
+					&& self.can_convert(l_motive, r_motive)
 					&& self.can_convert(&**l_case_nil, r_case_nil)
-					&& (self + 2).can_convert(&l_case_suc.evaluate_auto(self), &r_case_suc.evaluate_auto(self)),
+					&& self.can_convert(l_case_suc, r_case_suc),
 
 			// Wrappers.
 			(BxProject(left), BxProject(right)) | (WrapProject(left), WrapProject(right)) =>
@@ -309,5 +306,25 @@ impl Conversion<DynamicNeutral> for Level {
 			// Inconvertible.
 			_ => false,
 		}
+	}
+}
+
+impl<const N: usize> Conversion<Rc<Closure<Environment, StaticTerm, N>>> for Level {
+	fn can_convert(
+		self,
+		left: &Rc<Closure<Environment, StaticTerm, N>>,
+		right: &Rc<Closure<Environment, StaticTerm, N>>,
+	) -> bool {
+		(self + N).can_convert(&left.evaluate_auto(self), &right.evaluate_auto(self))
+	}
+}
+
+impl<const N: usize> Conversion<Rc<Closure<Environment, DynamicTerm, N>>> for Level {
+	fn can_convert(
+		self,
+		left: &Rc<Closure<Environment, DynamicTerm, N>>,
+		right: &Rc<Closure<Environment, DynamicTerm, N>>,
+	) -> bool {
+		(self + N).can_convert(&left.evaluate_auto(self), &right.evaluate_auto(self))
 	}
 }
