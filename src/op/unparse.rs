@@ -3,7 +3,7 @@ use std::fmt::Write;
 use lasso::Resolver;
 
 use crate::{
-	common::{Cost, Cpy, Field, Label, Name, ReprAtom},
+	common::{Cost, Cpy, Field, Fragment, Label, Name, ReprAtom},
 	ir::presyntax::{Constructor, Former, Pattern, Preterm, Projector, PurePreterm},
 };
 
@@ -48,21 +48,24 @@ pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver
 			write!(f, "; ")?;
 			print(&tail.body, f, interner)?;
 		}
-		Preterm::Pi { grade, base, family } => {
+		Preterm::Pi { fragment, base, family } => {
 			let parameter = resolve(interner, &family.parameter());
 			if parameter != "_" {
-				write!(f, "|{}{parameter} : ", optional_grade_prefix(*grade, parameter))?;
+				write!(f, "|{parameter} : ")?;
 				print(base, f, interner)?;
-				write!(f, "| -> ")?;
+				write!(f, "|")?;
 			} else {
 				print_spine(base, f, interner)?;
-				write!(f, " {}-> ", optional_grade_prefix(*grade, parameter))?;
+			}
+			match fragment {
+				Fragment::Logical => write!(f, " @ -> ")?,
+				Fragment::Material => write!(f, " -> ")?,
 			}
 			print(&family.body, f, interner)?
 		}
-		Preterm::Lambda { grade, body } => {
+		Preterm::Lambda { body } => {
 			let parameter = resolve(interner, &body.parameter());
-			write!(f, "|{}{parameter}| ", optional_grade_prefix(*grade, parameter))?;
+			write!(f, "|{parameter}| ")?;
 			print(&body.body, f, interner)?;
 		}
 		Preterm::Call { callee, argument } => {

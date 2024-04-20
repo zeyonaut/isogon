@@ -51,7 +51,10 @@ impl Unelaborate for StaticTerm {
 
 			StaticTerm::Repr => Preterm::Former(Former::Repr, vec![]),
 			StaticTerm::ReprAtom(a) => Preterm::Constructor(Constructor::ReprAtom(a), vec![]),
-			StaticTerm::ReprExp(n, r) => Preterm::Constructor(Constructor::ReprExp(n), vec![r.unelaborate()]),
+			StaticTerm::ReprExp { len, kind } => Preterm::Constructor(
+				Constructor::ReprExp(len.0),
+				vec![kind.copy.unelaborate(), kind.repr.unelaborate()],
+			),
 			StaticTerm::ReprPair(a, b) =>
 				Preterm::Constructor(Constructor::ReprPair, vec![a.unelaborate(), b.unelaborate()]),
 
@@ -68,9 +71,9 @@ impl Unelaborate for StaticTerm {
 			},
 			StaticTerm::ExpProject(t) => Preterm::Project(t.unelaborate().into(), Projector::Exp),
 
-			StaticTerm::Pi { grade, base_copy: _, base, family_copy: _, family } =>
-				Preterm::Pi { grade, base: base.unelaborate().into(), family: family.unelaborate() },
-			StaticTerm::Function(grade, function) => Preterm::Lambda { grade, body: function.unelaborate() },
+			StaticTerm::Pi { fragment, base_copy: _, base, family_copy: _, family } =>
+				Preterm::Pi { fragment, base: base.unelaborate().into(), family: family.unelaborate() },
+			StaticTerm::Function(_, function) => Preterm::Lambda { body: function.unelaborate() },
 			StaticTerm::Apply { scrutinee, argument } =>
 				Preterm::Call { callee: scrutinee.unelaborate().into(), argument: argument.unelaborate().into() },
 
@@ -158,7 +161,8 @@ impl Unelaborate for DynamicTerm {
 			DynamicTerm::Splice(s) => Preterm::SwitchLevel(s.unelaborate().into()),
 
 			DynamicTerm::Exp(n, _, t) => Preterm::Former(Former::Exp(n.into()), vec![t.unelaborate()]),
-			DynamicTerm::Repeat(n, e) => Preterm::Constructor(Constructor::Exp(n.into()), vec![e.unelaborate()]),
+			DynamicTerm::Repeat { grade, kind: _, term } =>
+				Preterm::Constructor(Constructor::Exp(grade.into()), vec![term.unelaborate()]),
 			DynamicTerm::ExpLet { grade, grade_argument, argument, kind: _, tail } => Preterm::ExpLet {
 				grade: Some(grade.into()),
 				grade_argument: grade_argument.into(),
@@ -167,11 +171,11 @@ impl Unelaborate for DynamicTerm {
 			},
 			DynamicTerm::ExpProject(t) => Preterm::Project(t.unelaborate().into(), Projector::Exp),
 
-			DynamicTerm::Pi { grade, base_kind: _, base, family_kind: _, family } =>
-				Preterm::Pi { grade, base: base.unelaborate().into(), family: family.unelaborate() },
-			DynamicTerm::Function { grade, body, domain_kind: _, codomain_kind: _ } =>
-				Preterm::Lambda { grade, body: body.unelaborate() },
-			DynamicTerm::Apply { scrutinee, grade: _, argument, family_kind: _ } =>
+			DynamicTerm::Pi { fragment, base_kind: _, base, family_kind: _, family } =>
+				Preterm::Pi { fragment, base: base.unelaborate().into(), family: family.unelaborate() },
+			DynamicTerm::Function { fragment: _, body, domain_kind: _, codomain_kind: _ } =>
+				Preterm::Lambda { body: body.unelaborate() },
+			DynamicTerm::Apply { scrutinee, fragment: _, argument, family_kind: _ } =>
 				Preterm::Call { callee: scrutinee.unelaborate().into(), argument: argument.unelaborate().into() },
 
 			DynamicTerm::Sg { base_kind: _, base, family_kind: _, family } =>

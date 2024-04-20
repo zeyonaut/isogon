@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, collections::HashMap};
 
-use crate::common::{Binder, Cost, Label, Level, Name, Repr};
+use crate::common::{Binder, Cost, Cpy, Label, Level, Name, Repr};
 
 #[derive(Clone, Debug)]
 pub enum Term {
@@ -19,16 +19,25 @@ pub enum Term {
 	},
 
 	// Repeated programs.
-	Repeat(usize, Box<Self>),
+	Repeat {
+		grade: usize,
+		copy: Cpy,
+		term: Box<Self>,
+	},
 	ExpLet {
 		grade: usize,
 		grade_argument: usize,
+		copy: Cpy,
+		repr: Option<Repr>,
 		argument: Box<Self>,
 		tail: Binder<Label, Box<Self>>,
 	},
 
 	// Dependent functions.
-	Function(Function),
+	Function {
+		procedure_id: usize,
+		captures: Vec<Capture>,
+	},
 	Apply {
 		callee: Box<Self>,
 		argument: Box<Self>,
@@ -73,18 +82,11 @@ pub enum Term {
 	WrapProject(Box<Self>, Option<Repr>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Variable {
 	Outer(Level),
 	Parameter,
 	Local(Level),
-}
-
-#[derive(Clone, Debug)]
-pub struct Function {
-	pub procedure_id: usize,
-	// The variables captured and how many of each.
-	pub captures: Vec<Capture>,
 }
 
 #[derive(Clone, Debug)]
@@ -104,7 +106,7 @@ pub struct Parameter {
 #[derive(Debug)]
 pub struct Procedure {
 	pub captured_parameters: Vec<Parameter>,
-	pub parameter: Parameter,
+	pub parameter: Option<Parameter>,
 	pub body: Term,
 	pub result_repr: Option<Repr>,
 }
@@ -135,14 +137,17 @@ impl Substitute for Term {
 			}
 
 			// Repeated programs.
-			Term::Repeat(_, t) => t.substitute(substitution, minimum_level),
-			Term::ExpLet { grade: _, grade_argument: _, argument, tail } => {
+			Term::Repeat { grade: _, copy: _, term } => term.substitute(substitution, minimum_level),
+			Term::ExpLet { grade: _, grade_argument: _, copy: _, repr: _, argument, tail } => {
 				argument.substitute(substitution, minimum_level);
 				tail.substitute(substitution, minimum_level);
 			}
 
 			// Dependent functions.
-			Term::Function(function) => function.substitute(substitution, minimum_level),
+			Term::Function { procedure_id: _, captures } =>
+				for capture in captures {
+					capture.variable.substitute(substitution, minimum_level)
+				},
 			Term::Apply { callee, argument, result_repr: _ } => {
 				callee.substitute(substitution, minimum_level);
 				argument.substitute(substitution, minimum_level);
@@ -189,14 +194,6 @@ impl Substitute for Term {
 impl<const N: usize> Substitute for Binder<Label, Box<Term>, N> {
 	fn substitute(&mut self, substitution: &HashMap<Level, Level>, minimum_level: Level) {
 		self.body.substitute(substitution, minimum_level);
-	}
-}
-
-impl Substitute for Function {
-	fn substitute(&mut self, substitution: &HashMap<Level, Level>, minimum_level: Level) {
-		for capture in &mut self.captures {
-			capture.variable.substitute(substitution, minimum_level)
-		}
 	}
 }
 

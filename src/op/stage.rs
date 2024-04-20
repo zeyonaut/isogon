@@ -42,9 +42,12 @@ impl Stage for StaticTerm {
 
 			StaticTerm::Repr => StaticValue::Type,
 			StaticTerm::ReprAtom(r) => StaticValue::ReprValue(r.map(Repr::Atom)),
-			StaticTerm::ReprExp(n, r) => {
-				let StaticValue::ReprValue(r) = r.stage_in(environment) else { panic!() };
-				StaticValue::ReprValue(r.map(|r| (Repr::Exp(n, r.into()))))
+			StaticTerm::ReprExp { len, kind } => {
+				let kind = kind.stage_in(environment);
+				StaticValue::ReprValue(match kind.copy {
+					Cpy::Tr => kind.repr,
+					Cpy::Nt => kind.repr.map(|r| (Repr::Array(len, r.into()))),
+				})
 			}
 			StaticTerm::ReprPair(r0, r1) => {
 				let StaticValue::ReprValue(r0) = r0.stage_in(environment) else { panic!() };
@@ -152,7 +155,11 @@ impl Stage for DynamicTerm {
 			// Repeated programs.
 			Exp(n, kind, ty) =>
 				DynamicValue::Exp(n, kind.stage_in(environment), ty.stage_in(environment).into()),
-			Repeat(n, tm) => DynamicValue::Repeat(n, tm.stage_in(environment).into()),
+			Repeat { grade, kind, term } => DynamicValue::Repeat {
+				grade,
+				kind: kind.map(|kind| kind.stage_in(environment)),
+				term: term.stage_in(environment).into(),
+			},
 			ExpLet { grade, grade_argument, argument, kind, tail } => DynamicValue::ExpLet {
 				grade,
 				grade_argument,
@@ -163,22 +170,22 @@ impl Stage for DynamicTerm {
 			ExpProject(t) => DynamicValue::ExpProject(t.stage_in(environment).into()),
 
 			// Dependent functions.
-			Pi { grade, base_kind, base, family_kind, family } => DynamicValue::Pi {
-				grade,
+			Pi { fragment, base_kind, base, family_kind, family } => DynamicValue::Pi {
+				fragment,
 				base_kind: base_kind.stage_in(environment),
 				base: base.stage_in(environment).into(),
 				family_kind: family_kind.stage_in(environment),
 				family: family.stage_in(environment),
 			},
-			Function { grade, body, domain_kind, codomain_kind } => DynamicValue::Function {
-				grade,
+			Function { fragment, body, domain_kind, codomain_kind } => DynamicValue::Function {
+				fragment,
 				body: body.stage_in(environment),
 				domain_kind: domain_kind.map(|kind| kind.stage_in(environment)),
 				codomain_kind: codomain_kind.map(|kind| kind.stage_in(environment)),
 			},
-			Apply { scrutinee, grade, argument, family_kind } => DynamicValue::Apply {
+			Apply { scrutinee, fragment, argument, family_kind } => DynamicValue::Apply {
 				scrutinee: scrutinee.stage_in(environment).into(),
-				grade,
+				fragment,
 				argument: argument.stage_in(environment).into(),
 				family_kind: family_kind.map(|kind| kind.stage_in(environment)),
 			},

@@ -145,11 +145,15 @@ pub enum ReprAtom {
 	Fun,
 }
 
+// A number greater than one.
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
+pub struct ArraySize(pub usize);
+
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
 pub enum Repr {
 	Atom(ReprAtom),
 	Pair(Rc<Repr>, Rc<Repr>),
-	Exp(usize, Rc<Repr>),
+	Array(ArraySize, Rc<Repr>),
 }
 
 #[derive(Clone, Debug)]
@@ -193,4 +197,19 @@ impl<T: Into<Cost>> AddAssign<T> for Cost {
 
 impl From<usize> for Cost {
 	fn from(value: usize) -> Self { Self::Fin(value) }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum Fragment {
+	Logical = 0,
+	Material = 1,
+}
+
+impl Fragment {
+	pub fn is_logical(self) -> bool { self == Self::Logical }
+}
+
+impl From<Fragment> for Cost {
+	fn from(value: Fragment) -> Self { Self::Fin(value as u8 as _) }
 }

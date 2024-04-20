@@ -6,7 +6,7 @@ use std::{
 use lasso::Resolver;
 
 use crate::{
-	common::{bind, Binder, Cost, Cpy, Field, Index, Label, Level, Name},
+	common::{bind, ArraySize, Binder, Cost, Cpy, Field, Fragment, Index, Label, Level, Name},
 	ir::{
 		presyntax::{
 			Constructor, Expression, Former, ParsedLabel, ParsedPreterm, ParsedProgram, Pattern, Preterm,
@@ -89,7 +89,6 @@ enum ExpectedFormer {
 
 #[derive(Debug, Clone)]
 enum ElaborationErrorKind {
-	LambdaGradeMismatch(usize, usize),
 	ExpectedStaticFoundDynamicVariable,
 	ExpectedDynamicFoundStaticVariable,
 	UsedNonCrispLockedVariable,
@@ -354,13 +353,6 @@ impl<'c> Drop for ErasedContext<'c> {
 	fn drop(&mut self) { self.context.fragment = self.old_fragment }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum Fragment {
-	Logical = 0,
-	Material = 1,
-}
-
 pub struct Context {
 	fragment: Fragment,
 	lock: usize,
@@ -504,7 +496,7 @@ impl Context {
 			)?,
 
 			// Dependent functions.
-			Preterm::Pi { grade, base, family } if self.fragment == Fragment::Logical => {
+			Preterm::Pi { fragment, base, family } if self.fragment == Fragment::Logical => {
 				let (base, base_copy) = self.elaborate_static_type(*base)?;
 				let base_value = base.clone().evaluate_in(&self.environment);
 				let (family, family_copy) = self
@@ -512,7 +504,13 @@ impl Context {
 					.bind_static(false, 0.into(), base_copy, base_value)
 					.map_extra(|ctx, body| ctx.elaborate_static_type(*body))?;
 				(
-					StaticTerm::Pi { grade, base_copy, base: base.into(), family_copy, family: family.map_into() },
+					StaticTerm::Pi {
+						fragment,
+						base_copy,
+						base: base.into(),
+						family_copy,
+						family: family.map_into(),
+					},
 					StaticValue::Universe(family_copy),
 					Cpy::Tr,
 				)
@@ -520,11 +518,13 @@ impl Context {
 			Preterm::Lambda { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
 			Preterm::Call { callee, argument } => {
 				let (callee, scrutinee_ty, _) = self.synthesize_static(*callee)?;
-				let StaticValue::IndexedProduct { grade, base, family_copy, family, .. } = scrutinee_ty else {
+				let StaticValue::IndexedProduct { fragment, base, family_copy, family, .. } = scrutinee_ty else {
 					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
 				};
-				let argument =
-					self.amplify(grade).erase_if(grade == 0).verify_static(*argument, (*base).clone())?;
+				let argument = self
+					.amplify(fragment)
+					.erase_if(fragment.is_logical())
+					.verify_static(*argument, (*base).clone())?;
 				(
 					StaticTerm::Apply { scrutinee: callee.into(), argument: argument.clone().into() },
 					family.evaluate_with([argument.evaluate_in(&self.environment)]),
@@ -635,12 +635,24 @@ impl Context {
 				),
 				Constructor::ReprAtom(r) if self.fragment == Fragment::Logical && arguments.is_empty() =>
 					(StaticTerm::ReprAtom(r), StaticValue::ReprType, Cpy::Tr),
-				Constructor::ReprExp(n) if self.fragment == Fragment::Logical => {
-					let [r] = arguments
+				Constructor::ReprExp(grade) if self.fragment == Fragment::Logical => {
+					let [c, r] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+					let c = self.verify_static(c, StaticValue::Cpy)?;
 					let r = self.verify_static(r, StaticValue::ReprType)?;
-					(StaticTerm::ReprExp(n, r.into()), StaticValue::ReprType, Cpy::Tr)
+					(
+						match grade {
+							0 => StaticTerm::ReprAtom(None),
+							1 => r,
+							grade => StaticTerm::ReprExp {
+								len: ArraySize(grade),
+								kind: KindTerm { copy: c, repr: r }.into(),
+							},
+						},
+						StaticValue::ReprType,
+						Cpy::Tr,
+					)
 				}
 				Constructor::ReprPair if self.fragment == Fragment::Logical => {
 					let [r0, r1] = arguments
@@ -883,17 +895,14 @@ impl Context {
 
 			// Dependent functions.
 			(
-				Preterm::Lambda { grade, body },
-				StaticValue::IndexedProduct { grade: grade_v, base_copy, base, family_copy: _, family },
+				Preterm::Lambda { body },
+				StaticValue::IndexedProduct { fragment, base_copy, base, family_copy: _, family },
 			) => {
-				(self.fragment == Fragment::Logical || grade == grade_v)
-					.then_some(())
-					.ok_or_else(|| ElaborationErrorKind::LambdaGradeMismatch(grade, grade_v).at(expr.range))?;
 				let body = self
 					.extend(body)
-					.bind_static(false, grade.into(), base_copy, base.as_ref().clone())
+					.bind_static(false, fragment.into(), base_copy, base.as_ref().clone())
 					.map(|ctx, body| ctx.verify_static(*body, family.evaluate_with([ctx.var(0)])))?;
-				StaticTerm::Function(grade, body.map_into())
+				StaticTerm::Function(fragment, body.map_into())
 			}
 
 			// Dependent pairs.
@@ -1031,7 +1040,7 @@ impl Context {
 			)?,
 
 			// Dependent functions.
-			Preterm::Pi { grade, base, family } if self.fragment == Fragment::Logical => {
+			Preterm::Pi { fragment, base, family } if self.fragment == Fragment::Logical => {
 				let (base, base_kind) = self.elaborate_dynamic_type(*base)?;
 				let base_value = base.clone().evaluate_in(&self.environment);
 				let (family, family_kind) = self
@@ -1044,7 +1053,7 @@ impl Context {
 				};
 				(
 					DynamicTerm::Pi {
-						grade,
+						fragment,
 						base_kind: base_kind.unevaluate_in(self.len()).into(),
 						base: base.into(),
 						family_kind: family_kind.into(),
@@ -1057,16 +1066,19 @@ impl Context {
 			Preterm::Lambda { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
 			Preterm::Call { callee, argument } => {
 				let (scrutinee, scrutinee_ty, _) = self.synthesize_dynamic(*callee)?;
-				let DynamicValue::IndexedProduct { grade, base, family_kind, family, .. } = scrutinee_ty else {
+				let DynamicValue::IndexedProduct { fragment, base, family_kind, family, .. } = scrutinee_ty
+				else {
 					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
 				};
-				let argument =
-					self.amplify(grade).erase_if(grade == 0).verify_dynamic(*argument, (*base).clone())?;
+				let argument = self
+					.amplify(fragment)
+					.erase_if(fragment.is_logical())
+					.verify_dynamic(*argument, (*base).clone())?;
 				let argument_value = argument.clone().evaluate_in(&self.environment);
 				(
 					DynamicTerm::Apply {
 						scrutinee: scrutinee.into(),
-						grade: Some(grade),
+						fragment: Some(fragment),
 						argument: argument.into(),
 						family_kind: Some(family_kind.unevaluate_in(self.len()).into()),
 					},
@@ -1211,7 +1223,11 @@ impl Context {
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					let (tm, ty, kind) = self.synthesize_dynamic(tm)?;
 					(
-						DynamicTerm::Repeat(grade, tm.into()),
+						DynamicTerm::Repeat {
+							grade,
+							kind: Some(kind.unevaluate_in(self.len()).into()),
+							term: tm.into(),
+						},
 						DynamicValue::Exp(grade, kind.clone().into(), ty.into()),
 						kind.exp(grade),
 					)
@@ -1563,18 +1579,15 @@ impl Context {
 
 			// Dependent functions.
 			(
-				Preterm::Lambda { grade, body },
-				DynamicValue::IndexedProduct { grade: grade_t, base_kind, base, family_kind, family },
+				Preterm::Lambda { body },
+				DynamicValue::IndexedProduct { fragment, base_kind, base, family_kind, family },
 			) => {
-				(self.fragment == Fragment::Logical || grade == grade_t)
-					.then_some(())
-					.ok_or_else(|| ElaborationErrorKind::LambdaGradeMismatch(grade, grade_t).at(expr.range))?;
 				let body = self
 					.extend(body)
-					.bind_dynamic(false, grade.into(), (*base_kind).clone(), base.as_ref().clone())
+					.bind_dynamic(false, fragment.into(), (*base_kind).clone(), base.as_ref().clone())
 					.map(|ctx, body| ctx.verify_dynamic(*body, family.evaluate_with([ctx.var(0)])))?;
 				DynamicTerm::Function {
-					grade,
+					fragment,
 					body: body.map_into(),
 					domain_kind: Some(base_kind.unevaluate_in(self.len()).into()),
 					codomain_kind: Some(family_kind.unevaluate_in(self.len()).into()),

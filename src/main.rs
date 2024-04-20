@@ -10,6 +10,8 @@ use op::{
 	unevaluate::Unevaluate, unparse::pretty_print, unstage::Unstage,
 };
 
+use crate::op::linearize::linearize;
+
 pub fn run(source: &str) {
 	// Parsing.
 	let (lexed_source, parsed_program, interner) = parse(source);
@@ -47,7 +49,14 @@ pub fn run(source: &str) {
 	// Closure conversion.
 	let flat_term = flatten(&unstaged_term);
 	println!("Closure conversion complete.");
-	println!("Closure-converted program: {flat_term:?}")
+	println!("Closure-converted program: {flat_term:?}");
+
+	println!();
+
+	// Linearization.
+	let linearized_program = linearize(flat_term);
+	println!("Linearization complete.");
+	println!("Linearized program: {linearized_program:?}");
 }
 
 enum InputOption {

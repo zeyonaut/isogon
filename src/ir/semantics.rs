@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use super::syntax::{DynamicTerm, StaticTerm};
 use crate::{
-	common::{Closure, Cost, Cpy, Field, Index, Level, Name, Repr, ReprAtom},
+	common::{ArraySize, Closure, Cost, Cpy, Field, Fragment, Index, Level, Name, Repr, ReprAtom},
 	op::conversion::Conversion,
 };
 
@@ -26,7 +26,7 @@ pub enum StaticValue {
 	ReprType,
 	ReprNone,
 	ReprAtom(ReprAtom),
-	ReprExp(usize, Rc<Self>),
+	ReprExp(ArraySize, Rc<KindValue>),
 	// NOTE: This is a little type-unsafe in exchange for less redundant code; we need to make sure that these two never contain a ReprNone.
 	ReprPair(Rc<Self>, Rc<Self>),
 
@@ -43,13 +43,13 @@ pub enum StaticValue {
 
 	// Dependent functions.
 	IndexedProduct {
-		grade: usize,
+		fragment: Fragment,
 		base_copy: Cpy,
 		base: Rc<Self>,
 		family_copy: Cpy,
 		family: Rc<Closure<Environment, StaticTerm>>,
 	},
-	Function(usize, Rc<Closure<Environment, StaticTerm>>),
+	Function(Fragment, Rc<Closure<Environment, StaticTerm>>),
 
 	// Dependent pairs.
 	IndexedSum {
@@ -116,14 +116,14 @@ pub enum DynamicValue {
 
 	// Dependent functions.
 	IndexedProduct {
-		grade: usize,
+		fragment: Fragment,
 		base_kind: Rc<KindValue>,
 		base: Rc<Self>,
 		family_kind: Rc<KindValue>,
 		family: Rc<Closure<Environment, DynamicTerm>>,
 	},
 	Function {
-		grade: usize,
+		fragment: Fragment,
 		body: Rc<Closure<Environment, DynamicTerm>>,
 	},
 
@@ -288,6 +288,17 @@ impl StaticValue {
 		}
 	}
 
+	pub fn exp_representation(len: ArraySize, kind: KindValue) -> Self {
+		match kind.copy {
+			StaticValue::CpyValue(CpyValue::Max(cpys)) if cpys.is_empty() => kind.repr,
+			StaticValue::Neutral(_) | StaticValue::CpyValue(_) => match kind.repr {
+				StaticValue::ReprNone => StaticValue::ReprNone,
+				_ => StaticValue::ReprExp(len, kind.into()),
+			},
+			_ => panic!(),
+		}
+	}
+
 	pub fn field(self, field: Field) -> Self {
 		match self {
 			StaticValue::Pair(basepoint, fiberpoint) => match field {
@@ -355,7 +366,10 @@ impl From<&Repr> for StaticValue {
 		match value {
 			Repr::Atom(atom) => Self::ReprAtom(*atom),
 			Repr::Pair(l, r) => Self::ReprPair(Self::from(&**l).into(), Self::from(&**r).into()),
-			Repr::Exp(n, r) => Self::ReprExp(*n, Self::from(&**r).into()),
+			Repr::Array(n, r) => Self::ReprExp(
+				*n,
+				KindValue { copy: StaticValue::CpyValue(CpyValue::Nt), repr: Self::from(&**r) }.into(),
+			),
 		}
 	}
 }
@@ -415,8 +429,12 @@ impl KindValue {
 
 	pub fn exp(self, grade: usize) -> Self {
 		Self {
+			repr: match grade {
+				0 => StaticValue::ReprNone,
+				1 => self.repr,
+				grade => StaticValue::exp_representation(ArraySize(grade), self.clone()),
+			},
 			copy: if grade == 0 { StaticValue::cpy(Cpy::Tr) } else { self.copy },
-			repr: StaticValue::ReprExp(grade, self.repr.into()),
 		}
 	}
 

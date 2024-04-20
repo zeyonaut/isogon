@@ -1,7 +1,7 @@
 use lasso::{Rodeo, RodeoResolver};
 
 use crate::{
-	common::{any_bind, bind, AnyBinder, Cost, Cpy, Name, ReprAtom},
+	common::{any_bind, bind, AnyBinder, Cost, Cpy, Fragment, Name, ReprAtom},
 	ir::{
 		presyntax::{Constructor, Expression, Former, ParsedLabel, ParsedProgram, Pattern, Preterm, Projector},
 		source::{Keyword, LexError, LexErrorKind, LexedSource, Pragma, Token},
@@ -236,9 +236,9 @@ peg::parser! {
 		#[cache]
 		rule spine_headed() -> Expression
 			= init:position!() preterm:(
-				  [Token::Pipe] _ grade:(finite_grade_annotation())? _ parameter:optional_parameter() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { grade: grade.unwrap_or(parameter.label.is_some() as _), body: bind([parameter], body) }}
-				/ [Token::Pipe] _ grade:(finite_grade_annotation())? _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { grade: grade.unwrap_or(1), base: base.into(), family: bind([parameter], right) }}
-				/ locus:position!() left:spine() _ grade:(finite_grade_annotation())? _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { grade: grade.unwrap_or(1), base: left.into(), family: bind([ParsedLabel {locus, label: None}], right) }}
+				  [Token::Pipe] _ parameter:optional_parameter() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { body: bind([parameter], body) }}
+				/ [Token::Pipe] _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ fragment:[Token::At]? _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { fragment: if fragment.is_some() {Fragment::Logical} else {Fragment::Material}, base: base.into(), family: bind([parameter], right) }}
+				/ locus:position!() left:spine() _ fragment:[Token::At]? _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { fragment: if fragment.is_some() {Fragment::Logical} else {Fragment::Material}, base: left.into(), family: bind([ParsedLabel {locus, label: None}], right) }}
 				/ [Token::Pipe] _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Amp] _ right:spine_headed() {Preterm::Sg { base: base.into(), family: bind([parameter], right) }}
 				/ locus:position!() left:spine() _ [Token::Amp] _ right:spine_headed() {Preterm::Sg { base: left.into(), family: bind([ParsedLabel {locus, label: None}], right) }}
 				/ left:spine() _ [Token::Comma] _ right:spine_headed() {Preterm::Pair { basepoint: left.into(), fiberpoint: right.into() }}

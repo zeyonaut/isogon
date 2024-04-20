@@ -65,7 +65,8 @@ impl Unevaluate for StaticValue {
 			V::ReprAtom(r) => StaticTerm::ReprAtom(Some(*r)),
 			V::ReprPair(l, r) =>
 				StaticTerm::ReprPair(l.unevaluate_in(level).into(), r.unevaluate_in(level).into()),
-			V::ReprExp(grade, r) => StaticTerm::ReprExp(*grade, r.unevaluate_in(level).into()),
+			V::ReprExp(grade, kind) =>
+				StaticTerm::ReprExp { len: *grade, kind: kind.unevaluate_in(level).into() },
 
 			// Quoted programs.
 			V::Lift { ty: liftee, kind } => StaticTerm::Lift {
@@ -79,14 +80,15 @@ impl Unevaluate for StaticValue {
 			V::Repeat(grade, value) => StaticTerm::Repeat(*grade, value.unevaluate_in(level).into()),
 
 			// Dependent functions.
-			V::IndexedProduct { grade, base_copy, base, family_copy, family } => StaticTerm::Pi {
-				grade: *grade,
+			V::IndexedProduct { fragment, base_copy, base, family_copy, family } => StaticTerm::Pi {
+				fragment: *fragment,
 				base_copy: *base_copy,
 				base: base.try_unevaluate_in(level)?.into(),
 				family_copy: *family_copy,
 				family: family.try_unevaluate_in(level)?,
 			},
-			V::Function(grade, function) => StaticTerm::Function(*grade, function.try_unevaluate_in(level)?),
+			V::Function(fragment, function) =>
+				StaticTerm::Function(*fragment, function.try_unevaluate_in(level)?),
 
 			// Dependent pairs.
 			V::IndexedSum { base_copy, base, family_copy, family } => StaticTerm::Sg {
@@ -166,18 +168,19 @@ impl Unevaluate for DynamicValue {
 			// Repeated programs.
 			Exp(grade, kind, ty) =>
 				DynamicTerm::Exp(*grade, kind.unevaluate_in(level).into(), ty.unevaluate_in(level).into()),
-			Repeat(grade, value) => DynamicTerm::Repeat(*grade, value.unevaluate_in(level).into()),
+			Repeat(grade, value) =>
+				DynamicTerm::Repeat { grade: *grade, kind: None, term: value.unevaluate_in(level).into() },
 
 			// Dependent functions.
-			IndexedProduct { grade, base_kind, base, family_kind, family } => DynamicTerm::Pi {
-				grade: *grade,
+			IndexedProduct { fragment, base_kind, base, family_kind, family } => DynamicTerm::Pi {
+				fragment: *fragment,
 				base_kind: base_kind.try_unevaluate_in(level)?.into(),
 				base: base.try_unevaluate_in(level)?.into(),
 				family_kind: family_kind.try_unevaluate_in(level)?.into(),
 				family: family.try_unevaluate_in(level)?,
 			},
-			Function { grade, body } => DynamicTerm::Function {
-				grade: *grade,
+			Function { fragment, body } => DynamicTerm::Function {
+				fragment: *fragment,
 				body: body.try_unevaluate_in(level)?,
 				domain_kind: None,
 				codomain_kind: None,
@@ -245,7 +248,7 @@ impl Unevaluate for DynamicNeutral {
 			// Dependent functions.
 			Apply { scrutinee, argument } => DynamicTerm::Apply {
 				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
-				grade: None,
+				fragment: None,
 				argument: argument.try_unevaluate_in(level)?.into(),
 				family_kind: None,
 			},

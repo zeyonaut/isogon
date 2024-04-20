@@ -1,6 +1,6 @@
 #fragment 0
 
-def sigma : |[0] x : copy| -> |[0] xr : repr| -> |B : '(* x xr)| -> |[0] y : copy| -> |[0] yr : repr| -> '(<B> -> * y yr) -> '(* (cmax x y) (rpair xr yr))
+def sigma : |x : copy| -> |xr : repr| -> |B : '(* x xr)| -> |y : copy| -> |yr : repr| -> '(<B> -> * y yr) -> '(* (cmax x y) (rpair xr yr))
 	= |_| |_| |B| |_| |_| |F| <|b : <B>| & <F> b>;
 
 <sigma c0 rnat <Nat> c1 rptr <|n| n :: |_| * c1 rptr {

@@ -2,6 +2,7 @@ pub mod conversion;
 pub mod elaborate;
 pub mod evaluate;
 pub mod flatten;
+pub mod linearize;
 pub mod parse;
 pub mod stage;
 pub mod unelaborate;

@@ -1,7 +1,7 @@
 use std::{fmt::Debug, rc::Rc};
 
 use super::syntax::{DynamicTerm, StaticTerm};
-use crate::common::{Closure, Cpy, Field, Index, Level, Name, Repr, UniverseKind};
+use crate::common::{Closure, Cpy, Field, Fragment, Index, Level, Name, Repr, UniverseKind};
 
 #[derive(Clone)]
 pub enum StaticValue {
@@ -90,7 +90,11 @@ pub enum DynamicValue {
 
 	// Repeated programs.
 	Exp(usize, UniverseKind, Rc<Self>),
-	Repeat(usize, Rc<Self>),
+	Repeat {
+		grade: usize,
+		kind: Option<UniverseKind>,
+		term: Rc<Self>,
+	},
 	ExpLet {
 		grade: usize,
 		grade_argument: usize,
@@ -102,21 +106,21 @@ pub enum DynamicValue {
 
 	// Dependent functions.
 	Pi {
-		grade: usize,
+		fragment: Fragment,
 		base_kind: UniverseKind,
 		base: Rc<Self>,
 		family_kind: UniverseKind,
 		family: Closure<Environment, DynamicTerm>,
 	},
 	Function {
-		grade: usize,
+		fragment: Fragment,
 		body: Closure<Environment, DynamicTerm>,
 		domain_kind: Option<UniverseKind>,
 		codomain_kind: Option<UniverseKind>,
 	},
 	Apply {
 		scrutinee: Rc<Self>,
-		grade: Option<usize>,
+		fragment: Option<Fragment>,
 		argument: Rc<Self>,
 		family_kind: Option<UniverseKind>,
 	},

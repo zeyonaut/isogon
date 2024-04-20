@@ -74,10 +74,10 @@ impl Conversion<StaticValue> for Level {
 
 			// Dependent functions.
 			(
-				V::IndexedProduct { grade: left_grade, base: left_base, family: left_family, .. },
-				V::IndexedProduct { grade: right_grade, base: right_base, family: right_family, .. },
+				V::IndexedProduct { fragment: left_frag, base: left_base, family: left_family, .. },
+				V::IndexedProduct { fragment: right_frag, base: right_base, family: right_family, .. },
 			) =>
-				left_grade == right_grade
+				left_frag == right_frag
 					&& self.can_convert(&**left_base, right_base)
 					&& self.can_convert(left_family, right_family),
 			(V::Function(_, left), V::Function(_, right)) => self.can_convert(left, right),
@@ -185,9 +185,12 @@ impl Conversion<DynamicValue> for Level {
 			// Dependent functions.
 			// NOTE: Annotation conversion not implemented, as it's unclear if it gives any useful advantages.
 			(
-				IndexedProduct { base: left_base, family: left_family, .. },
-				IndexedProduct { base: right_base, family: right_family, .. },
-			) => self.can_convert(&**left_base, right_base) && self.can_convert(left_family, right_family),
+				IndexedProduct { fragment: left_frag, base: left_base, family: left_family, .. },
+				IndexedProduct { fragment: right_frag, base: right_base, family: right_family, .. },
+			) =>
+				left_frag == right_frag
+					&& self.can_convert(&**left_base, right_base)
+					&& self.can_convert(left_family, right_family),
 			(Function { body: left, .. }, Function { body: right, .. }) => self.can_convert(left, right),
 			(Neutral(left), Function { body: right, .. }) => (self + 1).can_convert(
 				&Neutral(Apply {

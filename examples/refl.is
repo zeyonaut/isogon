@@ -16,11 +16,11 @@ def [0] trans
 >;
 
 def tr
-: |[0] c_0 : copy| -> |[0] r_0 : repr| -> |[0] c_1 : copy| -> |[0] r_1 : repr|
--> '(
-	|[0] B : * c_0 r_0| -> |[0] F : B -> * c_1 r_1| -> |[0] x : B| -> |[0] y : B| -> Id B x y [0] -> F x -> F y
+: |c_0 : copy| @ -> |r_0 : repr| @ -> |c_1 : copy| @ -> |r_1 : repr|
+@ -> '(
+	|B : * c_0 r_0| @ -> |F : B -> * c_1 r_1| @ -> |x : B| @ -> |y : B| @ -> Id B x y @ -> F x -> F y
 ) = |_| |_| |_| |_| <
-	|_| |[0] F| |_| |_| |[0] p| |a| p cast :: |v._| F v {
+	|_| |F| |_| |_| |p| |a| p cast :: |v._| F v {
 		refl -> a
 	}
 >;

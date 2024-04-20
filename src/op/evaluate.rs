@@ -59,7 +59,7 @@ impl Evaluate for StaticTerm {
 			S::ReprPair(l, r) =>
 				StaticValue::pair_representation(l.evaluate_in(environment), r.evaluate_in(environment)),
 			// TODO: Absorb rnone.
-			S::ReprExp(grade, repr) => StaticValue::ReprExp(grade, repr.evaluate_in(environment).into()),
+			S::ReprExp { len, kind } => StaticValue::exp_representation(len, kind.evaluate_in(environment)),
 
 			// Quoted programs.
 			S::Lift { liftee, kind } => StaticValue::Lift {
@@ -76,8 +76,8 @@ impl Evaluate for StaticTerm {
 			S::ExpProject(t) => t.evaluate_in(environment).exp_project(),
 
 			// Dependent functions.
-			S::Pi { grade, base_copy, base, family_copy, family } => StaticValue::IndexedProduct {
-				grade,
+			S::Pi { fragment, base_copy, base, family_copy, family } => StaticValue::IndexedProduct {
+				fragment,
 				base_copy,
 				base: base.evaluate_in(environment).into(),
 				family_copy,
@@ -185,15 +185,15 @@ impl Evaluate for DynamicTerm {
 			// Repeated programs.
 			Exp(grade, kind, ty) =>
 				DynamicValue::Exp(grade, kind.evaluate_in(environment).into(), ty.evaluate_in(environment).into()),
-			Repeat(grade, argument) => DynamicValue::Repeat(grade, argument.evaluate_in(environment).into()),
+			Repeat { grade, kind: _, term } => DynamicValue::Repeat(grade, term.evaluate_in(environment).into()),
 			ExpLet { grade: _, grade_argument: _, argument, kind: _, tail } =>
 				tail.evaluate_at(environment, [argument.evaluate_in(environment).exp_project()]),
 			ExpProject(t) => t.evaluate_in(environment).exp_project(),
 
 			// Dependent functions.
-			Function { grade, body, domain_kind: _, codomain_kind: _ } =>
-				DynamicValue::Function { grade, body: body.evaluate_in(environment).into() },
-			Apply { scrutinee, grade: _, argument, family_kind: _ } =>
+			Function { fragment, body, domain_kind: _, codomain_kind: _ } =>
+				DynamicValue::Function { fragment, body: body.evaluate_in(environment).into() },
+			Apply { scrutinee, fragment: _, argument, family_kind: _ } =>
 				match scrutinee.evaluate_in(environment) {
 					DynamicValue::Function { body, .. } => body.evaluate_with([argument.evaluate_in(environment)]),
 					DynamicValue::Neutral(neutral) => DynamicValue::Neutral(DynamicNeutral::Apply {
@@ -202,8 +202,8 @@ impl Evaluate for DynamicTerm {
 					}),
 					_ => panic!(),
 				},
-			Pi { grade, base_kind, base, family_kind, family } => DynamicValue::IndexedProduct {
-				grade,
+			Pi { fragment, base_kind, base, family_kind, family } => DynamicValue::IndexedProduct {
+				fragment,
 				base_kind: base_kind.evaluate_in(environment).into(),
 				base: base.evaluate_in(environment).into(),
 				family_kind: family_kind.evaluate_in(environment).into(),

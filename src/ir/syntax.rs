@@ -1,4 +1,4 @@
-use crate::common::{Binder, Cost, Cpy, Field, Index, Label, Name, Repr, ReprAtom};
+use crate::common::{ArraySize, Binder, Cost, Cpy, Field, Fragment, Index, Label, Name, Repr, ReprAtom};
 
 #[derive(Clone, Debug)]
 pub enum StaticTerm {
@@ -23,7 +23,10 @@ pub enum StaticTerm {
 
 	Repr,
 	ReprAtom(Option<ReprAtom>),
-	ReprExp(usize, Box<Self>),
+	ReprExp {
+		len: ArraySize,
+		kind: Box<KindTerm>,
+	},
 	ReprPair(Box<Self>, Box<Self>),
 
 	// Quoted programs.
@@ -46,13 +49,13 @@ pub enum StaticTerm {
 
 	// Dependent functions.
 	Pi {
-		grade: usize,
+		fragment: Fragment,
 		base_copy: Cpy,
 		base: Box<Self>,
 		family_copy: Cpy,
 		family: Binder<Label, Box<Self>>,
 	},
-	Function(usize, Binder<Label, Box<Self>>),
+	Function(Fragment, Binder<Label, Box<Self>>),
 	Apply {
 		scrutinee: Box<Self>,
 		argument: Box<Self>,
@@ -127,7 +130,11 @@ pub enum DynamicTerm {
 
 	// Repeated programs.
 	Exp(usize, Box<KindTerm>, Box<Self>),
-	Repeat(usize, Box<Self>),
+	Repeat {
+		grade: usize,
+		kind: Option<Box<KindTerm>>,
+		term: Box<Self>,
+	},
 	ExpLet {
 		grade: usize,
 		grade_argument: usize,
@@ -139,21 +146,21 @@ pub enum DynamicTerm {
 
 	// Dependent functions.
 	Pi {
-		grade: usize,
+		fragment: Fragment,
 		base_kind: Box<KindTerm>,
 		base: Box<Self>,
 		family_kind: Box<KindTerm>,
 		family: Binder<Label, Box<Self>>,
 	},
 	Function {
-		grade: usize,
+		fragment: Fragment,
 		domain_kind: Option<Box<KindTerm>>,
 		codomain_kind: Option<Box<KindTerm>>,
 		body: Binder<Label, Box<Self>>,
 	},
 	Apply {
 		scrutinee: Box<Self>,
-		grade: Option<usize>,
+		fragment: Option<Fragment>,
 		argument: Box<Self>,
 		family_kind: Option<Box<KindTerm>>,
 	},
@@ -248,7 +255,10 @@ impl From<&Repr> for StaticTerm {
 		match value {
 			Repr::Atom(atom) => Self::ReprAtom(Some(*atom)),
 			Repr::Pair(l, r) => Self::ReprPair(Self::from(&**l).into(), Self::from(&**r).into()),
-			Repr::Exp(n, r) => Self::ReprExp(*n, Self::from(&**r).into()),
+			Repr::Array(n, r) => Self::ReprExp {
+				len: *n,
+				kind: KindTerm { copy: StaticTerm::CpyNt, repr: Self::from(&**r) }.into(),
+			},
 		}
 	}
 }

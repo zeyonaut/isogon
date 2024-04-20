@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
 	common::{Binder, Cost, Index, Label, Level, Repr, ReprAtom},
 	ir::{
-		flat::{Capture, Function, Parameter, Procedure, Program, Substitute, Term, Variable},
+		flat::{Capture, Parameter, Procedure, Program, Substitute, Term, Variable},
 		syntax::DynamicTerm,
 	},
 	op::stage::Stage,
@@ -74,49 +74,49 @@ impl Flattener {
 
 			// Repeated programs.
 			DynamicTerm::Exp(..) => panic!("irrelevant"),
-			DynamicTerm::Repeat(n, t) => Term::Repeat(*n, self.flatten(t, occurrences).into()),
-			DynamicTerm::ExpLet { grade, grade_argument, argument, kind, tail } => Term::ExpLet {
+			DynamicTerm::Repeat { grade, kind, term } => Term::Repeat {
 				grade: *grade,
-				grade_argument: *grade_argument,
-				argument: if *grade == 0 {
-					Term::Irrelevant
-				} else {
-					self.amplifiers.push((self.context.len(), Cost::Fin(*grade)));
-					let argument = self.flatten(argument, occurrences);
-					self.amplifiers.pop();
-					argument
-				}
-				.into(),
-				tail: self.flatten_with(
-					tail,
-					[Cost::Fin(grade * grade_argument)],
-					[kind.clone().stage().repr],
-					occurrences,
-				),
+				copy: kind.clone().unwrap().stage().copy,
+				term: self.flatten(term, occurrences).into(),
 			},
+			DynamicTerm::ExpLet { grade, grade_argument, argument, kind, tail } => {
+				let kind = kind.clone().stage();
+				Term::ExpLet {
+					grade: *grade,
+					grade_argument: *grade_argument,
+					copy: kind.copy,
+					repr: kind.repr.clone(),
+					argument: if *grade == 0 {
+						Term::Irrelevant
+					} else {
+						self.amplifiers.push((self.context.len(), Cost::Fin(*grade)));
+						let argument = self.flatten(argument, occurrences);
+						self.amplifiers.pop();
+						argument
+					}
+					.into(),
+					tail: self.flatten_with(tail, [Cost::Fin(grade * grade_argument)], [kind.repr], occurrences),
+				}
+			}
 			DynamicTerm::ExpProject(_) => panic!("irrelevant"),
 
 			// Dependent functions.
 			DynamicTerm::Pi { .. } => panic!("irrelevant"),
-			DynamicTerm::Function { grade, domain_kind, codomain_kind, body } =>
-				Term::Function(self.flatten_function(
-					Cost::Fin(*grade),
-					domain_kind.clone().unwrap().stage().repr,
-					body,
-					codomain_kind.clone().unwrap().stage().repr,
-					occurrences,
-				)),
-			DynamicTerm::Apply { scrutinee, grade, argument, family_kind } => Term::Apply {
+			DynamicTerm::Function { fragment, domain_kind, codomain_kind, body } => self.flatten_function(
+				(*fragment).into(),
+				domain_kind.clone().unwrap().stage().repr,
+				body,
+				codomain_kind.clone().unwrap().stage().repr,
+				occurrences,
+			),
+			DynamicTerm::Apply { scrutinee, fragment, argument, family_kind } => Term::Apply {
 				callee: self.flatten(scrutinee, occurrences).into(),
 				argument: {
-					let grade = grade.unwrap();
-					if grade == 0 {
+					let fragment = fragment.unwrap();
+					if fragment.is_logical() {
 						Term::Irrelevant
 					} else {
-						self.amplifiers.push((self.context.len(), Cost::Fin(grade)));
-						let argument = self.flatten(argument, occurrences);
-						self.amplifiers.pop();
-						argument
+						self.flatten(argument, occurrences)
 					}
 				}
 				.into(),
@@ -203,7 +203,7 @@ impl Flattener {
 		body: &Binder<Label, Box<DynamicTerm>>,
 		result_repr: Option<Repr>,
 		occurrences: &mut [Cost],
-	) -> Function {
+	) -> Term {
 		let context_len = Level(self.context.len());
 
 		// Find free occurrents in the function body.
@@ -247,7 +247,7 @@ impl Flattener {
 
 		let procedure = Procedure {
 			captured_parameters,
-			parameter: Parameter { name: parameter_name, grade, repr },
+			parameter: Some(Parameter { name: parameter_name, grade, repr }),
 			body: *body,
 			result_repr,
 		};
@@ -255,7 +255,7 @@ impl Flattener {
 		let procedure_id = self.procedures.len();
 		self.procedures.push(procedure);
 
-		Function { procedure_id, captures }
+		Term::Function { procedure_id, captures }
 	}
 
 	fn flatten_with<const N: usize>(

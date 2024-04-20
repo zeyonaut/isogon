@@ -1,7 +1,7 @@
-def [0] Unit : |[0] c : copy| -> |[0] r : repr| -> '(* c1 rfun)
-= |[0] c| |[0] r| <|[0] T : * c r| -> T -> T>;
+def [0] Unit : |c : copy| @ -> |r : repr| @ -> '(* c1 rfun)
+= |c| |r| <|T : * c r| @ -> T -> T>;
 
-def [*] tt : |[0] c : copy| -> |[0] r : repr| -> '(<Unit c r>)
+def [*] tt : |c : copy| @ -> |r : repr| @ -> '(<Unit c r>)
 = |_| |_| <|_| |x| x>; 
 
 <tt c0 rbyte> Bool false

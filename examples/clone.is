@@ -7,7 +7,7 @@ let clone_box : <Clone c1 rptr> (Box Bool)
 	@[2] (box inner)
 );
 	
-def [*] diagonal_static : |[0] c : copy| -> |[0] r : repr| -> |[0] T : '(* c r)| -> |clone : '(<Clone c r> <T>)|
+def [*] diagonal_static : |c : copy| @ -> |r : repr| @ -> |T : '(* c r)| @ -> |clone : '(<Clone c r> <T>)|
 	-> '(<T> -> <T> & <T>)
 = |_| |_| |_| |clone| <|x| (
 	let @[2] x = <clone> x;

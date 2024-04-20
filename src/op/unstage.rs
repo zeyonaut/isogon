@@ -42,7 +42,11 @@ impl Unstage for DynamicValue {
 
 			// Repeated programs.
 			Exp(n, kind, t) => DynamicTerm::Exp(*n, kind.unstage_in(level).into(), t.unstage_in(level).into()),
-			Repeat(n, t) => DynamicTerm::Repeat(*n, t.unstage_in(level).into()),
+			Repeat { grade, kind, term } => DynamicTerm::Repeat {
+				grade: *grade,
+				kind: kind.as_ref().map(|kind| kind.unstage_in(level).into()),
+				term: term.unstage_in(level).into(),
+			},
 			ExpLet { grade, grade_argument, argument, kind, tail } => DynamicTerm::ExpLet {
 				grade: *grade,
 				grade_argument: *grade_argument,
@@ -53,22 +57,22 @@ impl Unstage for DynamicValue {
 			ExpProject(t) => DynamicTerm::ExpProject(t.unstage_in(level).into()),
 
 			// Dependent functions.
-			Pi { grade, base_kind, base, family_kind, family } => DynamicTerm::Pi {
-				grade: *grade,
+			Pi { fragment, base_kind, base, family_kind, family } => DynamicTerm::Pi {
+				fragment: *fragment,
 				base_kind: base_kind.unstage_in(level).into(),
 				base: base.unstage_in(level).into(),
 				family_kind: family_kind.unstage_in(level).into(),
 				family: family.unstage_in(level),
 			},
-			Function { grade, body, domain_kind, codomain_kind } => DynamicTerm::Function {
-				grade: *grade,
+			Function { fragment, body, domain_kind, codomain_kind } => DynamicTerm::Function {
+				fragment: *fragment,
 				body: body.unstage_in(level),
 				domain_kind: domain_kind.as_ref().map(|kind| kind.unstage_in(level).into()),
 				codomain_kind: codomain_kind.as_ref().map(|kind| kind.unstage_in(level).into()),
 			},
-			Apply { scrutinee, grade, argument, family_kind } => DynamicTerm::Apply {
+			Apply { scrutinee, fragment, argument, family_kind } => DynamicTerm::Apply {
 				scrutinee: scrutinee.unstage_in(level).into(),
-				grade: *grade,
+				fragment: *fragment,
 				argument: argument.unstage_in(level).into(),
 				family_kind: family_kind.as_ref().map(|kind| kind.unstage_in(level).into()),
 			},

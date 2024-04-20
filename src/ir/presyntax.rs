@@ -1,4 +1,4 @@
-use crate::common::{AnyBinder, Binder, Cost, Cpy, Field, Index, Label, Name, ReprAtom};
+use crate::common::{AnyBinder, Binder, Cost, Cpy, Field, Fragment, Index, Label, Name, ReprAtom};
 
 #[derive(Debug, Clone)]
 pub struct ParsedProgram {
@@ -34,8 +34,8 @@ pub enum Preterm<L, E> {
 
 	ExpLet { grade: Option<Cost>, grade_argument: Cost, argument: Box<E>, tail: Binder<L, Box<E>> },
 
-	Pi { grade: usize, base: Box<E>, family: Binder<L, Box<E>> },
-	Lambda { grade: usize, body: Binder<L, Box<E>> },
+	Pi { fragment: Fragment, base: Box<E>, family: Binder<L, Box<E>> },
+	Lambda { body: Binder<L, Box<E>> },
 	Call { callee: Box<E>, argument: Box<E> },
 
 	Sg { base: Box<E>, family: Binder<L, Box<E>> },

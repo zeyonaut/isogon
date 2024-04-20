@@ -12,13 +12,4 @@ let [0] thunk_true : Unit -> Bool = |x|
 let absurd : Empty -> Bool = |x|
 	x :: |_| Bool {};
 
-let n : Nat = 4;
-
-let f : Nat -> Empty -> Bool = |n|
-	n :: |_| Empty -> Bool {
-		| 0 -> absurd
-		| suc @_.x -> x
-	}
-;
-
-f n
+absurd
