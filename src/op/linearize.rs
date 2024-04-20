@@ -26,7 +26,7 @@ pub fn linearize(program: flat::Program) -> Program {
 						.into_iter()
 						.map(|x| (x.name, x.repr.as_ref().map(Into::into)))
 						.collect(),
-					parameter: procedure.parameter.map(|x| (x.name, x.repr.as_ref().map(Into::into))),
+					parameter: (procedure.parameter.name, procedure.parameter.repr.as_ref().map(Into::into)),
 				},
 				build_procedure(procedure.body),
 			)
@@ -213,16 +213,17 @@ impl ProcedureBuilder {
 				let (frame, callee) = self.generate(frame, callee)?.unframe();
 				let (frame, argument) = self.generate(frame, argument)?.unframe();
 				let ([result], later) = self.block([result_repr.as_ref().map(Into::into)]);
+				let Value::Load(captures) = callee.project(Projector::Captures) else { panic!() };
 				self.terminate(
 					frame,
 					Terminator::Apply {
 						procedure: callee.project(Projector::Procedure),
-						captures: callee.project(Projector::Captures),
+						captures: captures.clone().into(),
 						argument,
 						later: later.id(),
 					},
 				);
-				self.append(&later, Statement::Free(Register::Local(result).into()));
+				self.append(&later, Statement::Free(captures));
 				later.and(Register::Local(result).into())
 			}
 
@@ -325,7 +326,7 @@ impl ProcedureBuilder {
 
 			Term::BxValue(term) => {
 				let (frame, inner) = self.generate(frame, term)?.unframe();
-				let inner = self.assign(&frame, Operation::Bx(inner));
+				let inner = self.assign(&frame, Operation::Alloc(inner));
 				frame.and(Register::Local(inner).into())
 			}
 			Term::BxProject(term, repr) => {
@@ -368,7 +369,7 @@ impl ProcedureBuilder {
 	fn layout_of_operation(&self, operation: &Operation) -> Option<Layout> {
 		match operation {
 			Operation::Id(value) => self.layout_of_value(value),
-			Operation::Bx(_) => Some(Layout::Ptr),
+			Operation::Alloc(_) => Some(Layout::Ptr),
 			Operation::Captures(_) => Some(Layout::Ptr),
 			Operation::Suc(_) => Some(Layout::Nat),
 		}

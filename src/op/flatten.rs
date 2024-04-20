@@ -247,7 +247,7 @@ impl Flattener {
 
 		let procedure = Procedure {
 			captured_parameters,
-			parameter: Some(Parameter { name: parameter_name, grade, repr }),
+			parameter: Parameter { name: parameter_name, grade, repr },
 			body: *body,
 			result_repr,
 		};

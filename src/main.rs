@@ -2,15 +2,15 @@
 
 use bpaf::{construct, short, Parser};
 mod common;
+mod exec;
 mod ir;
 mod op;
 
+use exec::linear::execute;
 use op::{
-	elaborate, evaluate::Evaluate, flatten::flatten, parse::parse, stage::Stage, unelaborate::Unelaborate,
-	unevaluate::Unevaluate, unparse::pretty_print, unstage::Unstage,
+	elaborate, evaluate::Evaluate, flatten::flatten, linearize::linearize, parse::parse, stage::Stage,
+	unelaborate::Unelaborate, unevaluate::Unevaluate, unparse::pretty_print, unstage::Unstage,
 };
-
-use crate::op::linearize::linearize;
 
 pub fn run(source: &str) {
 	// Parsing.
@@ -57,6 +57,9 @@ pub fn run(source: &str) {
 	let linearized_program = linearize(flat_term);
 	println!("Linearization complete.");
 	println!("Linearized program: {linearized_program:?}");
+	let (heap, result) = execute(&linearized_program);
+	println!("Execution heap: {heap:?}");
+	println!("Execution result: {result:?}");
 }
 
 enum InputOption {

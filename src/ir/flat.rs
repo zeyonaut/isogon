@@ -106,7 +106,7 @@ pub struct Parameter {
 #[derive(Debug)]
 pub struct Procedure {
 	pub captured_parameters: Vec<Parameter>,
-	pub parameter: Option<Parameter>,
+	pub parameter: Parameter,
 	pub body: Term,
 	pub result_repr: Option<Repr>,
 }

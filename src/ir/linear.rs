@@ -9,7 +9,7 @@ pub struct Program {
 #[derive(Debug)]
 pub struct Prototype {
 	pub outer: Vec<(Option<Name>, Option<Layout>)>,
-	pub parameter: Option<(Option<Name>, Option<Layout>)>,
+	pub parameter: (Option<Name>, Option<Layout>),
 }
 
 #[derive(Debug)]
@@ -113,7 +113,7 @@ pub enum Statement {
 #[derive(Debug)]
 pub enum Operation {
 	Id(Value),
-	Bx(Value),
+	Alloc(Value),
 	Captures(Box<[Value]>),
 	Suc(Load),
 }
