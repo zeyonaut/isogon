@@ -1,103 +1,18 @@
 use lasso::{Rodeo, RodeoResolver};
+use peg::error::ParseError;
 
 use crate::{
 	common::{any_bind, bind, AnyBinder, Cost, Cpy, Fragment, Name, ReprAtom},
 	ir::{
 		presyntax::{Constructor, Expression, Former, ParsedLabel, ParsedProgram, Pattern, Preterm, Projector},
-		source::{Keyword, LexError, LexErrorKind, LexedSource, Pragma, Token},
+		source::{Keyword, LexedSource, Pragma, Token},
 	},
 };
 
 /// Parses a dynamic preterm from a source string.
-pub fn parse(source: &str) -> (LexedSource, ParsedProgram, RodeoResolver) {
-	let lexed_source = match LexedSource::new(source) {
-		Ok(lexed_source) => lexed_source,
-		Err(lex_error) => {
-			report_line_error(source, (lex_error.0, lex_error.0 + 1), &format_lex_error(source, lex_error));
-			panic!();
-		}
-	};
-	let mut parser = Parser { source, interner: Rodeo::new(), ranges: lexed_source.ranges.clone() };
-	let program = match presyntax_parse::program(&lexed_source.tokens, &mut parser) {
-		Ok(preterm) => preterm,
-		Err(error) => {
-			report_line_error(
-				source,
-				lexed_source.ranges.get(error.location).copied().unwrap_or((source.len(), source.len() + 1)),
-				&format!("parse error: expected one of: {:?}", error.expected.tokens().collect::<Vec<_>>()),
-			);
-			panic!();
-		}
-	};
-
-	(lexed_source, program, parser.interner.into_resolver())
-}
-pub fn format_lex_error(source: &str, LexError(location, kind): LexError) -> String {
-	fn char_list_string(chars: &[char]) -> String {
-		if let Some(c) = chars.first() {
-			use std::fmt::Write;
-			let mut string = String::new();
-			write!(string, "`{}`", c).unwrap();
-			for c in chars.iter().skip(1) {
-				write!(string, ", `{}`", c).unwrap();
-			}
-			string
-		} else {
-			String::new()
-		}
-	}
-
-	match kind {
-		LexErrorKind::UnrecognizedLexemePrefix =>
-			format!("lex error: unrecognized lexeme prefix `{}`", &source[location..location + 1]),
-		LexErrorKind::UnexpectedCharacter(expected) => format!(
-			"lex error: expected one of {}; found `{}`",
-			char_list_string(expected),
-			&source[location..location + 1].escape_default()
-		),
-		LexErrorKind::UnexpectedEnd(expected) => {
-			format!("lex error: expected one of {}; found end of input", char_list_string(expected))
-		}
-		LexErrorKind::InvalidPragma => "invalid pragma".to_owned(),
-	}
-}
-
-pub fn report_line_error(source: &str, range: (usize, usize), error_string: &str) {
-	const TAB_WIDTH: usize = 3;
-	// SAFETY: Repeated spaces form a valid string.
-	const TAB_REPLACEMENT: &str = unsafe { std::str::from_utf8_unchecked(&[b' '; TAB_WIDTH]) };
-
-	let mut lines = source.split_inclusive('\n');
-	let mut line_number: usize = 0;
-	let mut bytes_left = range.0;
-	let (line, bytes_left, width) = loop {
-		if let Some(line) = lines.next() {
-			line_number += 1;
-			if line.len() <= bytes_left {
-				bytes_left -= line.len();
-			} else {
-				break (line, bytes_left, range.1 - range.0);
-			}
-		} else {
-			// This is a cold path, so this is fine.
-			let (i, last) = source.split('\n').enumerate().last().unwrap();
-			line_number = i + 1;
-			break (last, last.len(), 1);
-		}
-	};
-
-	print!("[{}:{}] ", line_number, bytes_left);
-	println!("error: {error_string}");
-
-	let visual_line = line.replace('\t', TAB_REPLACEMENT).trim_end().to_owned();
-	let visual_offset: usize =
-		unicode_width::UnicodeWidthStr::width(line[0..bytes_left].replace('\t', TAB_REPLACEMENT).as_str());
-
-	let displayed_line_number = line_number.to_string();
-	let dummy_line_number = " ".repeat(displayed_line_number.len());
-	println!("{} |", dummy_line_number);
-	println!("{} | {}", displayed_line_number, visual_line);
-	println!("{} | {}{}", dummy_line_number, " ".repeat(visual_offset), "^".repeat(width));
+pub fn parse(source: &LexedSource) -> Result<(ParsedProgram, RodeoResolver), ParseError<usize>> {
+	let mut parser = Parser { source: source.source, interner: Rodeo::new(), ranges: source.ranges.clone() };
+	Ok((presyntax_parse::program(&source.tokens, &mut parser)?, parser.interner.into_resolver()))
 }
 
 pub struct Parser<'s> {
@@ -259,9 +174,9 @@ peg::parser! {
 			) fini:position!() {preterm.at((init, fini))}
 			/ spine_headed()
 
-		rule pragma_fragment() -> u8
-			= [Token::Pragma(Pragma::Fragment)] _ number:number() {(number > 0) as u8}
-			/ {1}
+		rule pragma_fragment() -> Fragment
+			= [Token::Pragma(Pragma::Fragment)] _ number:number() {if number > 0 {Fragment::Material} else {Fragment::Logical}}
+			/ {Fragment::Material}
 
 		pub rule program() -> ParsedProgram
 			= _ fragment:pragma_fragment() _ expr:preterm() _ {ParsedProgram {fragment, expr}}

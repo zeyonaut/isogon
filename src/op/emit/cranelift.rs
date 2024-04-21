@@ -12,7 +12,7 @@ use cranelift::{
 	frontend::{FunctionBuilder, FunctionBuilderContext},
 };
 
-use crate::ir::linear::{self, Symbol};
+use crate::{common::Symbol, ir::linear};
 
 pub fn emit_cranelift(_program: &linear::Program) {
 	todo!();

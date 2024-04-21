@@ -10,5 +10,3 @@ pub mod unelaborate;
 pub mod unevaluate;
 pub mod unparse;
 pub mod unstage;
-
-pub use elaborate::elaborate;

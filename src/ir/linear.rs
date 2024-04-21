@@ -1,4 +1,4 @@
-use crate::common::{ArraySize, Field, Label, Level, Name, Repr, ReprAtom};
+use crate::common::{ArraySize, Field, Label, Level, Repr, ReprAtom, Symbol};
 
 #[derive(Debug)]
 pub struct Program {
@@ -198,19 +198,3 @@ pub enum Register {
 	Parameter,
 	Local(Symbol),
 }
-
-pub struct SymbolGenerator(usize);
-
-impl SymbolGenerator {
-	pub fn new() -> Self { Self(0) }
-
-	pub fn generate(&mut self) -> Symbol {
-		let symbol = self.0;
-		self.0 += 1;
-		Symbol(symbol)
-	}
-}
-
-#[repr(transparent)]
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
-pub struct Symbol(pub usize);

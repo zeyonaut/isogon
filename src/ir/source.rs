@@ -2,6 +2,8 @@ use std::str::Chars;
 
 use crate::common::Field;
 
+pub fn lex(source: &str) -> Result<LexedSource, LexError> { LexedSource::new(source) }
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Token {
 	Whitespace,
@@ -113,12 +115,13 @@ impl<'s> Scanner<'s> {
 	pub fn peek(&mut self) -> Option<char> { self.chars.clone().next() }
 }
 
-pub struct LexedSource {
+pub struct LexedSource<'a> {
+	pub source: &'a str,
 	pub tokens: Box<[Token]>,
 	pub ranges: Box<[(usize, usize)]>,
 }
 
-impl LexedSource {
+impl<'a> LexedSource<'a> {
 	fn pragma(string: &str) -> Option<Token> {
 		Some(Token::Pragma(match string {
 			"fragment" => Pragma::Fragment,
@@ -174,7 +177,7 @@ impl LexedSource {
 		}
 	}
 
-	pub fn new(source: &str) -> Result<Self, LexError> {
+	pub fn new(source: &'a str) -> Result<Self, LexError> {
 		use LexErrorKind::*;
 		use Token::*;
 		let mut scanner = Scanner::new(source);
@@ -272,6 +275,6 @@ impl LexedSource {
 		}
 
 		debug_assert!(tokens.len() == ranges.len());
-		Ok(Self { tokens: tokens.into_boxed_slice(), ranges: ranges.into_boxed_slice() })
+		Ok(Self { source, tokens: tokens.into_boxed_slice(), ranges: ranges.into_boxed_slice() })
 	}
 }

@@ -3,8 +3,6 @@ use std::{
 	rc::Rc,
 };
 
-use lasso::Resolver;
-
 use crate::{
 	common::{bind, ArraySize, Binder, Cost, Cpy, Field, Fragment, Index, Label, Level, Name},
 	ir::{
@@ -13,70 +11,29 @@ use crate::{
 			Projector,
 		},
 		semantics::{DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue, Value},
-		source::LexedSource,
 		syntax::{DynamicTerm, KindTerm, StaticTerm},
 	},
 	op::{
-		conversion::Conversion,
-		evaluate::{Evaluate, EvaluateWith},
-		parse::report_line_error,
-		unelaborate::Unelaborate,
-		unevaluate::Unevaluate,
-		unparse::print,
+		conversion::Conversion as _,
+		evaluate::{Evaluate as _, EvaluateWith as _},
+		unevaluate::Unevaluate as _,
 	},
 };
 
 /// Elaborates a dynamic preterm to a dynamic term and synthesizes its type.
-pub fn elaborate(
-	source: &str,
-	lexed_source: &LexedSource,
-	program: ParsedProgram,
-	interner: &impl Resolver,
-) -> (DynamicTerm, DynamicValue) {
-	match Context::empty(if program.fragment == 0 { Fragment::Logical } else { Fragment::Material })
-		.synthesize_dynamic(program.expr)
-	{
-		Ok((term, ty, ..)) => (term, ty),
-		Err(error) => {
-			report_line_error(
-				source,
-				lexed_source.ranges.get(error.range.0).copied().unwrap_or((source.len(), source.len() + 1)),
-				&display_error(error.kind, interner),
-			);
-			panic!();
-		}
-	}
-}
-
-fn display_error(kind: ElaborationErrorKind, interner: &impl Resolver) -> String {
-	match kind {
-		ElaborationErrorKind::StaticBidirectionalMismatch { synthesized, expected } => {
-			println!("elaboration error: type mismatch\nexpected: {synthesized:#?}\nfound: {expected:#?}");
-			let mut ty_sy = String::new();
-			print(&synthesized.unelaborate(), &mut ty_sy, interner).unwrap();
-			let mut ty_ex = String::new();
-			print(&expected.unelaborate(), &mut ty_ex, interner).unwrap();
-			format!("elaboration error: type mismatch\nexpected: {}\nfound: {}", ty_ex, ty_sy)
-		}
-		ElaborationErrorKind::DynamicBidirectionalMismatch { synthesized, expected } => {
-			let mut ty_sy = String::new();
-			print(&synthesized.unelaborate(), &mut ty_sy, interner).unwrap();
-			let mut ty_ex = String::new();
-			print(&expected.unelaborate(), &mut ty_ex, interner).unwrap();
-			format!("elaboration error: type mismatch\nexpected: {}\nfound: {}", ty_ex, ty_sy)
-		}
-		_ => format!("elaboration error: {:#?}", kind),
-	}
+pub fn elaborate(program: ParsedProgram) -> Result<(DynamicTerm, DynamicValue), ElaborationError> {
+	let (term, ty, ..) = Context::empty(program.fragment).synthesize_dynamic(program.expr)?;
+	Ok((term, ty))
 }
 
 #[derive(Debug, Clone)]
-struct ElaborationError {
-	range: (usize, usize),
-	kind: ElaborationErrorKind,
+pub struct ElaborationError {
+	pub range: (usize, usize),
+	pub kind: ElaborationErrorKind,
 }
 
 #[derive(Debug, Clone)]
-enum ExpectedFormer {
+pub enum ExpectedFormer {
 	Universe,
 	Exp,
 	Sigma,
@@ -88,7 +45,7 @@ enum ExpectedFormer {
 }
 
 #[derive(Debug, Clone)]
-enum ElaborationErrorKind {
+pub enum ElaborationErrorKind {
 	ExpectedStaticFoundDynamicVariable,
 	ExpectedDynamicFoundStaticVariable,
 	UsedNonCrispLockedVariable,
@@ -668,7 +625,7 @@ impl Context {
 					let [tm] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let (tm, ty, c) = self.synthesize_static(tm)?;
+					let (tm, ty, c) = self.amplify(grade).synthesize_static(tm)?;
 					(
 						StaticTerm::Repeat(grade, tm.into()),
 						StaticValue::Exp(grade, c, ty.into()),
@@ -1048,7 +1005,7 @@ impl Context {
 					.bind_dynamic(false, 0.into(), base_kind.clone(), base_value)
 					.map(|ctx, body| ctx.elaborate_dynamic_type(*body))?
 					.retract();
-				let Ok(family_kind) = family_kind.try_unevaluate_in(self.len()) else {
+				let Some(family_kind) = family_kind.try_unevaluate_in(self.len()) else {
 					return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
 				};
 				(
@@ -1096,7 +1053,7 @@ impl Context {
 					.bind_dynamic(false, 0.into(), base_kind.clone(), base_value)
 					.map_extra(|ctx, body| ctx.elaborate_dynamic_type(*body))?;
 				let kind = KindValue::pair(self.len(), base_kind.clone(), family_kind.clone());
-				let Ok(family_kind) = family_kind.try_unevaluate_in(self.len()) else {
+				let Some(family_kind) = family_kind.try_unevaluate_in(self.len()) else {
 					return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
 				};
 				(
@@ -1221,7 +1178,7 @@ impl Context {
 					let [tm] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let (tm, ty, kind) = self.synthesize_dynamic(tm)?;
+					let (tm, ty, kind) = self.amplify(grade).synthesize_dynamic(tm)?;
 					(
 						DynamicTerm::Repeat {
 							grade,
@@ -1377,7 +1334,7 @@ impl Context {
 								right: Rc::new(ctx.var(0)),
 							})
 							.map_extra(|ctx, body| ctx.elaborate_dynamic_type(*body))?;
-						let Ok(_) = motive_kind.try_unevaluate_in(self.len()) else {
+						let Some(_) = motive_kind.try_unevaluate_in(self.len()) else {
 							return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
 						};
 						let motive = motive_term.clone().map_into().evaluate_in(&self.environment);
@@ -1410,7 +1367,7 @@ impl Context {
 							.extend(motive)
 							.bind_dynamic(false, 0.into(), KindValue::enu(), DynamicValue::Enum(card))
 							.map_extra(|ctx, body| ctx.elaborate_dynamic_type(*body))?;
-						let Ok(_) = motive_kind.try_unevaluate_in(self.len()) else {
+						let Some(_) = motive_kind.try_unevaluate_in(self.len()) else {
 							return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
 						};
 						let motive = motive_term.clone().map_into().evaluate_in(&self.environment);
@@ -1460,7 +1417,7 @@ impl Context {
 							.extend(motive)
 							.bind_dynamic(false, 0.into(), KindValue::nat(), DynamicValue::Nat)
 							.map_extra(|ctx, body| ctx.elaborate_dynamic_type(*body))?;
-						let Ok(_) = motive_kind.try_unevaluate_in(self.len()) else {
+						let Some(_) = motive_kind.try_unevaluate_in(self.len()) else {
 							return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
 						};
 						let motive_value = motive_term.clone().map_into().evaluate_in(&self.environment);

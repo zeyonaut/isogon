@@ -6,6 +6,12 @@ use crate::{
 	},
 };
 
+pub fn stage(dynamic_term: DynamicTerm) -> DynamicTerm {
+	use super::unstage::Unstage;
+
+	dynamic_term.stage().unstage()
+}
+
 pub trait Stage {
 	type ObjectTerm;
 	/// Transforms a core term into an object term.

@@ -14,36 +14,36 @@ pub trait Unevaluate {
 	/// Transforms a value into a core term.
 	fn unevaluate(&self) -> Self::Term { self.unevaluate_in(Level(0)) }
 
-	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()>;
+	fn try_unevaluate_in(&self, level: Level) -> Option<Self::Term>;
 
 	fn unevaluate_in(&self, level: Level) -> Self::Term { self.try_unevaluate_in(level).unwrap() }
 }
 
 impl<const N: usize> Unevaluate for Closure<Environment, StaticTerm, N> {
 	type Term = Binder<Label, Box<StaticTerm>, N>;
-	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
-		Ok(bind(self.parameters, self.evaluate_auto(level).try_unevaluate_in(level + N)?))
+	fn try_unevaluate_in(&self, level: Level) -> Option<Self::Term> {
+		Some(bind(self.parameters, self.evaluate_auto(level).try_unevaluate_in(level + N)?))
 	}
 }
 
 impl<const N: usize> Unevaluate for Closure<Environment, DynamicTerm, N> {
 	type Term = Binder<Label, Box<DynamicTerm>, N>;
-	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
-		Ok(bind(self.parameters, self.evaluate_auto(level).try_unevaluate_in(level + N)?))
+	fn try_unevaluate_in(&self, level: Level) -> Option<Self::Term> {
+		Some(bind(self.parameters, self.evaluate_auto(level).try_unevaluate_in(level + N)?))
 	}
 }
 
 impl Unevaluate for KindValue {
 	type Term = KindTerm;
-	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
-		Ok(KindTerm { copy: self.copy.try_unevaluate_in(level)?, repr: self.repr.try_unevaluate_in(level)? })
+	fn try_unevaluate_in(&self, level: Level) -> Option<Self::Term> {
+		Some(KindTerm { copy: self.copy.try_unevaluate_in(level)?, repr: self.repr.try_unevaluate_in(level)? })
 	}
 }
 impl Unevaluate for StaticValue {
 	type Term = StaticTerm;
-	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
+	fn try_unevaluate_in(&self, level: Level) -> Option<Self::Term> {
 		use StaticValue as V;
-		Ok(match self {
+		Some(match self {
 			// Neutrals.
 			V::Neutral(neutral) => neutral.try_unevaluate_in(level)?,
 
@@ -115,12 +115,12 @@ impl Unevaluate for StaticValue {
 
 impl Unevaluate for StaticNeutral {
 	type Term = StaticTerm;
-	fn try_unevaluate_in(&self, level @ Level(context_length): Level) -> Result<Self::Term, ()> {
+	fn try_unevaluate_in(&self, level @ Level(context_length): Level) -> Option<Self::Term> {
 		use StaticNeutral::*;
-		Ok(match self {
+		Some(match self {
 			// Variables.
 			Variable(name, Level(level)) =>
-				StaticTerm::Variable(*name, Index(context_length.checked_sub(level + 1).ok_or(())?)),
+				StaticTerm::Variable(*name, Index(context_length.checked_sub(level + 1)?)),
 
 			// Repeated programs.
 			ExpProject(scrutinee) => StaticTerm::ExpProject(scrutinee.try_unevaluate_in(level)?.into()),
@@ -139,7 +139,7 @@ impl Unevaluate for StaticNeutral {
 			CaseEnum { scrutinee, motive, cases } => StaticTerm::CaseEnum {
 				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
 				motive: motive.try_unevaluate_in(level)?,
-				cases: cases.iter().map(|case| case.try_unevaluate_in(level)).collect::<Result<_, _>>()?,
+				cases: cases.iter().map(|case| case.try_unevaluate_in(level)).collect::<Option<_>>()?,
 			},
 
 			// Natural numbers.
@@ -156,9 +156,9 @@ impl Unevaluate for StaticNeutral {
 
 impl Unevaluate for DynamicValue {
 	type Term = DynamicTerm;
-	fn try_unevaluate_in(&self, level: Level) -> Result<Self::Term, ()> {
+	fn try_unevaluate_in(&self, level: Level) -> Option<Self::Term> {
 		use DynamicValue::*;
-		Ok(match self {
+		Some(match self {
 			// Neutrals.
 			Neutral(neutral) => neutral.try_unevaluate_in(level)?,
 
@@ -232,12 +232,12 @@ impl Unevaluate for DynamicValue {
 
 impl Unevaluate for DynamicNeutral {
 	type Term = DynamicTerm;
-	fn try_unevaluate_in(&self, level @ Level(context_length): Level) -> Result<Self::Term, ()> {
+	fn try_unevaluate_in(&self, level @ Level(context_length): Level) -> Option<Self::Term> {
 		use DynamicNeutral::*;
-		Ok(match self {
+		Some(match self {
 			// Variables.
 			Variable(name, Level(level)) =>
-				DynamicTerm::Variable(*name, Index(context_length.checked_sub(level + 1).ok_or(())?)),
+				DynamicTerm::Variable(*name, Index(context_length.checked_sub(level + 1)?)),
 
 			// Quoted programs.
 			Splice(splicee) => DynamicTerm::Splice(splicee.try_unevaluate_in(level)?.into()),
@@ -262,7 +262,7 @@ impl Unevaluate for DynamicNeutral {
 				scrutinee: scrutinee.try_unevaluate_in(level)?.into(),
 				motive_kind: None,
 				motive: motive.try_unevaluate_in(level)?,
-				cases: cases.iter().map(|case| case.try_unevaluate_in(level)).collect::<Result<_, _>>()?,
+				cases: cases.iter().map(|case| case.try_unevaluate_in(level)).collect::<Option<_>>()?,
 			},
 
 			// Paths.

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use crate::{
-	common::Field,
+	common::{Field, Symbol, SymbolGenerator},
 	ir::linear::{
-		BlockId, Load, Operation, Procedure, Program, Projector, Prototype, Register, Statement, Symbol,
-		SymbolGenerator, Terminator, Value,
+		BlockId, Load, Operation, Procedure, Program, Projector, Prototype, Register, Statement, Terminator,
+		Value,
 	},
 };
 

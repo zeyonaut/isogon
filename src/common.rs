@@ -213,3 +213,23 @@ impl Fragment {
 impl From<Fragment> for Cost {
 	fn from(value: Fragment) -> Self { Self::Fin(value as u8 as _) }
 }
+
+pub struct SymbolGenerator(usize);
+
+impl SymbolGenerator {
+	pub fn new() -> Self { Self(0) }
+
+	pub fn generate(&mut self) -> Symbol {
+		let symbol = self.0;
+		self.0 += 1;
+		Symbol(symbol)
+	}
+}
+
+impl Default for SymbolGenerator {
+	fn default() -> Self { Self::new() }
+}
+
+#[repr(transparent)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+pub struct Symbol(pub usize);

@@ -1,12 +1,12 @@
 use std::{collections::HashMap, iter::repeat};
 
 use crate::{
-	common::{ArraySize, Binder, Cpy, Field, Label},
+	common::{ArraySize, Binder, Cpy, Field, Label, Symbol, SymbolGenerator},
 	ir::{
 		flat::{self, Term, Variable},
 		linear::{
 			Block, Frame, Framed, Layout, Load, Operation, Procedure, Program, Projector, Prototype, Register,
-			Statement, Symbol, SymbolGenerator, Terminator, Value,
+			Statement, Terminator, Value,
 		},
 	},
 };
