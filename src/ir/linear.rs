@@ -1,4 +1,4 @@
-use crate::common::{ArraySize, Field, Level, Name, Repr, ReprAtom};
+use crate::common::{ArraySize, Field, Label, Level, Name, Repr, ReprAtom};
 
 #[derive(Debug)]
 pub struct Program {
@@ -8,8 +8,9 @@ pub struct Program {
 
 #[derive(Debug)]
 pub struct Prototype {
-	pub outer: Vec<(Option<Name>, Option<Layout>)>,
-	pub parameter: (Option<Name>, Option<Layout>),
+	pub outer: Vec<(Label, Option<Layout>)>,
+	pub parameter: (Label, Option<Layout>),
+	pub result: Option<Layout>,
 }
 
 #[derive(Debug)]
@@ -118,7 +119,7 @@ pub enum Operation {
 	Suc(Load),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
 	None,
 	Num(usize),
@@ -162,7 +163,7 @@ impl From<Register> for Value {
 	fn from(value: Register) -> Self { Self::Load(Load::reg(value)) }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Load {
 	pub register: Register,
 	pub projectors: Vec<Projector>,
@@ -181,7 +182,7 @@ impl From<Register> for Load {
 	fn from(value: Register) -> Self { Self::reg(value) }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Projector {
 	Exp(usize, Option<Layout>),
 	Procedure,
@@ -191,7 +192,7 @@ pub enum Projector {
 	Wrap(Option<Layout>),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Register {
 	Outer(Level),
 	Parameter,

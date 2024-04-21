@@ -27,6 +27,7 @@ pub fn linearize(program: flat::Program) -> Program {
 						.map(|x| (x.name, x.repr.as_ref().map(Into::into)))
 						.collect(),
 					parameter: (procedure.parameter.name, procedure.parameter.repr.as_ref().map(Into::into)),
+					result: procedure.result_repr.as_ref().map(Into::into),
 				},
 				build_procedure(procedure.body),
 			)
@@ -206,24 +207,22 @@ impl ProcedureBuilder {
 				let (frame, captures) = self
 					.generate_many(frame, captures.iter().map(|c| Term::Variable(None, c.variable)))?
 					.unframe();
-				let captures = self.assign(&frame, Operation::Captures(captures));
-				frame.and(Value::function(Value::Procedure(*procedure_id), Register::Local(captures)))
+				let captures = Register::Local(self.assign(&frame, Operation::Captures(captures)));
+				frame.and(Value::function(Value::Procedure(*procedure_id), captures))
 			}
 			Term::Apply { callee, argument, result_repr } => {
 				let (frame, callee) = self.generate(frame, callee)?.unframe();
 				let (frame, argument) = self.generate(frame, argument)?.unframe();
 				let ([result], later) = self.block([result_repr.as_ref().map(Into::into)]);
-				let Value::Load(captures) = callee.project(Projector::Captures) else { panic!() };
 				self.terminate(
 					frame,
 					Terminator::Apply {
 						procedure: callee.project(Projector::Procedure),
-						captures: captures.clone().into(),
+						captures: callee.project(Projector::Captures),
 						argument,
 						later: later.id(),
 					},
 				);
-				self.append(&later, Statement::Free(captures));
 				later.and(Register::Local(result).into())
 			}
 

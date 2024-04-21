@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use crate::{
 	common::Field,
 	ir::linear::{
-		BlockId, Load, Operation, Procedure, Program, Projector, Register, Statement, Symbol, SymbolGenerator,
-		Terminator, Value,
+		BlockId, Load, Operation, Procedure, Program, Projector, Prototype, Register, Statement, Symbol,
+		SymbolGenerator, Terminator, Value,
 	},
 };
 
@@ -42,6 +42,10 @@ impl<'a> Executor<'a> {
 		}
 	}
 
+	fn prototype(&self) -> Option<&'a Prototype> {
+		Some(&self.program.procedures[self.environment.procedure_id?].0)
+	}
+
 	fn procedure(&self) -> &'a Procedure {
 		if let Some(id) = self.environment.procedure_id {
 			&self.program.procedures[id].1
@@ -62,6 +66,11 @@ impl<'a> Executor<'a> {
 					Terminator::Abort => panic!(),
 					Terminator::Return(operand) => {
 						let data = self.compute(operand);
+						if let Some(prototype) = self.prototype() {
+							if !prototype.outer.is_empty() {
+								self.free(self.environment.outer.clone());
+							}
+						}
 						if let Some((environment, block)) = self.continuations.pop() {
 							self.environment = environment;
 							current_block = &self.procedure().blocks[block.0];
@@ -111,7 +120,6 @@ impl<'a> Executor<'a> {
 				}
 			}
 		};
-		// NOTE: We can't assert that the heap is empty just yet: it might not be if we're returning a function.
 		(self.heap, data)
 	}
 
@@ -126,12 +134,15 @@ impl<'a> Executor<'a> {
 						self.heap.insert(symbol, data);
 						Data::Heap(symbol)
 					}
-					Operation::Captures(operands) => {
-						let data = Data::Captures(operands.iter().map(|x| self.compute(x)).collect());
-						let symbol = self.heap_generator.generate();
-						self.heap.insert(symbol, data);
-						Data::Heap(symbol)
-					}
+					Operation::Captures(operands) =>
+						if operands.is_empty() {
+							Data::None
+						} else {
+							let data = Data::Captures(operands.iter().map(|x| self.compute(x)).collect());
+							let symbol = self.heap_generator.generate();
+							self.heap.insert(symbol, data);
+							Data::Heap(symbol)
+						},
 					Operation::Suc(load) => {
 						let Data::Num(n) = self.load(load) else { panic!() };
 						Data::Num(n + 1)
@@ -139,12 +150,14 @@ impl<'a> Executor<'a> {
 				};
 				self.environment.locals.insert(*symbol, data);
 			}
-			Statement::Free(load) => {
-				let Data::Heap(symbol) = self.load(load) else { panic!() };
-				let removed = self.heap.remove(&symbol);
-				assert!(removed.is_some())
-			}
+			Statement::Free(load) => self.free(self.load(load)),
 		}
+	}
+
+	fn free(&mut self, data: Data) {
+		let Data::Heap(symbol) = data else { panic!() };
+		let removed = self.heap.remove(&symbol);
+		assert!(removed.is_some())
 	}
 
 	fn compute(&self, operand: &Value) -> Data {

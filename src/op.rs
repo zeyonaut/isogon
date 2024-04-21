@@ -1,5 +1,6 @@
 pub mod conversion;
 pub mod elaborate;
+pub mod emit;
 pub mod evaluate;
 pub mod flatten;
 pub mod linearize;

@@ -6,7 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bpaf = "0.9.6"
+bpaf = "0.9.11"
+cranelift = "0.106.2"
 lasso = "0.7.2"
 peg = "0.8.2"
 unicode-width = "0.1.11"
