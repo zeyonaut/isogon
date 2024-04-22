@@ -1,0 +1,2 @@
+let x : Wrap Bool = wrap true;
+@[0] x
