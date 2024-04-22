@@ -101,7 +101,6 @@ impl<'a, 'b> BlockBuilder<'a, 'b> {
 					linear::Operation::Id(_) => todo!(),
 					linear::Operation::Alloc(_) => todo!(),
 					linear::Operation::Captures(_) => todo!(),
-					linear::Operation::Suc(_) => todo!(),
 				},
 				linear::Statement::Free(_) => todo!(),
 			}

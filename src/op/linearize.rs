@@ -280,15 +280,7 @@ impl ProcedureBuilder {
 			Term::Num(n) => frame.and(Value::Num(*n)),
 			Term::Suc(term) => {
 				let (frame, n) = self.generate(frame, term)?.unframe();
-				let successor = match n {
-					Value::Num(n) => Value::Num(n.checked_add(1).unwrap()),
-					Value::Load(load) => {
-						let successor = self.assign(&frame, Operation::Suc(load));
-						Register::Local(successor).into()
-					}
-					_ => panic!(),
-				};
-				frame.and(successor)
+				frame.and(n.suc())
 			}
 			Term::CaseNat { scrutinee, case_nil, case_suc, motive_repr } => {
 				let (frame, limit) = self.generate(frame, scrutinee)?.unframe();
@@ -317,9 +309,10 @@ impl ProcedureBuilder {
 						[b_index, b_previous].map(Register::Local).map(Into::into).map(ValueProducer::Value),
 					)?
 					.unframe();
-				let b_suc = self.assign(&body, Operation::Suc(Load::reg(Register::Local(b_index))));
-				self
-					.terminate_jump(&condition_check, body.and(vec![Register::Local(b_suc).into(), value].into()));
+				self.terminate_jump(
+					&condition_check,
+					body.and(vec![Value::from(Register::Local(b_index)).suc(), value].into()),
+				);
 				frame.and(Register::Local(result).into())
 			}
 
@@ -370,7 +363,6 @@ impl ProcedureBuilder {
 			Operation::Id(value) => self.layout_of_value(value),
 			Operation::Alloc(_) => Some(Layout::Ptr),
 			Operation::Captures(_) => Some(Layout::Ptr),
-			Operation::Suc(_) => Some(Layout::Nat),
 		}
 	}
 
@@ -378,6 +370,7 @@ impl ProcedureBuilder {
 		match value {
 			Value::None => None,
 			Value::Num(_) => Some(Layout::Nat),
+			Value::Add(..) => Some(Layout::Nat),
 			Value::Enum(_, _) => Some(Layout::Byte),
 			Value::Procedure(_) => Some(Layout::Ptr),
 			Value::Load(load) => self.layout_of_load(load),

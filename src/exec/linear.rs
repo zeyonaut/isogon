@@ -143,10 +143,6 @@ impl<'a> Executor<'a> {
 							self.heap.insert(symbol, data);
 							Data::Heap(symbol)
 						},
-					Operation::Suc(load) => {
-						let Data::Num(n) = self.load(load) else { panic!() };
-						Data::Num(n + 1)
-					}
 				};
 				self.environment.locals.insert(*symbol, data);
 			}
@@ -164,6 +160,10 @@ impl<'a> Executor<'a> {
 		match operand {
 			Value::None => Data::None,
 			Value::Num(n) => Data::Num(*n),
+			Value::Add(a, b) => {
+				let Data::Num(n) = self.compute(a) else { panic!() };
+				Data::Num(n.checked_add(*b).unwrap())
+			}
 			Value::Enum(k, v) => Data::Enum(*k, *v),
 			Value::Procedure(n) => Data::Procedure(*n),
 			Value::Load(load) => self.load(load),

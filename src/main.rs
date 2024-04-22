@@ -66,14 +66,12 @@ pub fn run(source: &str) {
 	// Closure conversion.
 	let flat_term = flatten(&staged_term);
 	println!("Closure conversion complete.");
-	println!("Closure-converted program: {flat_term:?}");
 
 	println!();
 
 	// Linearization.
 	let linearized_program = linearize(flat_term);
 	println!("Linearization complete.");
-	println!("Linearized program: {linearized_program:?}");
 	let (heap, result) = execute(&linearized_program);
 	println!("Execution heap: {heap:?}");
 	println!("Execution result: {result:?}");

@@ -116,13 +116,13 @@ pub enum Operation {
 	Id(Value),
 	Alloc(Value),
 	Captures(Box<[Value]>),
-	Suc(Load),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
 	None,
 	Num(usize),
+	Add(Box<Self>, usize),
 	Enum(u16, u8),
 	Procedure(usize),
 	Load(Load),
@@ -152,6 +152,15 @@ impl Value {
 
 	pub fn pair(left: impl Into<Self>, right: impl Into<Self>) -> Self {
 		Self::Pair(Box::new(left.into()), Box::new(right.into()))
+	}
+
+	pub fn suc(self) -> Self {
+		match self {
+			Self::Num(n) => Self::Num(n.checked_add(1).unwrap()),
+			Self::Add(a, b) => Self::Add(a, b.checked_add(1).unwrap()),
+			Self::Load(a) => Self::Add(Box::new(a.into()), 1),
+			_ => panic!(),
+		}
 	}
 }
 
