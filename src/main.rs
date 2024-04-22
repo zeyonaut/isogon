@@ -2,7 +2,7 @@ use bpaf::{construct, short, Parser};
 use isogon::{
 	common::Fragment,
 	exec::linear::execute,
-	ir::source::lex,
+	ir::{linear::pretty_print_linear, source::lex},
 	op::{
 		elaborate::elaborate, evaluate::Evaluate as _, flatten::flatten, linearize::linearize, parse::parse,
 		stage::stage, unelaborate::Unelaborate as _, unevaluate::Unevaluate as _, unparse::pretty_print,
@@ -72,6 +72,9 @@ pub fn run(source: &str) {
 	// Linearization.
 	let linearized_program = linearize(flat_term);
 	println!("Linearization complete.");
+	let mut printed = String::new();
+	pretty_print_linear(&mut printed, &linearized_program).unwrap();
+	println!("{printed}");
 	let (heap, result) = execute(&linearized_program);
 	println!("Execution heap: {heap:?}");
 	println!("Execution result: {result:?}");

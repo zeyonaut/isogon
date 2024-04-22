@@ -207,3 +207,203 @@ pub enum Register {
 	Parameter,
 	Local(Symbol),
 }
+
+pub fn pretty_print_linear(f: &mut impl std::fmt::Write, program: &Program) -> std::fmt::Result {
+	writeln!(f, "entry {{")?;
+	print_procedure(f, &program.entry)?;
+	writeln!(f, "}}")?;
+	writeln!(f)?;
+
+	for (i, (_, procedure)) in program.procedures.iter().enumerate() {
+		writeln!(f, "fn $proc({i}) {{")?;
+		print_procedure(f, procedure)?;
+		writeln!(f, "}}")?;
+		writeln!(f)?;
+	}
+
+	Ok(())
+}
+
+fn print_procedure(f: &mut impl std::fmt::Write, procedure: &Procedure) -> std::fmt::Result {
+	for (i, block) in procedure.blocks.iter().enumerate() {
+		write!(f, "  @{i}(")?;
+		// TODO: Maybe also print layouts?
+		if let Some(n) = block.parameters.len().checked_sub(1) {
+			for x in block.parameters.iter().take(n) {
+				write!(f, "{}, ", x.0 .0)?;
+			}
+		}
+		if let Some(x) = block.parameters.last() {
+			write!(f, "{}", x.0 .0)?;
+		}
+		writeln!(f, "):")?;
+
+		for statement in &block.statements {
+			write!(f, "    ")?;
+			print_statement(f, statement)?;
+			writeln!(f)?;
+		}
+		write!(f, "    ")?;
+		print_terminator(f, block.terminator.as_ref().unwrap())?;
+		writeln!(f)?;
+	}
+
+	Ok(())
+}
+
+fn print_terminator(f: &mut impl std::fmt::Write, terminator: &Terminator) -> std::fmt::Result {
+	match terminator {
+		Terminator::Abort => write!(f, "abort")?,
+		Terminator::Return(value) => {
+			write!(f, "return ")?;
+			print_value(f, value)?;
+		}
+		Terminator::Jump(id, values) => {
+			write!(f, "jump @{}(", id.0)?;
+			print_values(f, values)?;
+			write!(f, ")")?;
+		}
+		Terminator::Split(value, blocks) => {
+			write!(f, "split ")?;
+			print_value(f, value)?;
+			write!(f, " into (")?;
+			if let Some(n) = blocks.len().checked_sub(1) {
+				for x in blocks.iter().take(n) {
+					write!(f, "@{}, ", x.0)?;
+				}
+			}
+			if let Some(block) = blocks.last() {
+				write!(f, "@{}", block.0)?;
+			}
+			write!(f, ")")?;
+		}
+		Terminator::CaseNat { index, limit, body, body_args, exit, exit_arg } => {
+			write!(f, "test ")?;
+			print_value(f, index)?;
+			write!(f, " < ")?;
+			print_value(f, limit)?;
+			write!(f, " into (")?;
+			write!(f, "@{}(", body.0)?;
+			print_values(f, body_args)?;
+			write!(f, ")")?;
+			write!(f, ", ")?;
+			write!(f, "@{}(", exit.0)?;
+			print_value(f, exit_arg)?;
+			write!(f, ")")?;
+			write!(f, ")")?;
+		}
+		Terminator::Apply { procedure, captures, argument, later } => {
+			write!(f, "call ")?;
+			print_value(f, procedure)?;
+			write!(f, " capturing ")?;
+			print_value(f, captures)?;
+			write!(f, " with ")?;
+			print_value(f, argument)?;
+			write!(f, " returning @{}", later.0)?;
+		}
+	}
+	Ok(())
+}
+
+fn print_statement(f: &mut impl std::fmt::Write, statement: &Statement) -> std::fmt::Result {
+	match statement {
+		Statement::Assign(symbol, operation) => {
+			write!(f, "${} = ", symbol.0)?;
+			print_operation(f, operation)?;
+		}
+		Statement::Free(load) => {
+			write!(f, "free ")?;
+			print_load(f, load)?;
+		}
+	}
+	Ok(())
+}
+
+fn print_operation(f: &mut impl std::fmt::Write, operation: &Operation) -> std::fmt::Result {
+	match operation {
+		Operation::Id(value) => print_value(f, value)?,
+		Operation::Alloc(value) => {
+			write!(f, "alloc(")?;
+			print_value(f, value)?;
+			write!(f, ")")?;
+		}
+		Operation::Captures(values) => {
+			write!(f, "snap(")?;
+			print_values(f, values)?;
+			write!(f, ")")?;
+		}
+	}
+	Ok(())
+}
+
+fn print_values(f: &mut impl std::fmt::Write, values: &[Value]) -> std::fmt::Result {
+	if let Some(n) = values.len().checked_sub(1) {
+		for x in values.iter().take(n) {
+			print_value(f, x)?;
+			write!(f, ", ")?;
+		}
+	}
+	if let Some(value) = values.last() {
+		print_value(f, value)?;
+	}
+	Ok(())
+}
+
+fn print_value(f: &mut impl std::fmt::Write, value: &Value) -> std::fmt::Result {
+	match value {
+		Value::None => write!(f, "none")?,
+		Value::Num(n) => write!(f, "{n}")?,
+		Value::Add(a, b) => {
+			print_value(f, a)?;
+			write!(f, " + {b}")?;
+		}
+		Value::Enum(k, n) => write!(f, "{n}_{k}")?,
+		Value::Procedure(n) => write!(f, "$proc({n})")?,
+		Value::Load(load) => print_load(f, load)?,
+		Value::Function { procedure, captures } => {
+			write!(f, "fun(")?;
+			print_value(f, procedure)?;
+			write!(f, ", ")?;
+			print_value(f, captures)?;
+			write!(f, ")")?;
+		}
+		Value::Array(a) => {
+			write!(f, "[")?;
+			print_values(f, a)?;
+			write!(f, "]")?;
+		}
+		Value::Pair(a, b) => {
+			write!(f, "(")?;
+			print_value(f, a)?;
+			write!(f, ", ")?;
+			print_value(f, b)?;
+			write!(f, ")")?;
+		}
+		Value::Wrap(a) => {
+			write!(f, "wrap(")?;
+			print_value(f, a)?;
+			write!(f, ")")?;
+		}
+	}
+	Ok(())
+}
+
+fn print_load(f: &mut impl std::fmt::Write, load: &Load) -> std::fmt::Result {
+	match load.register {
+		Register::Outer(n) => write!(f, "$outer.{}", n.0)?,
+		Register::Parameter => write!(f, "$param")?,
+		Register::Local(n) => write!(f, "${}", n.0)?,
+	}
+	for projector in &load.projectors {
+		match projector {
+			Projector::Exp(n, _) => write!(f, ".[{n}]")?,
+			Projector::Procedure => write!(f, ".proc")?,
+			Projector::Captures => write!(f, ".snap")?,
+			Projector::Field(Field::Base, _) => write!(f, ".0")?,
+			Projector::Field(Field::Fiber, _) => write!(f, ".1")?,
+			Projector::Bx(_) => write!(f, ".box")?,
+			Projector::Wrap(_) => write!(f, ".wrap")?,
+		}
+	}
+	Ok(())
+}
