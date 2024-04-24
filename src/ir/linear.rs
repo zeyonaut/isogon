@@ -97,25 +97,15 @@ pub enum Terminator {
 		exit: BlockId,
 		exit_arg: Value,
 	},
-	Apply {
-		procedure: Value,
-		captures: Value,
-		argument: Value,
-		later: BlockId,
-	},
 }
 
 #[derive(Debug)]
 pub enum Statement {
-	Assign(Symbol, Operation),
+	Assign(Symbol, Value),
+	Alloc(Symbol, Value),
+	Captures(Symbol, Box<[Value]>),
 	Free(Load),
-}
-
-#[derive(Debug)]
-pub enum Operation {
-	Id(Value),
-	Alloc(Value),
-	Captures(Box<[Value]>),
+	Call { symbol: Symbol, procedure: Value, captures: Value, argument: Value },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -230,11 +220,11 @@ fn print_procedure(f: &mut impl std::fmt::Write, procedure: &Procedure) -> std::
 		// TODO: Maybe also print layouts?
 		if let Some(n) = block.parameters.len().checked_sub(1) {
 			for x in block.parameters.iter().take(n) {
-				write!(f, "{}, ", x.0 .0)?;
+				write!(f, "${}, ", x.0 .0)?;
 			}
 		}
 		if let Some(x) = block.parameters.last() {
-			write!(f, "{}", x.0 .0)?;
+			write!(f, "${}", x.0 .0)?;
 		}
 		writeln!(f, "):")?;
 
@@ -292,45 +282,37 @@ fn print_terminator(f: &mut impl std::fmt::Write, terminator: &Terminator) -> st
 			write!(f, ")")?;
 			write!(f, ")")?;
 		}
-		Terminator::Apply { procedure, captures, argument, later } => {
-			write!(f, "call ")?;
-			print_value(f, procedure)?;
-			write!(f, " capturing ")?;
-			print_value(f, captures)?;
-			write!(f, " with ")?;
-			print_value(f, argument)?;
-			write!(f, " returning @{}", later.0)?;
-		}
 	}
 	Ok(())
 }
 
 fn print_statement(f: &mut impl std::fmt::Write, statement: &Statement) -> std::fmt::Result {
 	match statement {
-		Statement::Assign(symbol, operation) => {
+		Statement::Assign(symbol, value) => {
 			write!(f, "${} = ", symbol.0)?;
-			print_operation(f, operation)?;
+			print_value(f, value)?;
+		}
+		Statement::Alloc(symbol, value) => {
+			write!(f, "${} = alloc(", symbol.0)?;
+			print_value(f, value)?;
+			write!(f, ")")?;
+		}
+		Statement::Captures(symbol, values) => {
+			write!(f, "${} = snap(", symbol.0)?;
+			print_values(f, values)?;
+			write!(f, ")")?;
 		}
 		Statement::Free(load) => {
 			write!(f, "free ")?;
 			print_load(f, load)?;
 		}
-	}
-	Ok(())
-}
-
-fn print_operation(f: &mut impl std::fmt::Write, operation: &Operation) -> std::fmt::Result {
-	match operation {
-		Operation::Id(value) => print_value(f, value)?,
-		Operation::Alloc(value) => {
-			write!(f, "alloc(")?;
-			print_value(f, value)?;
-			write!(f, ")")?;
-		}
-		Operation::Captures(values) => {
-			write!(f, "snap(")?;
-			print_values(f, values)?;
-			write!(f, ")")?;
+		Statement::Call { symbol, procedure, captures, argument } => {
+			write!(f, "${} = call ", symbol.0)?;
+			print_value(f, procedure)?;
+			write!(f, " capturing ")?;
+			print_value(f, captures)?;
+			write!(f, " with ")?;
+			print_value(f, argument)?;
 		}
 	}
 	Ok(())

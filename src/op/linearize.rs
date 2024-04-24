@@ -5,8 +5,8 @@ use crate::{
 	ir::{
 		flat::{self, Term, Variable},
 		linear::{
-			Block, Frame, Framed, Layout, Load, Operation, Procedure, Program, Projector, Prototype, Register,
-			Statement, Terminator, Value,
+			Block, Frame, Framed, Layout, Load, Procedure, Program, Projector, Prototype, Register, Statement,
+			Terminator, Value,
 		},
 	},
 };
@@ -207,23 +207,14 @@ impl ProcedureBuilder {
 				let (frame, captures) = self
 					.generate_many(frame, captures.iter().map(|c| Term::Variable(None, c.variable)))?
 					.unframe();
-				let captures = Register::Local(self.assign(&frame, Operation::Captures(captures)));
+				let captures = Register::Local(self.capture(&frame, captures));
 				frame.and(Value::function(Value::Procedure(*procedure_id), captures))
 			}
 			Term::Apply { callee, argument, result_repr } => {
 				let (frame, callee) = self.generate(frame, callee)?.unframe();
 				let (frame, argument) = self.generate(frame, argument)?.unframe();
-				let ([result], later) = self.block([result_repr.as_ref().map(Into::into)]);
-				self.terminate(
-					frame,
-					Terminator::Apply {
-						procedure: callee.project(Projector::Procedure),
-						captures: callee.project(Projector::Captures),
-						argument,
-						later: later.id(),
-					},
-				);
-				later.and(Register::Local(result).into())
+				let result = self.call(&frame, callee, argument, result_repr.as_ref().map(Into::into));
+				frame.and(Register::Local(result).into())
 			}
 
 			Term::Pair { basepoint, fiberpoint } => {
@@ -318,13 +309,12 @@ impl ProcedureBuilder {
 
 			Term::BxValue(term) => {
 				let (frame, inner) = self.generate(frame, term)?.unframe();
-				let inner = self.assign(&frame, Operation::Alloc(inner));
+				let inner = self.alloc(&frame, inner);
 				frame.and(Register::Local(inner).into())
 			}
 			Term::BxProject(term, repr) => {
 				let (frame, term) = self.generate(frame, term)?.unframe();
-				let inner =
-					self.assign(&frame, Operation::Id(term.project(Projector::Bx(repr.as_ref().map(Into::into)))));
+				let inner = self.assign(&frame, term.project(Projector::Bx(repr.as_ref().map(Into::into))));
 				let Value::Load(load) = term else { panic!() };
 				self.append(&frame, Statement::Free(load));
 				frame.and(Register::Local(inner).into())
@@ -349,21 +339,42 @@ impl ProcedureBuilder {
 		result
 	}
 
-	// Create a new register from an assignment and return its symbol.
-	fn assign(&mut self, frame: &Frame, operation: Operation) -> Symbol {
-		let repr = self.layout_of_operation(&operation);
+	fn call(&mut self, frame: &Frame, callee: Value, argument: Value, result_repr: Option<Layout>) -> Symbol {
 		let symbol = self.local_symbol_generator.generate();
-		self.register_context.local.insert(symbol, repr);
-		self.append(frame, Statement::Assign(symbol, operation));
+		self.register_context.local.insert(symbol, result_repr);
+		self.append(
+			frame,
+			Statement::Call {
+				symbol,
+				procedure: callee.project(Projector::Procedure),
+				captures: callee.project(Projector::Captures),
+				argument,
+			},
+		);
 		symbol
 	}
 
-	fn layout_of_operation(&self, operation: &Operation) -> Option<Layout> {
-		match operation {
-			Operation::Id(value) => self.layout_of_value(value),
-			Operation::Alloc(_) => Some(Layout::Ptr),
-			Operation::Captures(_) => Some(Layout::Ptr),
-		}
+	// Create a new register from an assignment and return its symbol.
+	fn assign(&mut self, frame: &Frame, value: Value) -> Symbol {
+		let repr = self.layout_of_value(&value);
+		let symbol = self.local_symbol_generator.generate();
+		self.register_context.local.insert(symbol, repr);
+		self.append(frame, Statement::Assign(symbol, value));
+		symbol
+	}
+
+	fn alloc(&mut self, frame: &Frame, value: Value) -> Symbol {
+		let symbol = self.local_symbol_generator.generate();
+		self.register_context.local.insert(symbol, Some(Layout::Ptr));
+		self.append(frame, Statement::Alloc(symbol, value));
+		symbol
+	}
+
+	fn capture(&mut self, frame: &Frame, values: Box<[Value]>) -> Symbol {
+		let symbol = self.local_symbol_generator.generate();
+		self.register_context.local.insert(symbol, Some(Layout::Ptr));
+		self.append(frame, Statement::Captures(symbol, values));
+		symbol
 	}
 
 	fn layout_of_value(&self, value: &Value) -> Option<Layout> {

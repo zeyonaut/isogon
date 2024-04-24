@@ -97,12 +97,13 @@ impl<'a, 'b> BlockBuilder<'a, 'b> {
 
 		for statement in &preblock.statements {
 			match statement {
-				linear::Statement::Assign(_symbol, operation) => match operation {
-					linear::Operation::Id(_) => todo!(),
-					linear::Operation::Alloc(_) => todo!(),
-					linear::Operation::Captures(_) => todo!(),
-				},
+				linear::Statement::Assign(_, _) => todo!(),
+				linear::Statement::Alloc(_, _) => todo!(),
+				linear::Statement::Captures(_, _) => todo!(),
 				linear::Statement::Free(_) => todo!(),
+				linear::Statement::Call { .. } => todo!(),
+				// TODO: Optimize to call directly when possible.
+				// self.function_builder.ins().call_indirect(SIG, callee, args)
 			}
 		}
 
@@ -125,10 +126,6 @@ impl<'a, 'b> BlockBuilder<'a, 'b> {
 			}
 			linear::Terminator::CaseNat { index, limit, body, body_args, exit, exit_arg } => {
 				// self.function_builder.ins().brif(c, block_then_label, block_then_args, block_else_label, block_else_args);
-			}
-			linear::Terminator::Apply { procedure, captures, argument, later } => {
-				// TODO: Optimize to call directly when possible.
-				// self.function_builder.ins().call_indirect(SIG, callee, args)
 			}
 		}
 	}
