@@ -721,7 +721,7 @@ impl Context {
 							};
 							let case = cases[case_position].1.clone();
 							new_cases.push(
-								self.amplify(if card <= 1 {Cost::Fin(1)} else {Cost::Inf}).verify_static(
+								self.amplify(if card <= 1 { Cost::Fin(1) } else { Cost::Inf }).verify_static(
 									case,
 									motive_value.evaluate_with([StaticValue::EnumValue(card, v)]),
 								)?,
@@ -1389,7 +1389,7 @@ impl Context {
 							let case = cases[case_position].1.clone();
 							new_cases.push(
 								self
-									.amplify(if card <= 1 {Cost::Fin(1)} else {Cost::Inf})
+									.amplify(if card <= 1 { Cost::Fin(1) } else { Cost::Inf })
 									.verify_dynamic(case, motive.evaluate_with([DynamicValue::EnumValue(card, v)]))?,
 							)
 						}
