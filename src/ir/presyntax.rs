@@ -40,7 +40,7 @@ pub enum Preterm<L, E> {
 
 	Sg { base: Box<E>, family: Binder<L, Box<E>> },
 	Pair { basepoint: Box<E>, fiberpoint: Box<E> },
-	SgLet { grade: usize, argument: Box<E>, tail: Binder<L, Box<E>, 2> },
+	SgLet { grade: u64, argument: Box<E>, tail: Binder<L, Box<E>, 2> },
 
 	Former(Former, Vec<E>),
 	Constructor(Constructor, Vec<E>),
@@ -82,7 +82,7 @@ pub enum Constructor {
 	CpyMax,
 
 	ReprAtom(Option<ReprAtom>),
-	ReprExp(usize),
+	ReprExp(u64),
 	ReprPair,
 	ReprMax,
 
@@ -96,7 +96,7 @@ pub enum Constructor {
 	Refl,
 
 	// Natural numbers.
-	Num(usize),
+	Num(u64),
 	Suc,
 
 	// Wrappers.

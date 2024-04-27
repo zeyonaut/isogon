@@ -1,0 +1,4 @@
+let @[2] x = @[2] (box true);
+let f : #1 -> Bool & Bool =
+	|e| e :: |_| Bool & Bool { 0_1 -> (x unbox, x unbox) };
+f 0_1

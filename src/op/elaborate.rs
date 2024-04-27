@@ -49,7 +49,7 @@ pub enum ElaborationErrorKind {
 	ExpectedStaticFoundDynamicVariable,
 	ExpectedDynamicFoundStaticVariable,
 	UsedNonCrispLockedVariable,
-	VariableHasUsesLeft(usize),
+	VariableHasUsesLeft(u64),
 	SynthesizedLambdaOrPair,
 	InvalidFormer,
 	InvalidConstructor,
@@ -164,7 +164,7 @@ impl<'c, T, const N: usize> ExtendedContext<'c, T, N> {
 	}
 
 	pub fn bind_static(mut self, is_crisp: bool, grade: Cost, copy: Cpy, ty: StaticValue) -> Self {
-		let grade = grade * (self.context.fragment as usize).into();
+		let grade = grade * (self.context.fragment as u64).into();
 		self.push(
 			ContextEntry::new(
 				is_crisp,
@@ -191,7 +191,7 @@ impl<'c, T, const N: usize> ExtendedContext<'c, T, N> {
 	}
 
 	pub fn bind_dynamic(mut self, is_crisp: bool, grade: Cost, kind: KindValue, ty: DynamicValue) -> Self {
-		let grade = grade * (self.context.fragment as usize).into();
+		let grade = grade * (self.context.fragment as u64).into();
 		self.push(
 			ContextEntry::new(
 				is_crisp,
@@ -225,7 +225,7 @@ impl<'c, T, const N: usize> ExtendedContext<'c, T, N> {
 		ty: StaticValue,
 		value: StaticValue,
 	) -> Self {
-		let grade = grade * (self.context.fragment as usize).into();
+		let grade = grade * (self.context.fragment as u64).into();
 		self.push(
 			ContextEntry::new(
 				is_crisp,
@@ -245,7 +245,7 @@ impl<'c, T, const N: usize> ExtendedContext<'c, T, N> {
 		ty: DynamicValue,
 		value: DynamicValue,
 	) -> Self {
-		let grade = grade * (self.context.fragment as usize).into();
+		let grade = grade * (self.context.fragment as u64).into();
 		self.push(
 			ContextEntry::new(
 				is_crisp,
@@ -721,7 +721,7 @@ impl Context {
 							};
 							let case = cases[case_position].1.clone();
 							new_cases.push(
-								self.amplify(Cost::Inf).verify_static(
+								self.amplify(if card <= 1 {Cost::Fin(1)} else {Cost::Inf}).verify_static(
 									case,
 									motive_value.evaluate_with([StaticValue::EnumValue(card, v)]),
 								)?,
@@ -1389,7 +1389,7 @@ impl Context {
 							let case = cases[case_position].1.clone();
 							new_cases.push(
 								self
-									.amplify(Cost::Inf)
+									.amplify(if card <= 1 {Cost::Fin(1)} else {Cost::Inf})
 									.verify_dynamic(case, motive.evaluate_with([DynamicValue::EnumValue(card, v)]))?,
 							)
 						}
@@ -1664,7 +1664,7 @@ impl Context {
 		PreLet { grade, ty, argument, tail }: PreLet,
 		tail_a: A,
 		elaborate_tail: impl FnOnce(&mut Context, Expression, A) -> Result<B, ElaborationError>,
-		produce_let: impl FnOnce(usize, DynamicTerm, KindTerm, DynamicTerm, Binder<Label, B>) -> B,
+		produce_let: impl FnOnce(u64, DynamicTerm, KindTerm, DynamicTerm, Binder<Label, B>) -> B,
 	) -> Result<B, ElaborationError> {
 		let grade = grade.unwrap_or_else(|| if tail.parameter().label.is_some() { 1 } else { 0 }.into());
 		let Cost::Fin(grade) = grade else {
@@ -1717,7 +1717,7 @@ impl Context {
 		PreExpLet { grade, grade_argument, argument, tail }: PreExpLet,
 		tail_a: A,
 		elaborate_tail: impl FnOnce(&mut Context, Expression, A) -> Result<B, ElaborationError>,
-		produce_let: impl FnOnce(usize, usize, DynamicTerm, KindTerm, Binder<Label, B>) -> B,
+		produce_let: impl FnOnce(u64, u64, DynamicTerm, KindTerm, Binder<Label, B>) -> B,
 	) -> Result<B, ElaborationError> {
 		let (Cost::Fin(grade), Cost::Fin(grade_argument)) = (grade, grade_argument) else {
 			return Err(ElaborationErrorKind::InvalidGrade.at(argument.range));
@@ -1745,7 +1745,7 @@ impl Context {
 		PreSgLet { grade, argument, tail }: PreSgLet,
 		tail_a: A,
 		elaborate_tail: impl FnOnce(&mut Context, Expression, A) -> Result<B, ElaborationError>,
-		produce_let: impl FnOnce(usize, StaticTerm, Binder<Label, B, 2>) -> B,
+		produce_let: impl FnOnce(u64, StaticTerm, Binder<Label, B, 2>) -> B,
 	) -> Result<B, ElaborationError> {
 		let argument_range = argument.range;
 		let (tm, ty, _) = self.amplify(grade).erase_if(grade == 0).synthesize_static(argument)?;
@@ -1771,7 +1771,7 @@ impl Context {
 		PreSgLet { grade, argument, tail }: PreSgLet,
 		tail_a: A,
 		elaborate_tail: impl FnOnce(&mut Context, Expression, A) -> Result<B, ElaborationError>,
-		produce_let: impl FnOnce(usize, [Box<KindTerm>; 2], DynamicTerm, Binder<Label, B, 2>) -> B,
+		produce_let: impl FnOnce(u64, [Box<KindTerm>; 2], DynamicTerm, Binder<Label, B, 2>) -> B,
 	) -> Result<B, ElaborationError> {
 		let argument_range = argument.range;
 		let (tm, ty, _) = self.amplify(grade).erase_if(grade == 0).synthesize_dynamic(argument)?;
@@ -1810,7 +1810,7 @@ struct PreExpLet {
 }
 
 struct PreSgLet {
-	grade: usize,
+	grade: u64,
 	argument: Expression,
 	tail: Binder<ParsedLabel, Box<Expression>, 2>,
 }

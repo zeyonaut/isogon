@@ -1,7 +1,7 @@
 use std::{collections::HashMap, iter::repeat};
 
 use crate::{
-	common::{ArraySize, Binder, Cpy, Field, Label, Symbol, SymbolGenerator},
+	common::{ArraySize, Binder, Cost, Cpy, Field, Label, Level, Symbol, SymbolGenerator},
 	ir::{
 		flat::{self, Term, Variable},
 		linear::{
@@ -13,7 +13,13 @@ use crate::{
 
 /// Converts a hoisted program into a control-flow graph representation.
 pub fn linearize(program: flat::Program) -> Program {
-	let entry = build_procedure(program.entry);
+	// FIXME: Pass an actual representation of the entry.
+	let entry = build_procedure(flat::Procedure {
+		captured_parameters: Vec::new(),
+		parameter: None,
+		body: program.entry,
+		result_repr: None,
+	});
 
 	let procedures = program
 		.procedures
@@ -23,13 +29,16 @@ pub fn linearize(program: flat::Program) -> Program {
 				Prototype {
 					outer: procedure
 						.captured_parameters
-						.into_iter()
+						.iter()
 						.map(|x| (x.name, x.repr.as_ref().map(Into::into)))
 						.collect(),
-					parameter: (procedure.parameter.name, procedure.parameter.repr.as_ref().map(Into::into)),
+					parameter: (
+						procedure.parameter.as_ref().unwrap().name,
+						procedure.parameter.as_ref().unwrap().repr.as_ref().map(Into::into),
+					),
 					result: procedure.result_repr.as_ref().map(Into::into),
 				},
-				build_procedure(procedure.body),
+				build_procedure(procedure),
 			)
 		})
 		.collect::<Vec<_>>();
@@ -39,7 +48,7 @@ pub fn linearize(program: flat::Program) -> Program {
 
 enum ValueProducer {
 	Value(Value),
-	Exp(usize, Option<Layout>, Value),
+	Exp(u64, Option<Layout>, Value),
 }
 
 impl ValueProducer {
@@ -58,15 +67,26 @@ impl ValueProducer {
 struct ProcedureBuilder {
 	register_context: RegisterContext,
 	local_symbol_generator: SymbolGenerator,
+	outer_to_producer: Vec<ValueProducer>,
 	level_to_producer: Vec<ValueProducer>,
 	blocks: Vec<Block>,
 }
 
-fn build_procedure(value: Term) -> Procedure {
+fn build_procedure(procedure: flat::Procedure) -> Procedure {
+	// TODO: While this doesn't affect linearization at the moment (due to the limited use of `assign`), this should ideally be given the layouts of the function parameters.
 	let mut builder = ProcedureBuilder::new(vec![], None);
+	for (i, captured_parameter) in procedure.captured_parameters.iter().enumerate() {
+		let layout = captured_parameter.repr.as_ref().map(Layout::from);
+		builder.register_context.outer.push(layout.clone());
+		builder.outer_to_producer.push(match captured_parameter.grade {
+			Cost::Fin(0) => unimplemented!(),
+			Cost::Fin(1) | Cost::Inf => ValueProducer::Value(Register::Outer(Level(i)).into()),
+			Cost::Fin(_) => ValueProducer::Exp(0, layout, Register::Outer(Level(i)).into()),
+		})
+	}
 
 	let ([], entry) = builder.block([]);
-	if let Some(result) = builder.generate(entry, &value) {
+	if let Some(result) = builder.generate(entry, &procedure.body) {
 		let (entry, operand) = result.unframe();
 		builder.terminate(entry, Terminator::Return(operand));
 	}
@@ -96,6 +116,7 @@ impl ProcedureBuilder {
 			register_context: RegisterContext { outer, parameter, local: HashMap::new() },
 			local_symbol_generator: SymbolGenerator::new(),
 			level_to_producer: vec![],
+			outer_to_producer: vec![],
 			blocks: Vec::new(),
 		}
 	}
@@ -159,7 +180,7 @@ impl ProcedureBuilder {
 			Term::Irrelevant => frame.and(Value::None),
 
 			Term::Variable(_name, variable) => frame.and(match variable {
-				Variable::Outer(level) => Register::Outer(*level).into(),
+				Variable::Outer(level) => self.outer_to_producer[level.0].next(),
 				Variable::Parameter => Register::Parameter.into(),
 				Variable::Local(level) => self.level_to_producer[level.0].next(),
 			}),
@@ -175,7 +196,8 @@ impl ProcedureBuilder {
 				},
 
 			Term::Repeat { grade, copy, term } => {
-				let (frame, many) = self.generate_many_ref(frame, repeat(term.as_ref()).take(*grade))?.unframe();
+				let (frame, many) =
+					self.generate_many_ref(frame, repeat(term.as_ref()).take(*grade as usize))?.unframe();
 				match copy {
 					Cpy::Tr =>
 						if many.len() == 0 {
@@ -204,8 +226,20 @@ impl ProcedureBuilder {
 				},
 
 			Term::Function { procedure_id, captures } => {
+				// FIXME: This should take copyability into account at the binding site, not just make up a copyability on the spot.
 				let (frame, captures) = self
-					.generate_many(frame, captures.iter().map(|c| Term::Variable(None, c.variable)))?
+					.generate_many(
+						frame,
+						captures.iter().map(|c| match c.cost {
+							Cost::Fin(0) => unimplemented!(),
+							Cost::Fin(1) | Cost::Inf => Term::Variable(c.name, c.variable),
+							Cost::Fin(n) => Term::Repeat {
+								grade: n,
+								copy: Cpy::Nt,
+								term: Term::Variable(c.name, c.variable).into(),
+							},
+						}),
+					)?
 					.unframe();
 				let captures = Register::Local(self.capture(&frame, captures));
 				frame.and(Value::function(Value::Procedure(*procedure_id), captures))
@@ -320,9 +354,8 @@ impl ProcedureBuilder {
 				frame.and(Register::Local(inner).into())
 			}
 
-			Term::WrapValue(term) => self.generate(frame, term)?.map(|x| Value::Wrap(x.into())),
-			Term::WrapProject(term, repr) =>
-				self.generate(frame, term)?.map(|x| x.project(Projector::Wrap(repr.as_ref().map(Into::into)))),
+			Term::WrapValue(term) => self.generate(frame, term)?,
+			Term::WrapProject(term, _) => self.generate(frame, term)?,
 		})
 	}
 
@@ -389,7 +422,8 @@ impl ProcedureBuilder {
 			Value::Array(values) => match values.len() {
 				0 => None,
 				1 => self.layout_of_value(values.first().unwrap()),
-				n => Some(Layout::Array(ArraySize(n), self.layout_of_value(values.first().unwrap())?.into())),
+				n =>
+					Some(Layout::Array(ArraySize(n as u64), self.layout_of_value(values.first().unwrap())?.into())),
 			},
 			Value::Pair(left, right) => {
 				let left = self.layout_of_value(left);
@@ -400,7 +434,6 @@ impl ProcedureBuilder {
 					(Some(left), Some(right)) => Some(Layout::Pair([left, right].into())),
 				}
 			}
-			Value::Wrap(value) => self.layout_of_value(value),
 		}
 	}
 
@@ -415,7 +448,6 @@ impl ProcedureBuilder {
 				Projector::Field(Field::Base, [base, _]) => base.clone(),
 				Projector::Field(Field::Fiber, [_, fiber]) => fiber.clone(),
 				Projector::Bx(layout) => layout.clone(),
-				Projector::Wrap(layout) => layout.clone(),
 			}
 		}
 	}

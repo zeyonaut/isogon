@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-	common::{Binder, Cost, Index, Label, Level, Repr, ReprAtom},
+	common::{Binder, Cost, Cpy, Index, Label, Level, Repr, ReprAtom, UniverseKind},
 	ir::{
 		flat::{Capture, Parameter, Procedure, Program, Substitute, Term, Variable},
 		syntax::DynamicTerm,
@@ -49,10 +49,10 @@ impl Flattener {
 			// Let-expressions.
 			DynamicTerm::Def { .. } => panic!("unstaged"),
 			DynamicTerm::Let { grade, ty: _, argument_kind, argument, tail } => {
-				let repr = argument_kind.clone().stage().repr;
+				let kind = argument_kind.clone().stage();
 				Term::Let {
 					grade: *grade,
-					argument_repr: repr.clone(),
+					argument_repr: kind.repr.clone(),
 					argument: if *grade == 0 {
 						Term::Irrelevant
 					} else {
@@ -62,7 +62,7 @@ impl Flattener {
 						argument
 					}
 					.into(),
-					tail: self.flatten_with(tail, [Cost::Fin(*grade)], [repr], occurrences),
+					tail: self.flatten_with(tail, [Cost::Fin(*grade)], [kind], occurrences),
 				}
 			}
 
@@ -95,7 +95,7 @@ impl Flattener {
 						argument
 					}
 					.into(),
-					tail: self.flatten_with(tail, [Cost::Fin(grade * grade_argument)], [kind.repr], occurrences),
+					tail: self.flatten_with(tail, [Cost::Fin(grade * grade_argument)], [kind], occurrences),
 				}
 			}
 			DynamicTerm::ExpProject(_) => panic!("irrelevant"),
@@ -104,7 +104,7 @@ impl Flattener {
 			DynamicTerm::Pi { .. } => panic!("irrelevant"),
 			DynamicTerm::Function { fragment, domain_kind, codomain_kind, body } => self.flatten_function(
 				(*fragment).into(),
-				domain_kind.clone().unwrap().stage().repr,
+				domain_kind.clone().unwrap().stage(),
 				body,
 				codomain_kind.clone().unwrap().stage().repr,
 				occurrences,
@@ -130,7 +130,7 @@ impl Flattener {
 				fiberpoint: self.flatten(fiberpoint, occurrences).into(),
 			},
 			DynamicTerm::SgLet { grade, argument, kinds, tail } => {
-				let reprs = kinds.each_ref().map(|kind| kind.clone().stage().repr);
+				let kinds = kinds.each_ref().map(|kind| kind.clone().stage());
 				Term::SgLet {
 					grade: *grade,
 					argument: if *grade == 0 {
@@ -142,8 +142,8 @@ impl Flattener {
 						argument
 					}
 					.into(),
-					bound_reprs: reprs.clone(),
-					tail: self.flatten_with(tail, [Cost::Fin(*grade); 2], reprs, occurrences),
+					bound_reprs: kinds.each_ref().map(|kind| kind.repr.clone()),
+					tail: self.flatten_with(tail, [Cost::Fin(*grade); 2], kinds, occurrences),
 				}
 			}
 			DynamicTerm::SgField { .. } => panic!("irrelevant"),
@@ -174,7 +174,7 @@ impl Flattener {
 					let result = self.flatten_with(
 						case_suc,
 						[Cost::Inf, 1.into()],
-						[Some(Repr::Atom(ReprAtom::Nat)), motive_kind.clone().unwrap().stage().repr],
+						[UniverseKind::NAT, motive_kind.clone().unwrap().stage()],
 						occurrences,
 					);
 					self.amplifiers.pop();
@@ -199,7 +199,7 @@ impl Flattener {
 	fn flatten_function(
 		&mut self,
 		grade: Cost,
-		repr: Option<Repr>,
+		domain_kind: UniverseKind,
 		body: &Binder<Label, Box<DynamicTerm>>,
 		result_repr: Option<Repr>,
 		occurrences: &mut [Cost],
@@ -208,7 +208,7 @@ impl Flattener {
 
 		// Find free occurrents in the function body.
 		let mut body_occurrences = vec![Cost::Fin(0); context_len.0];
-		let mut body = self.flatten_with(body, [grade], [repr.clone()], &mut body_occurrences);
+		let mut body = self.flatten_with(body, [grade], [domain_kind.clone()], &mut body_occurrences);
 
 		// Update the external free occurrence set.
 		for (outer, inner) in occurrences.iter_mut().zip(&mut body_occurrences) {
@@ -247,7 +247,7 @@ impl Flattener {
 
 		let procedure = Procedure {
 			captured_parameters,
-			parameter: Parameter { name: parameter_name, grade, repr },
+			parameter: Some(Parameter { name: parameter_name, grade, repr: domain_kind.repr }),
 			body: *body,
 			result_repr,
 		};
@@ -262,17 +262,17 @@ impl Flattener {
 		&mut self,
 		binder: &Binder<Label, Box<DynamicTerm>, N>,
 		grades: [Cost; N],
-		reprs: [Option<Repr>; N],
+		kinds: [UniverseKind; N],
 		occurrences: &mut Vec<Cost>,
 	) -> Binder<Label, Box<Term>, N> {
 		let level = self.context.len();
-		self.context.extend(
-			binder
-				.parameters
-				.into_iter()
-				.zip(grades.into_iter().zip(reprs))
-				.map(|(name, (grade, repr))| Parameter { name, grade, repr }),
-		);
+		self.context.extend(binder.parameters.into_iter().zip(grades.into_iter().zip(kinds)).map(
+			|(name, (grade, kind))| Parameter {
+				name,
+				grade: if kind.copy == Cpy::Tr { Cost::Inf } else { grade },
+				repr: kind.repr,
+			},
+		));
 		let result = binder.map_ref(|body| self.flatten(body, occurrences));
 		self.context.truncate(level);
 		result

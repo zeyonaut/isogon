@@ -73,7 +73,7 @@ pub enum StaticTerm {
 		fiberpoint: Box<Self>,
 	},
 	SgLet {
-		grade: usize,
+		grade: u64,
 		argument: Box<Self>,
 		tail: Binder<Label, Box<Self>, 2>,
 	},
@@ -90,7 +90,7 @@ pub enum StaticTerm {
 
 	// Natural numbers.
 	Nat,
-	Num(usize),
+	Num(u64),
 	Suc(Box<Self>),
 	CaseNat {
 		scrutinee: Box<Self>,
@@ -113,7 +113,7 @@ pub enum DynamicTerm {
 		tail: Binder<Label, Box<Self>>,
 	},
 	Let {
-		grade: usize,
+		grade: u64,
 		ty: Box<Self>,
 		argument_kind: Box<KindTerm>,
 		argument: Box<Self>,
@@ -129,15 +129,15 @@ pub enum DynamicTerm {
 	Splice(Box<StaticTerm>),
 
 	// Repeated programs.
-	Exp(usize, Box<KindTerm>, Box<Self>),
+	Exp(u64, Box<KindTerm>, Box<Self>),
 	Repeat {
-		grade: usize,
+		grade: u64,
 		kind: Option<Box<KindTerm>>,
 		term: Box<Self>,
 	},
 	ExpLet {
-		grade: usize,
-		grade_argument: usize,
+		grade: u64,
+		grade_argument: u64,
 		argument: Box<Self>,
 		kind: Box<KindTerm>,
 		tail: Binder<Label, Box<Self>>,
@@ -177,7 +177,7 @@ pub enum DynamicTerm {
 		fiberpoint: Box<Self>,
 	},
 	SgLet {
-		grade: usize,
+		grade: u64,
 		argument: Box<Self>,
 		kinds: [Box<KindTerm>; 2],
 		tail: Binder<Label, Box<Self>, 2>,
@@ -213,7 +213,7 @@ pub enum DynamicTerm {
 
 	// Natural numbers.
 	Nat,
-	Num(usize),
+	Num(u64),
 	Suc(Box<Self>),
 	CaseNat {
 		scrutinee: Box<Self>,

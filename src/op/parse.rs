@@ -33,6 +33,12 @@ impl<'s> Parser<'s> {
 		let span = &self.source[range.0..range.1];
 		span.parse::<usize>().ok()
 	}
+
+	fn number64(&self, token_index: usize) -> Option<u64> {
+		let range = self.ranges[token_index];
+		let span = &self.source[range.0..range.1];
+		span.parse::<u64>().ok()
+	}
 }
 
 peg::parser! {
@@ -45,6 +51,9 @@ peg::parser! {
 		rule number() -> usize
 			= pos:position!() [Token::Number] {parser.number(pos).unwrap()}
 
+		rule number64() -> u64
+		= pos:position!() [Token::Number] {parser.number64(pos).unwrap()}
+
 		rule parameter() -> ParsedLabel
 			= locus:position!() name:identifier() {ParsedLabel { locus, label: Some(name) }}
 
@@ -52,10 +61,10 @@ peg::parser! {
 			= locus:position!() label:(name:identifier() {Some(name)} / [Token::LowDash] {None}) {ParsedLabel { locus, label }}
 
 		rule cost_annotation() -> Cost
-			= [Token::SquareL] _ cost:([Token::Ast] {Cost::Inf} / number:number() {Cost::Fin(number)}) _ [Token::SquareR] {cost}
+			= [Token::SquareL] _ cost:([Token::Ast] {Cost::Inf} / number:number64() {Cost::Fin(number)}) _ [Token::SquareR] {cost}
 
-		rule finite_grade_annotation() -> usize
-			= [Token::SquareL] _ number:number() _ [Token::SquareR] {number}
+		rule finite_grade_annotation() -> u64
+			= [Token::SquareL] _ number:number64() _ [Token::SquareR] {number}
 
 		rule former() -> Former
 			= [Token::Tick] {Former::Lift}
@@ -96,7 +105,7 @@ peg::parser! {
 			// Paths.
 			/ [Token::Keyword(Keyword::Refl)] {Constructor::Refl}
 			// Natural numbers.
-			/ number:number() {Constructor::Num(number)}
+			/ number:number64() {Constructor::Num(number)}
 			/ [Token::Keyword(Keyword::Suc)] {Constructor::Suc}
 			// Wrappers.
 			/ [Token::Keyword(Keyword::BxValue)] {Constructor::Bx}

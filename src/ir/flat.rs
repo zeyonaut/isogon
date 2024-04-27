@@ -12,7 +12,7 @@ pub enum Term {
 
 	// Let-expressions.
 	Let {
-		grade: usize,
+		grade: u64,
 		argument_repr: Option<Repr>,
 		argument: Box<Self>,
 		tail: Binder<Label, Box<Self>>,
@@ -20,13 +20,13 @@ pub enum Term {
 
 	// Repeated programs.
 	Repeat {
-		grade: usize,
+		grade: u64,
 		copy: Cpy,
 		term: Box<Self>,
 	},
 	ExpLet {
-		grade: usize,
-		grade_argument: usize,
+		grade: u64,
+		grade_argument: u64,
 		copy: Cpy,
 		repr: Option<Repr>,
 		argument: Box<Self>,
@@ -50,7 +50,7 @@ pub enum Term {
 		fiberpoint: Box<Self>,
 	},
 	SgLet {
-		grade: usize,
+		grade: u64,
 		argument: Box<Self>,
 		bound_reprs: [Option<Repr>; 2],
 		tail: Binder<Label, Box<Self>, 2>,
@@ -65,7 +65,7 @@ pub enum Term {
 	},
 
 	// Natural numbers.
-	Num(usize),
+	Num(u64),
 	Suc(Box<Self>),
 	CaseNat {
 		scrutinee: Box<Self>,
@@ -106,7 +106,7 @@ pub struct Parameter {
 #[derive(Debug)]
 pub struct Procedure {
 	pub captured_parameters: Vec<Parameter>,
-	pub parameter: Parameter,
+	pub parameter: Option<Parameter>,
 	pub body: Term,
 	pub result_repr: Option<Repr>,
 }

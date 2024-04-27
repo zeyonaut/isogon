@@ -178,7 +178,6 @@ impl<'a> Executor<'a> {
 			},
 			Value::Array(inner) => Data::Array(inner.iter().map(|x| self.compute(x)).collect()),
 			Value::Pair(left, right) => Data::Pair(self.compute(left).into(), self.compute(right).into()),
-			Value::Wrap(inner) => Data::Wrap(self.compute(inner).into()),
 		}
 	}
 
@@ -198,7 +197,7 @@ impl<'a> Executor<'a> {
 			match projector {
 				Projector::Exp(i, _) => {
 					let Data::Array(v) = &data else { panic!() };
-					data = v[*i].clone();
+					data = v[*i as usize].clone();
 				}
 				Projector::Procedure => {
 					let Data::Function { procedure, captures: _ } = &data else { panic!() };
@@ -219,10 +218,6 @@ impl<'a> Executor<'a> {
 					let Data::Heap(ptr) = &data else { panic!() };
 					data = self.heap[ptr].clone()
 				}
-				Projector::Wrap(_) => {
-					let Data::Wrap(inner) = &data else { panic!() };
-					data = *inner.clone()
-				}
 			}
 		}
 		data
@@ -233,12 +228,11 @@ impl<'a> Executor<'a> {
 pub enum Data {
 	None,
 	Heap(Symbol),
-	Num(usize),
+	Num(u64),
 	Enum(u16, u8),
 	Procedure(usize),
 	Function { procedure: Box<Self>, captures: Box<Self> },
 	Captures(Box<[Self]>),
 	Array(Box<[Self]>),
 	Pair(Box<Self>, Box<Self>),
-	Wrap(Box<Self>),
 }

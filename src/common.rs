@@ -147,7 +147,7 @@ pub enum ReprAtom {
 
 // A number greater than one.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
-pub struct ArraySize(pub usize);
+pub struct ArraySize(pub u64);
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
 pub enum Repr {
@@ -162,9 +162,13 @@ pub struct UniverseKind {
 	pub repr: Option<Repr>,
 }
 
+impl UniverseKind {
+	pub const NAT: Self = Self { copy: Cpy::Tr, repr: Some(Repr::Atom(ReprAtom::Nat)) };
+}
+
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub enum Cost {
-	Fin(usize),
+	Fin(u64),
 	Inf,
 }
 
@@ -195,8 +199,8 @@ impl<T: Into<Cost>> AddAssign<T> for Cost {
 	}
 }
 
-impl From<usize> for Cost {
-	fn from(value: usize) -> Self { Self::Fin(value) }
+impl From<u64> for Cost {
+	fn from(value: u64) -> Self { Self::Fin(value) }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

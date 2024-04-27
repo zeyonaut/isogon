@@ -66,7 +66,7 @@ pub enum StaticValue {
 
 	// Natural numbers.
 	Nat,
-	Num(usize),
+	Num(u64),
 }
 
 #[derive(Clone, Debug)]
@@ -111,8 +111,8 @@ pub enum DynamicValue {
 	},
 
 	// Repeated programs.
-	Exp(usize, Rc<KindValue>, Rc<Self>),
-	Repeat(usize, Rc<Self>),
+	Exp(u64, Rc<KindValue>, Rc<Self>),
+	Repeat(u64, Rc<Self>),
 
 	// Dependent functions.
 	IndexedProduct {
@@ -151,7 +151,7 @@ pub enum DynamicValue {
 
 	// Natural numbers.
 	Nat,
-	Num(usize),
+	Num(u64),
 
 	// Wrappers.
 	Bx {
@@ -427,7 +427,7 @@ impl KindValue {
 
 	pub fn wrap(self) -> Self { Self { copy: Cpy::Nt.into(), repr: self.repr } }
 
-	pub fn exp(self, grade: usize) -> Self {
+	pub fn exp(self, grade: u64) -> Self {
 		Self {
 			repr: match grade {
 				0 => StaticValue::ReprNone,

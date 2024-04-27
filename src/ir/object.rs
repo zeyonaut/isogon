@@ -26,7 +26,7 @@ pub enum StaticValue {
 	EnumValue(u8),
 
 	// Natural numbers.
-	NatValue(usize),
+	NatValue(u64),
 }
 
 impl Debug for StaticValue {
@@ -78,7 +78,7 @@ pub enum DynamicValue {
 
 	// Let-expressions.
 	Let {
-		grade: usize,
+		grade: u64,
 		ty_kind: UniverseKind,
 		ty: Rc<Self>,
 		argument: Rc<Self>,
@@ -89,15 +89,15 @@ pub enum DynamicValue {
 	Universe(UniverseKind),
 
 	// Repeated programs.
-	Exp(usize, UniverseKind, Rc<Self>),
+	Exp(u64, UniverseKind, Rc<Self>),
 	Repeat {
-		grade: usize,
+		grade: u64,
 		kind: Option<UniverseKind>,
 		term: Rc<Self>,
 	},
 	ExpLet {
-		grade: usize,
-		grade_argument: usize,
+		grade: u64,
+		grade_argument: u64,
 		argument: Rc<Self>,
 		kind: UniverseKind,
 		tail: Closure<Environment, DynamicTerm>,
@@ -137,7 +137,7 @@ pub enum DynamicValue {
 		fiberpoint: Rc<Self>,
 	},
 	SgLet {
-		grade: usize,
+		grade: u64,
 		argument: Box<Self>,
 		kinds: [UniverseKind; 2],
 		tail: Closure<Environment, DynamicTerm, 2>,
@@ -170,7 +170,7 @@ pub enum DynamicValue {
 
 	// Natural numbers.
 	Nat,
-	Num(usize),
+	Num(u64),
 	Suc(Rc<Self>),
 	CaseNat {
 		scrutinee: Rc<Self>,

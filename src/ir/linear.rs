@@ -111,27 +111,25 @@ pub enum Statement {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
 	None,
-	Num(usize),
-	Add(Box<Self>, usize),
+	Num(u64),
+	Add(Box<Self>, u64),
 	Enum(u16, u8),
 	Procedure(usize),
 	Load(Load),
 	Function { procedure: Box<Self>, captures: Box<Self> },
 	Array(Box<[Self]>),
 	Pair(Box<Self>, Box<Self>),
-	Wrap(Box<Self>),
 }
 
 impl Value {
 	pub fn project(&self, projector: Projector) -> Self {
 		match (&self, projector) {
 			(Self::Load(load), projector) => load.project(projector).into(),
-			(Self::Array(array), Projector::Exp(index, _)) => array[index].clone(),
+			(Self::Array(array), Projector::Exp(index, _)) => array[index as usize].clone(),
 			(Self::Function { procedure, captures: _ }, Projector::Procedure) => procedure.as_ref().clone(),
 			(Self::Function { procedure: _, captures }, Projector::Captures) => captures.as_ref().clone(),
 			(Self::Pair(basept, _), Projector::Field(Field::Base, _)) => basept.as_ref().clone(),
 			(Self::Pair(_, fiberpt), Projector::Field(Field::Fiber, _)) => fiberpt.as_ref().clone(),
-			(Self::Wrap(inner), Projector::Wrap(_)) => inner.as_ref().clone(),
 			_ => unimplemented!(),
 		}
 	}
@@ -183,12 +181,11 @@ impl From<Register> for Load {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Projector {
-	Exp(usize, Option<Layout>),
+	Exp(u64, Option<Layout>),
 	Procedure,
 	Captures,
 	Field(Field, [Option<Layout>; 2]),
 	Bx(Option<Layout>),
-	Wrap(Option<Layout>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -361,11 +358,6 @@ fn print_value(f: &mut impl std::fmt::Write, value: &Value) -> std::fmt::Result 
 			print_value(f, b)?;
 			write!(f, ")")?;
 		}
-		Value::Wrap(a) => {
-			write!(f, "wrap(")?;
-			print_value(f, a)?;
-			write!(f, ")")?;
-		}
 	}
 	Ok(())
 }
@@ -384,7 +376,6 @@ fn print_load(f: &mut impl std::fmt::Write, load: &Load) -> std::fmt::Result {
 			Projector::Field(Field::Base, _) => write!(f, ".0")?,
 			Projector::Field(Field::Fiber, _) => write!(f, ".1")?,
 			Projector::Bx(_) => write!(f, ".box")?,
-			Projector::Wrap(_) => write!(f, ".wrap")?,
 		}
 	}
 	Ok(())
