@@ -86,7 +86,7 @@ impl<'a> Executor<'a> {
 							self.environment.locals.insert(*symbol, Data::Heap(pointer));
 						},
 					Statement::Free(load) => self.free(self.load(load)),
-					Statement::Call { symbol, procedure, captures, argument } => {
+					Statement::Call { symbol, result_repr: _, procedure, captures, argument } => {
 						let Data::Procedure(id) = self.compute(procedure) else { panic!() };
 						let captures = self.compute(captures);
 						let argument = self.compute(argument);
@@ -203,7 +203,7 @@ impl<'a> Executor<'a> {
 					let Data::Function { procedure, captures: _ } = &data else { panic!() };
 					data = *procedure.clone();
 				}
-				Projector::Captures => {
+				Projector::Environment => {
 					let Data::Function { procedure: _, captures } = &data else { panic!() };
 					data = *captures.clone();
 				}

@@ -4,11 +4,12 @@ use cranelift::{
 	codegen::{
 		ir::{
 			types::{I16, I32, I64, I8},
-			AbiParam, Block, BlockCall, FuncRef, Function, InstBuilder, InstBuilderBase as _, JumpTableData,
-			MemFlags, Signature, StackSlot, StackSlotData, StackSlotKind, TrapCode, Type, UserExternalName,
-			UserFuncName, Value, ValueListPool,
+			AbiParam, Block, BlockCall, ExtFuncData, ExternalName, FuncRef, Function, InstBuilder,
+			InstBuilderBase as _, JumpTableData, MemFlags, Signature, StackSlot, StackSlotData, StackSlotKind,
+			TrapCode, Type, UserExternalName, UserFuncName, Value,
 		},
 		isa::{CallConv, TargetFrontendConfig},
+		settings, verifier,
 	},
 	frontend::{FunctionBuilder, FunctionBuilderContext},
 };
@@ -18,8 +19,32 @@ use crate::{
 	ir::linear,
 };
 
-pub fn emit_cranelift(_program: &linear::Program) {
-	todo!();
+pub fn emit_cranelift(program: &linear::Program) -> EmittedProgram {
+	let flags = settings::Flags::new(settings::builder());
+	let entry = Emitter::build(
+		MAIN_NAME,
+		&linear::Prototype { outer: Vec::new(), parameter: (None, None), result: program.repr.clone() },
+		&program.entry,
+		&program.procedures,
+	);
+	verifier::verify_function(&entry, &flags).unwrap();
+	let mut functions = Vec::new();
+	for (i, (prototype, procedure)) in program.procedures.iter().enumerate() {
+		let function = Emitter::build(
+			UserExternalName { namespace: USER_NAMESPACE, index: i as u32 },
+			prototype,
+			procedure,
+			&program.procedures,
+		);
+		verifier::verify_function(&function, &flags).unwrap();
+		functions.push(function);
+	}
+	EmittedProgram { entry, functions }
+}
+
+pub struct EmittedProgram {
+	pub entry: Function,
+	pub functions: Vec<Function>,
 }
 
 const MAIN_NAME: UserExternalName = UserExternalName { namespace: 0, index: 0 };
@@ -33,35 +58,12 @@ const OVERSIZED_TYPE: Type = POINTER_TYPE;
 
 const CALL_CONV: CallConv = CallConv::WindowsFastcall;
 
-fn emit_function(
-	name: UserExternalName,
-	prototype: &linear::Prototype,
-	procedure: &linear::Procedure,
-) -> Function {
-	let (signature, signature_flags) = emit_signature(prototype);
-	let mut function = Function::with_name_signature(UserFuncName::User(name), signature);
-	let mut ctx = FunctionBuilderContext::new();
-	let mut function_builder = FunctionBuilder::new(&mut function, &mut ctx);
-	let blocks = (0..procedure.blocks.len()).map(|_| function_builder.create_block()).collect::<Box<_>>();
-	let entry = *(blocks.first().unwrap());
-	function_builder.append_block_params_for_function_params(entry);
-	let mut emitter = Emitter::new(&mut function_builder, signature_flags, entry);
-	for (block, preblock) in blocks.iter().copied().zip(&procedure.blocks) {
-		emitter.process_parameters(block, preblock);
-	}
-	for (block, preblock) in blocks.iter().copied().zip(&procedure.blocks) {
-		emitter.build(block, preblock);
-	}
-	function_builder.seal_all_blocks();
-	function_builder.finalize();
-	function
-}
-
 struct Emitter<'a, 'b> {
 	builder: &'a mut FunctionBuilder<'b>,
 	parameter: Option<Predata>,
-	snapshot: Option<Predata>,
-	outer: Vec<Option<Predata>>,
+	environment: Option<Predata>,
+	environment_offset_layouts: Vec<Option<(i32, DataLayout)>>,
+	blocks_to_parameter_slots: Vec<Vec<Option<StackSlot>>>,
 	locals: HashMap<Symbol, Option<Predata>>,
 	result: Option<ResultKind>,
 	func_refs: Vec<FuncRef>,
@@ -77,45 +79,345 @@ enum ResultKind {
 }
 
 impl<'a, 'b> Emitter<'a, 'b> {
-	fn new(builder: &'a mut FunctionBuilder<'b>, flags: SignatureFlags, entry: Block) -> Self {
-		let parameters = builder.block_params(entry);
-		Self {
-			parameter: todo!(), // (!flags.is_parameter_erased).then(|| parameters[0]),
-			snapshot: todo!(),
-			outer: todo!(), // (!flags.is_snapshot_erased).then(|| parameters[!flags.is_parameter_erased as usize]),
-			locals: HashMap::new(),
-			result: todo!(),
-			builder,
-			func_refs: Vec::new(),
-			blocks: todo!(),
-			func_ref_free: todo!(),
-			func_ref_malloc: todo!(),
+	fn build(
+		name: UserExternalName,
+		prototype: &linear::Prototype,
+		procedure: &linear::Procedure,
+		procedures: &[(linear::Prototype, linear::Procedure)],
+	) -> Function {
+		// TODO: Reorganize.
+		let (signature, signature_flags) = emit_signature(prototype);
+		let mut function = Function::with_name_signature(UserFuncName::User(name), signature);
+		let free_name = function.declare_imported_user_function(FREE_NAME);
+		let malloc_name = function.declare_imported_user_function(MALLOC_NAME);
+
+		let mut procedure_names = Vec::new();
+		for i in 0..procedures.len() {
+			procedure_names.push(
+				function.declare_imported_user_function(UserExternalName {
+					namespace: USER_NAMESPACE,
+					index: i as u32,
+				}),
+			)
 		}
-	}
+		// TODO: Declare other procedures here.
 
-	fn process_parameters(&mut self, block: Block, preblock: &linear::Block) {
-		self.builder.switch_to_block(block);
+		let mut ctx = FunctionBuilderContext::new();
+		let mut builder = FunctionBuilder::new(&mut function, &mut ctx);
+		let blocks = (0..procedure.blocks.len()).map(|_| builder.create_block()).collect::<Vec<_>>();
+		let entry = *(blocks.first().unwrap());
+		builder.append_block_params_for_function_params(entry);
 
-		for (symbol, layout) in preblock.parameters.iter() {
-			let emitted_register = if let Some(layout) = layout {
-				let layout = DataLayout::from(layout);
-				if let Some(ty) = layout.ty() {
-					self.builder.append_block_param(block, ty);
-					Some(Predata::Direct(*self.builder.block_params(block).last().unwrap(), layout))
-				} else {
-					let slot = self.create_slot(layout);
-					Some(Predata::StackSlot(slot, 0, layout))
+		let mut emitter = {
+			let mut free_signature = Signature::new(CALL_CONV);
+			free_signature.params.push(AbiParam::new(I64));
+			let free_sigref = builder.import_signature(free_signature);
+			let func_ref_free = builder.import_function(ExtFuncData {
+				name: ExternalName::user(free_name),
+				signature: free_sigref,
+				colocated: false,
+			});
+
+			let mut malloc_signature = Signature::new(CALL_CONV);
+			malloc_signature.params.push(AbiParam::new(I64));
+			malloc_signature.returns.push(AbiParam::new(I64));
+			let malloc_sigref = builder.import_signature(malloc_signature);
+			let func_ref_malloc = builder.import_function(ExtFuncData {
+				name: ExternalName::user(malloc_name),
+				signature: malloc_sigref,
+				colocated: false,
+			});
+
+			let mut func_refs = Vec::new();
+			for (procedure_name, (prototype, _)) in procedure_names.iter().zip(procedures) {
+				let (signature, _) = emit_signature(prototype);
+				let sigref = builder.import_signature(signature);
+				func_refs.push(builder.import_function(ExtFuncData {
+					name: ExternalName::user(*procedure_name),
+					signature: sigref,
+					colocated: true,
+				}));
+			}
+
+			let parameters = builder.block_params(entry);
+			let environment =
+				(!signature_flags.is_environment_erased).then(|| Predata::Direct(parameters[0], DataLayout::I64));
+			let mut environment_offset_layouts = Vec::new();
+			{
+				let mut environment_layout = DataLayout::I0;
+				for (_, layout) in &prototype.outer {
+					environment_offset_layouts.push(layout.as_ref().map(|layout| {
+						let layout = DataLayout::from(layout);
+						let offset = environment_layout.next_offset(layout);
+						let result = (offset as i32, layout);
+						environment_layout = environment_layout.pair(layout);
+						result
+					}))
 				}
-			} else {
-				None
-			};
-			self.locals.insert(*symbol, emitted_register);
+			}
+
+			let parameter = (!signature_flags.is_parameter_erased).then(|| {
+				if signature_flags.is_parameter_oversized {
+					Predata::Indirect(parameters[1], 0, prototype.parameter.1.as_ref().unwrap().into())
+				} else {
+					Predata::Direct(parameters[1], prototype.parameter.1.as_ref().unwrap().into())
+				}
+			});
+			let result = (!signature_flags.is_result_erased).then(|| {
+				if signature_flags.is_result_oversized {
+					ResultKind::Indirect(parameters[1 + (!signature_flags.is_parameter_erased as usize)])
+				} else {
+					ResultKind::Direct
+				}
+			});
+			Emitter {
+				builder: &mut builder,
+				environment,
+				environment_offset_layouts,
+				parameter,
+				locals: HashMap::new(),
+				result,
+				blocks,
+				blocks_to_parameter_slots: Vec::new(),
+				func_ref_free,
+				func_ref_malloc,
+				func_refs,
+			}
+		};
+
+		emitter.preprocess_blocks(&procedure.blocks);
+		emitter.build_blocks(&procedure.blocks);
+
+		builder.seal_all_blocks();
+		builder.finalize();
+		function
+	}
+
+	fn preprocess_blocks(&mut self, preblocks: &[linear::Block]) {
+		for (block, preblock) in self.blocks.clone().into_iter().zip(preblocks) {
+			self.builder.switch_to_block(block);
+			let mut parameter_slots = Vec::new();
+			for (symbol, layout) in preblock.parameters.iter() {
+				let emitted_register = if let Some(layout) = layout {
+					let layout = DataLayout::from(layout);
+					if let Some(ty) = layout.ty() {
+						self.builder.append_block_param(block, ty);
+						parameter_slots.push(None);
+						Some(Predata::Direct(*self.builder.block_params(block).last().unwrap(), layout))
+					} else {
+						let slot = self.create_slot(layout);
+						parameter_slots.push(Some(slot));
+						Some(Predata::StackSlot(slot, 0, layout))
+					}
+				} else {
+					parameter_slots.push(None);
+					None
+				};
+				self.locals.insert(*symbol, emitted_register);
+			}
+			self.blocks_to_parameter_slots.push(parameter_slots);
 		}
 	}
 
-	fn assign(&mut self, symbol: Symbol, predata: Option<Predata>) {
-		todo!();
+	fn build_blocks(&mut self, preblocks: &[linear::Block]) {
+		for (block, preblock) in self.blocks.clone().into_iter().zip(preblocks) {
+			self.builder.switch_to_block(block);
+			for statement in &preblock.statements {
+				self.emit_statement(statement);
+			}
+			self.emit_terminator(preblock.terminator.as_ref().unwrap());
+		}
 	}
+
+	fn emit_statement(&mut self, statement: &linear::Statement) {
+		match statement {
+			linear::Statement::Assign(symbol, value) => {
+				let predata = self.predata(value);
+				self.assign(*symbol, predata);
+			}
+			linear::Statement::Alloc(symbol, value) => {
+				let predata = self.predata(value);
+				let pointer = predata.map(|predata| {
+					let size = self.builder.ins().iconst(I64, predata.layout().size as i64);
+					let malloc_inst = self.builder.ins().call(self.func_ref_malloc, &[size]);
+					let results = self.builder.inst_results(malloc_inst);
+					assert_eq!(results.len(), 1);
+					let pointer = results[0];
+					self.store(pointer, predata);
+					Predata::Direct(pointer, DataLayout::I64)
+				});
+				self.assign(*symbol, pointer)
+			}
+			linear::Statement::Captures(symbol, values) => {
+				let predatas = values.iter().map(|value| self.predata(value)).collect::<Vec<_>>();
+				let mut layout = DataLayout::I0;
+				let mut offsets = Vec::new();
+				for predata in &predatas {
+					if let Some(predata) = predata.as_ref() {
+						offsets.push(Some(layout.next_offset(predata.layout())));
+						layout = layout.pair(predata.layout());
+					} else {
+						offsets.push(None);
+					}
+				}
+				let pointer = if layout.size == 0 {
+					None
+				} else {
+					let size = self.builder.ins().iconst(I64, layout.size as i64);
+					let malloc_inst = self.builder.ins().call(self.func_ref_malloc, &[size]);
+					let results = self.builder.inst_results(malloc_inst);
+					assert_eq!(results.len(), 1);
+					let pointer = results[0];
+					for (i, predata) in predatas.into_iter().enumerate() {
+						if let Some(predata) = predata {
+							let pointer = if i == 0 {
+								pointer
+							} else {
+								self.builder.ins().iadd_imm(pointer, offsets[i].unwrap() as i64)
+							};
+							self.store(pointer, predata);
+						}
+					}
+					Some(Predata::Direct(pointer, DataLayout::I64))
+				};
+				self.assign(*symbol, pointer)
+			}
+			linear::Statement::Free(pointer) => {
+				let pointer = self.emit_load(pointer).unwrap();
+				let pointer = self.value(pointer);
+				self.builder.ins().call(self.func_ref_free, &[pointer]);
+			}
+			linear::Statement::Call { symbol, result_repr, procedure, captures, argument } => {
+				let callee = self.predata(procedure).unwrap();
+				let environment = self.predata(captures);
+				let argument = self.predata(argument);
+				let result = result_repr.as_ref().map(DataLayout::from);
+				self.call(*symbol, callee, environment, argument, result);
+			}
+		}
+	}
+
+	fn emit_terminator(&mut self, terminator: &linear::Terminator) {
+		match terminator {
+			linear::Terminator::Abort => {
+				self.builder.ins().trap(TrapCode::UnreachableCodeReached);
+			}
+			linear::Terminator::Return(argument) => {
+				let argument = self.predata(argument);
+				if let Some(argument) = argument {
+					match self.result.unwrap() {
+						ResultKind::Direct => {
+							let value = self.value(argument);
+							if let Some(pointer) = self.environment {
+								let pointer = self.value(pointer);
+								self.builder.ins().call(self.func_ref_free, &[pointer]);
+							}
+							self.builder.ins().return_(&[value]);
+						}
+						ResultKind::Indirect(dest) => {
+							// NOTE: The result kind can only be indirect if the return value cannot be direct.
+							let Data::Indirect(src, layout) = self.data(argument) else { panic!() };
+							self.copy_memory(dest, src, layout);
+							if let Some(pointer) = self.environment {
+								let pointer = self.value(pointer);
+								self.builder.ins().call(self.func_ref_free, &[pointer]);
+							}
+							self.builder.ins().return_(&[]);
+						}
+					}
+				} else {
+					assert!(self.result.is_none());
+					self.builder.ins().return_(&[]);
+				}
+			}
+			linear::Terminator::Jump(block, arguments) => {
+				let mut processed_arguments = Vec::new();
+				for (i, argument) in arguments.iter().enumerate() {
+					let predata = self.predata(argument);
+					if let Some(slot) = self.blocks_to_parameter_slots[block.0][i] {
+						let data = self.data(predata.unwrap());
+						self.store_data_in_slot(slot, 0, data);
+					} else if let Some(value) = predata {
+						processed_arguments.push(self.value(value));
+					}
+				}
+				self.builder.ins().jump(self.blocks[block.0], &processed_arguments);
+			}
+			linear::Terminator::Split(scrutinee, blocks) => {
+				assert!(blocks.len() > 1);
+				let block_calls = blocks
+					.iter()
+					.map(|block| {
+						BlockCall::new(
+							self.blocks[block.0],
+							&[],
+							&mut self.builder.ins().data_flow_graph_mut().value_lists,
+						)
+					})
+					.collect::<Vec<_>>();
+				let jump_table =
+					self.builder.create_jump_table(JumpTableData::new(*block_calls.last().unwrap(), &block_calls));
+				// NOTE: Even if 0 and 1 were erased, we require that splits are greater than 1.
+				let predata = self.predata(scrutinee).unwrap();
+				let data = self.value(predata);
+				let data = self.builder.ins().uextend(I32, data);
+				self.builder.ins().br_table(data, jump_table);
+			}
+			linear::Terminator::CaseNat { index, limit, body, body_args, exit, exit_arg } => {
+				let index = self.predata(index).unwrap();
+				let index = self.value(index);
+				let limit = self.predata(limit).unwrap();
+				let limit = self.value(limit);
+				let condition = self.builder.ins().isub(limit, index);
+				if self.blocks_to_parameter_slots[exit.0][0].is_none() {
+					// Accumulator is small; we can do a simple branch.
+					let body_args = body_args.each_ref().map(|x| {
+						let x = self.predata(x).unwrap();
+						self.value(x)
+					});
+					let exit_arg = self.predata(exit_arg).unwrap();
+					let exit_arg = self.value(exit_arg);
+					self.builder.ins().brif(
+						condition,
+						self.blocks[exit.0],
+						&[exit_arg],
+						self.blocks[body.0],
+						&body_args,
+					);
+				} else {
+					// Accumulator is oversized; we need to generate extra blocks after the branch.
+					let next_index = self.predata(&body_args[0]).unwrap();
+					let next_index = self.value(next_index);
+					let body_prelude = self.builder.create_block();
+					self.builder.append_block_param(body_prelude, I64);
+					let exit_prelude = self.builder.create_block();
+					self.builder.ins().brif(condition, exit_prelude, &[], body_prelude, &[next_index]);
+
+					// Generate body prelude.
+					self.builder.switch_to_block(body_prelude);
+					let body_prelude_args = self.builder.block_params(body_prelude).to_vec();
+					let body_accumulator_slot = self.blocks_to_parameter_slots[body.0][1].unwrap();
+					// NOTE: Stack slots should never be zero-sized.
+					let body_accumulator_data = self.predata(&body_args[0]).unwrap();
+					let body_accumulator_data = self.data(body_accumulator_data);
+					self.store_data_in_slot(body_accumulator_slot, 0, body_accumulator_data);
+					let body_block = self.blocks[body.0];
+					self.builder.ins().jump(body_block, &body_prelude_args);
+
+					// Generate exit prelude.
+					self.builder.switch_to_block(exit_prelude);
+					let exit_accumulator_slot = self.blocks_to_parameter_slots[exit.0][0].unwrap();
+					let exit_accumulator_data = self.predata(&exit_arg).unwrap();
+					let exit_accumulator_data = self.data(exit_accumulator_data);
+					self.store_data_in_slot(exit_accumulator_slot, 0, exit_accumulator_data);
+					let exit_block = self.blocks[exit.0];
+					self.builder.ins().jump(exit_block, &[]);
+				}
+			}
+		}
+	}
+
+	fn assign(&mut self, symbol: Symbol, predata: Option<Predata>) { self.locals.insert(symbol, predata); }
 
 	fn store(&mut self, dest: Value, src: Predata) {
 		let layout = src.layout();
@@ -138,109 +440,68 @@ impl<'a, 'b> Emitter<'a, 'b> {
 		}
 	}
 
-	fn build(&mut self, block: Block, preblock: &linear::Block) {
-		self.builder.switch_to_block(block);
-
-		for statement in &preblock.statements {
-			match statement {
-				linear::Statement::Assign(symbol, value) => {
-					let predata = self.predata(value);
-					self.assign(*symbol, predata);
-				}
-				linear::Statement::Alloc(symbol, value) => {
-					let predata = self.predata(value);
-					let pointer = predata.map(|predata| {
-						let layout = predata.layout();
-						let size = self.builder.ins().iconst(I64, layout.size as i64);
-						let malloc_inst = self.builder.ins().call(self.func_ref_malloc, &[size]);
-						let results = self.builder.inst_results(malloc_inst);
-						assert_eq!(results.len(), 1);
-						let pointer = results[0];
-						self.store(pointer, predata);
-						Predata::Direct(pointer, DataLayout::I64)
-					});
-					self.assign(*symbol, pointer)
-				}
-				linear::Statement::Captures(symbol, values) => {
-					let predatas = values.iter().map(|value| self.predata(value)).collect::<Vec<_>>();
-					// let mut layouts = Vec::new();
-					// let mut offsets = Vec::new();
-					// Get layout of the entire capture thing.
-					// Allocate a pointer with that size.
-					// (Could theoretically avoid allocation for small-enough captures?)
-					// One by one, store each value to different offsets.
-					// Assign pointer to symbol.
-					todo!();
-				}
-				linear::Statement::Free(pointer) => {
-					let pointer = self.emit_load(pointer).unwrap();
-					let pointer = self.value(pointer);
-					self.builder.ins().call(self.func_ref_free, &[pointer]);
-				}
-				linear::Statement::Call { symbol, procedure, captures, argument } => todo!(),
-				// TODO: Optimize to call directly when possible.
-				// self.function_builder.ins().call_indirect(SIG, callee, args)
+	fn call(
+		&mut self,
+		symbol: Symbol,
+		callee: Predata,
+		environment: Option<Predata>,
+		argument: Option<Predata>,
+		result: Option<DataLayout>,
+	) {
+		let mut arguments = Vec::new();
+		let mut signature_params = Vec::new();
+		let mut signature_returns = Vec::new();
+		arguments.push(if let Some(environment) = environment {
+			self.value(environment)
+		} else {
+			self.builder.ins().iconst(I64, 0)
+		});
+		signature_params.push(AbiParam::new(I64));
+		if let Some(argument) = argument {
+			let data = self.data(argument);
+			arguments.push(data.value());
+			signature_params.push(AbiParam::new(data.ty()));
+		}
+		if let Some(layout) = result {
+			if let Some(ty) = layout.ty() {
+				signature_returns.push(AbiParam::new(ty));
+			} else {
+				let slot = self.create_slot(layout);
+				arguments.push(self.data(Predata::StackSlot(slot, 0, layout)).value());
+				signature_params.push(AbiParam::new(I64));
+				self.assign(symbol, Some(Predata::StackSlot(slot, 0, layout)));
 			}
 		}
-
-		match preblock.terminator.as_ref().unwrap() {
-			linear::Terminator::Abort => {
-				self.builder.ins().trap(TrapCode::UnreachableCodeReached);
-			}
-			linear::Terminator::Return(argument) => {
-				let argument = self.predata(argument);
-				if let Some(argument) = argument {
-					match self.result.unwrap() {
-						ResultKind::Direct => {
-							let value = self.value(argument);
-							if let Some(pointer) = self.snapshot {
-								let pointer = self.value(pointer);
-								self.builder.ins().call(self.func_ref_free, &[pointer]);
-							}
-							self.builder.ins().return_(&[value]);
-						}
-						ResultKind::Indirect(dest) => {
-							// NOTE: The result kind can only be indirect if the return value cannot be direct.
-							let Data::Indirect(src, layout) = self.data(argument) else { panic!() };
-							self.copy_memory(dest, src, layout);
-							if let Some(pointer) = self.snapshot {
-								let pointer = self.value(pointer);
-								self.builder.ins().call(self.func_ref_free, &[pointer]);
-							}
-							self.builder.ins().return_(&[]);
-						}
-					}
-				} else {
-					assert!(self.result.is_none());
-					self.builder.ins().return_(&[]);
+		let call_inst = 'inst: {
+			let callee = match callee {
+				Predata::FuncRef(func_ref) => {
+					break 'inst self.builder.ins().call(func_ref, &arguments);
 				}
-			}
-			linear::Terminator::Jump(_block, _arguments) => {
-				// self.function_builder.ins().jump(block_call_label, block_call_args)
-				todo!();
-			}
-			linear::Terminator::Split(scrutinee, blocks) => {
-				assert!(blocks.len() > 1);
-				let block_calls = blocks
-					.iter()
-					.map(|block| {
-						BlockCall::new(
-							self.blocks[block.0],
-							&[],
-							&mut self.builder.ins().data_flow_graph_mut().value_lists,
-						)
-					})
-					.collect::<Vec<_>>();
-				let jump_table =
-					self.builder.create_jump_table(JumpTableData::new(*block_calls.last().unwrap(), &block_calls));
-				// NOTE: Even if 0 and 1 were erased, we require that splits are greater than 1.
-				let predata = self.predata(scrutinee).unwrap();
-				let data = self.value(predata);
-				self.builder.ins().br_table(data, jump_table);
-			}
-			linear::Terminator::CaseNat { index, limit, body, body_args, exit, exit_arg } => {
-				todo!();
-				// self.function_builder.ins().brif(c, block_then_label, block_then_args, block_else_label, block_else_args);
+				Predata::Direct(value, _) => value,
+				Predata::Indirect(address, offset, layout) => self.builder.ins().load(
+					layout.ty().unwrap(),
+					if layout.size == layout.align as _ {
+						MemFlags::trusted()
+					} else {
+						MemFlags::new().with_notrap()
+					},
+					address,
+					offset,
+				),
+				Predata::StackSlot(slot, offset, layout) =>
+					self.builder.ins().stack_load(layout.ty().unwrap(), slot, offset),
+			};
+			let mut signature = Signature::new(CALL_CONV);
+			signature.params.extend(signature_params);
+			signature.returns.extend(signature_returns);
+			let signature_ref = self.builder.import_signature(signature);
+			self.builder.ins().call_indirect(signature_ref, callee, &arguments)
+		};
+		if let Some(layout) = result {
+			if layout.ty().is_some() {
+				let results = self.builder.inst_results(call_inst);
+				assert_eq!(results.len(), 1);
+				self.assign(symbol, Some(Predata::Direct(results[0], layout)))
 			}
 		}
 	}
@@ -354,7 +615,11 @@ impl<'a, 'b> Emitter<'a, 'b> {
 
 	fn emit_load(&mut self, load: &linear::Load) -> Option<Predata> {
 		let mut predata = match load.register {
-			linear::Register::Outer(n) => self.outer[n.0]?,
+			linear::Register::Outer(n) => {
+				let (offset, layout) = self.environment_offset_layouts[n.0]?;
+				let environment = self.value(self.environment.unwrap());
+				Predata::Indirect(environment, offset, layout)
+			}
 			linear::Register::Parameter => self.parameter?,
 			linear::Register::Local(n) => self.locals[&n]?,
 		};
@@ -378,7 +643,7 @@ impl<'a, 'b> Emitter<'a, 'b> {
 					Predata::Indirect(address, offset, _) => Predata::Indirect(address, offset, DataLayout::I64),
 					Predata::StackSlot(slot, offset, _) => Predata::StackSlot(slot, offset, DataLayout::I64),
 				},
-				linear::Projector::Captures => match predata {
+				linear::Projector::Environment => match predata {
 					Predata::FuncRef(_) | Predata::Direct(_, _) => panic!("functions should be oversized"),
 					Predata::Indirect(address, offset, _) =>
 						Predata::Indirect(address, offset + 8, DataLayout::I64),
@@ -389,7 +654,22 @@ impl<'a, 'b> Emitter<'a, 'b> {
 					(None, Some(_)) => (field == &Field::Fiber).then_some(predata)?,
 					(Some(_), None) => (field == &Field::Base).then_some(predata)?,
 					(Some(base), Some(fiber)) => {
-						todo!()
+						let (layout, additional_offset) = match field {
+							Field::Base => (DataLayout::from(base), 0),
+							Field::Fiber => {
+								let fiber = fiber.into();
+								(fiber, DataLayout::from(base).next_offset(fiber) as i32)
+							}
+						};
+						match predata {
+							Predata::FuncRef(_) => panic!(),
+							Predata::Direct(value, _) =>
+								Predata::Direct(self.builder.ins().ushr_imm(value, additional_offset as i64), layout),
+							Predata::Indirect(address, offset, _) =>
+								Predata::Indirect(address, offset + additional_offset, layout),
+							Predata::StackSlot(slot, offset, _) =>
+								Predata::StackSlot(slot, offset + additional_offset, layout),
+						}
 					}
 				},
 				linear::Projector::Bx(layout) => {
@@ -509,6 +789,20 @@ enum Data {
 }
 
 impl Data {
+	fn value(self) -> Value {
+		match self {
+			Self::Direct(value, _) => value,
+			Self::Indirect(value, _) => value,
+		}
+	}
+
+	fn ty(self) -> Type {
+		match self {
+			Self::Direct(_, layout) => layout.ty().unwrap(),
+			Self::Indirect(_, _) => I64,
+		}
+	}
+
 	fn layout(self) -> DataLayout {
 		match self {
 			Self::Direct(_, layout) => layout,
@@ -537,9 +831,11 @@ impl Predata {
 }
 
 struct SignatureFlags {
+	is_environment_erased: bool,
 	is_parameter_erased: bool,
-	is_snapshot_erased: bool,
+	is_parameter_oversized: bool,
 	is_result_erased: bool,
+	is_result_oversized: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -549,6 +845,7 @@ struct DataLayout {
 }
 
 impl DataLayout {
+	const I0: Self = Self::new(0, 0);
 	const I8: Self = Self::new(1, 1);
 	const I64: Self = Self::new(8, 8);
 	const FUNCTION: Self = Self::new(8 * 2, 8);
@@ -603,27 +900,41 @@ impl From<&linear::Layout> for DataLayout {
 
 fn emit_signature(prototype: &linear::Prototype) -> (Signature, SignatureFlags) {
 	let parameter_ty = prototype.parameter.1.as_ref().map(|x| DataLayout::from(x).ty());
-	// TODO: This shouldn't concern whether it's empty, but whether its layout is empty.
-	let snapshot_ty = (!prototype.outer.is_empty()).then_some(POINTER_TYPE);
+	let is_environment_erased = prototype.outer.iter().map(|(_, layout)| layout).all(|x| x.is_none());
 	let result_ty = prototype.result.as_ref().map(|x| DataLayout::from(x).ty());
 
 	let mut signature = Signature::new(CALL_CONV);
+	// Environment.
+	signature.params.push(AbiParam::new(POINTER_TYPE));
+
+	// TODO: Reorganize.
+	let mut is_parameter_oversized = false;
 	if let Some(ty) = parameter_ty {
-		signature.params.push(AbiParam::new(ty.unwrap_or(OVERSIZED_TYPE)));
+		signature.params.push(AbiParam::new(if let Some(ty) = ty {
+			ty
+		} else {
+			is_parameter_oversized = true;
+			POINTER_TYPE
+		}));
 	}
-	if let Some(ty) = snapshot_ty {
-		signature.params.push(AbiParam::new(ty));
-	}
+	let mut is_result_oversized = false;
 	if let Some(ty) = result_ty {
-		signature.returns.push(AbiParam::new(ty.unwrap_or(OVERSIZED_TYPE)));
+		if let Some(ty) = ty {
+			signature.returns.push(AbiParam::new(ty));
+		} else {
+			is_result_oversized = true;
+			signature.params.push(AbiParam::new(POINTER_TYPE));
+		};
 	}
 
 	(
 		signature,
 		SignatureFlags {
+			is_environment_erased,
 			is_parameter_erased: parameter_ty.is_none(),
-			is_snapshot_erased: snapshot_ty.is_none(),
+			is_parameter_oversized,
 			is_result_erased: result_ty.is_none(),
+			is_result_oversized,
 		},
 	)
 }

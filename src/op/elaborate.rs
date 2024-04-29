@@ -21,9 +21,9 @@ use crate::{
 };
 
 /// Elaborates a dynamic preterm to a dynamic term and synthesizes its type.
-pub fn elaborate(program: ParsedProgram) -> Result<(DynamicTerm, DynamicValue), ElaborationError> {
-	let (term, ty, ..) = Context::empty(program.fragment).synthesize_dynamic(program.expr)?;
-	Ok((term, ty))
+pub fn elaborate(program: ParsedProgram) -> Result<(DynamicTerm, DynamicValue, KindValue), ElaborationError> {
+	let (term, ty, kind) = Context::empty(program.fragment).synthesize_dynamic(program.expr)?;
+	Ok((term, ty, kind))
 }
 
 #[derive(Debug, Clone)]

@@ -114,6 +114,7 @@ pub struct Procedure {
 #[derive(Debug)]
 pub struct Program {
 	pub entry: Term,
+	pub repr: Option<Repr>,
 	pub procedures: Vec<Procedure>,
 }
 

@@ -4,8 +4,16 @@ use isogon::{
 	exec::linear::execute,
 	ir::{linear::pretty_print_linear, source::lex},
 	op::{
-		elaborate::elaborate, evaluate::Evaluate as _, flatten::flatten, linearize::linearize, parse::parse,
-		stage::stage, unelaborate::Unelaborate as _, unevaluate::Unevaluate as _, unparse::pretty_print,
+		elaborate::elaborate,
+		emit::emit_cranelift,
+		evaluate::Evaluate as _,
+		flatten::flatten,
+		linearize::linearize,
+		parse::parse,
+		stage::{stage, Stage},
+		unelaborate::Unelaborate as _,
+		unevaluate::Unevaluate as _,
+		unparse::pretty_print,
 	},
 	report::{report_elaboration_error, report_parse_error, report_tokenization_error},
 };
@@ -33,13 +41,14 @@ pub fn run(source: &str) {
 	println!();
 
 	// Elaboration.
-	let (term, ty) = match elaborate(parsed_program) {
+	let (term, ty, kind) = match elaborate(parsed_program) {
 		Ok(x) => x,
 		Err(e) => {
 			report_elaboration_error(lexed_source, &resolver, e);
 			panic!()
 		}
 	};
+	let kind = kind.unevaluate().stage();
 	println!("Elaboration complete.");
 	println!("Elaborated term: {}", pretty_print(&term.clone().unelaborate(), &resolver));
 	println!("Synthesized type: {}", pretty_print(&ty.unevaluate().unelaborate(), &resolver));
@@ -64,7 +73,7 @@ pub fn run(source: &str) {
 	println!();
 
 	// Closure conversion.
-	let flat_term = flatten(&staged_term);
+	let flat_term = flatten(&staged_term, kind);
 	println!("Closure conversion complete.");
 
 	println!();
@@ -74,10 +83,21 @@ pub fn run(source: &str) {
 	println!("Linearization complete.");
 	let mut printed = String::new();
 	pretty_print_linear(&mut printed, &linearized_program).unwrap();
-	println!("{printed}");
+	print!("{printed}");
 	let (heap, result) = execute(&linearized_program);
 	println!("Execution heap: {heap:?}");
 	println!("Execution result: {result:?}");
+
+	println!();
+
+	// Emission
+	let emitted_program = emit_cranelift(&linearized_program);
+	println!("Emission complete.");
+	println!();
+	println!("{}", emitted_program.entry.display());
+	for (i, function) in emitted_program.functions.iter().enumerate() {
+		println!("{}", function.display());
+	}
 }
 
 enum InputOption {

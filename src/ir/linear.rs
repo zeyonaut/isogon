@@ -3,6 +3,7 @@ use crate::common::{ArraySize, Field, Label, Level, Repr, ReprAtom, Symbol};
 #[derive(Debug)]
 pub struct Program {
 	pub entry: Procedure,
+	pub repr: Option<Layout>,
 	pub procedures: Vec<(Prototype, Procedure)>,
 }
 
@@ -105,7 +106,7 @@ pub enum Statement {
 	Alloc(Symbol, Value),
 	Captures(Symbol, Box<[Value]>),
 	Free(Load),
-	Call { symbol: Symbol, procedure: Value, captures: Value, argument: Value },
+	Call { symbol: Symbol, result_repr: Option<Layout>, procedure: Value, captures: Value, argument: Value },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,7 +128,7 @@ impl Value {
 			(Self::Load(load), projector) => load.project(projector).into(),
 			(Self::Array(array), Projector::Exp(index, _)) => array[index as usize].clone(),
 			(Self::Function { procedure, captures: _ }, Projector::Procedure) => procedure.as_ref().clone(),
-			(Self::Function { procedure: _, captures }, Projector::Captures) => captures.as_ref().clone(),
+			(Self::Function { procedure: _, captures }, Projector::Environment) => captures.as_ref().clone(),
 			(Self::Pair(basept, _), Projector::Field(Field::Base, _)) => basept.as_ref().clone(),
 			(Self::Pair(_, fiberpt), Projector::Field(Field::Fiber, _)) => fiberpt.as_ref().clone(),
 			_ => unimplemented!(),
@@ -183,7 +184,7 @@ impl From<Register> for Load {
 pub enum Projector {
 	Exp(u64, Option<Layout>),
 	Procedure,
-	Captures,
+	Environment,
 	Field(Field, [Option<Layout>; 2]),
 	Bx(Option<Layout>),
 }
@@ -202,7 +203,7 @@ pub fn pretty_print_linear(f: &mut impl std::fmt::Write, program: &Program) -> s
 	writeln!(f)?;
 
 	for (i, (_, procedure)) in program.procedures.iter().enumerate() {
-		writeln!(f, "fn $proc({i}) {{")?;
+		writeln!(f, "procedure $proc.{i}: {{")?;
 		print_procedure(f, procedure)?;
 		writeln!(f, "}}")?;
 		writeln!(f)?;
@@ -213,24 +214,29 @@ pub fn pretty_print_linear(f: &mut impl std::fmt::Write, program: &Program) -> s
 
 fn print_procedure(f: &mut impl std::fmt::Write, procedure: &Procedure) -> std::fmt::Result {
 	for (i, block) in procedure.blocks.iter().enumerate() {
-		write!(f, "  @{i}(")?;
-		// TODO: Maybe also print layouts?
-		if let Some(n) = block.parameters.len().checked_sub(1) {
-			for x in block.parameters.iter().take(n) {
-				write!(f, "${}, ", x.0 .0)?;
+		write!(f, "   ")?;
+		write!(f, "block {i}")?;
+		if !block.parameters.is_empty() {
+			write!(f, "(")?;
+			// TODO: Maybe also print layouts?
+			if let Some(n) = block.parameters.len().checked_sub(1) {
+				for x in block.parameters.iter().take(n) {
+					write!(f, "${}, ", x.0 .0)?;
+				}
 			}
+			if let Some(x) = block.parameters.last() {
+				write!(f, "${}", x.0 .0)?;
+			}
+			write!(f, ")")?;
 		}
-		if let Some(x) = block.parameters.last() {
-			write!(f, "${}", x.0 .0)?;
-		}
-		writeln!(f, "):")?;
+		writeln!(f, ":")?;
 
 		for statement in &block.statements {
-			write!(f, "    ")?;
+			write!(f, "      ")?;
 			print_statement(f, statement)?;
 			writeln!(f)?;
 		}
-		write!(f, "    ")?;
+		write!(f, "      ")?;
 		print_terminator(f, block.terminator.as_ref().unwrap())?;
 		writeln!(f)?;
 	}
@@ -290,12 +296,11 @@ fn print_statement(f: &mut impl std::fmt::Write, statement: &Statement) -> std::
 			print_value(f, value)?;
 		}
 		Statement::Alloc(symbol, value) => {
-			write!(f, "${} = alloc(", symbol.0)?;
+			write!(f, "${} = alloc ", symbol.0)?;
 			print_value(f, value)?;
-			write!(f, ")")?;
 		}
 		Statement::Captures(symbol, values) => {
-			write!(f, "${} = snap(", symbol.0)?;
+			write!(f, "${} = env (", symbol.0)?;
 			print_values(f, values)?;
 			write!(f, ")")?;
 		}
@@ -303,10 +308,10 @@ fn print_statement(f: &mut impl std::fmt::Write, statement: &Statement) -> std::
 			write!(f, "free ")?;
 			print_load(f, load)?;
 		}
-		Statement::Call { symbol, procedure, captures, argument } => {
+		Statement::Call { symbol, result_repr: _, procedure, captures, argument } => {
 			write!(f, "${} = call ", symbol.0)?;
 			print_value(f, procedure)?;
-			write!(f, " capturing ")?;
+			write!(f, " in ")?;
 			print_value(f, captures)?;
 			write!(f, " with ")?;
 			print_value(f, argument)?;
@@ -337,10 +342,10 @@ fn print_value(f: &mut impl std::fmt::Write, value: &Value) -> std::fmt::Result 
 			write!(f, " + {b}")?;
 		}
 		Value::Enum(k, n) => write!(f, "{n}_{k}")?,
-		Value::Procedure(n) => write!(f, "$proc({n})")?,
+		Value::Procedure(n) => write!(f, "$proc.{n}")?,
 		Value::Load(load) => print_load(f, load)?,
 		Value::Function { procedure, captures } => {
-			write!(f, "fun(")?;
+			write!(f, "fun (")?;
 			print_value(f, procedure)?;
 			write!(f, ", ")?;
 			print_value(f, captures)?;
@@ -364,18 +369,18 @@ fn print_value(f: &mut impl std::fmt::Write, value: &Value) -> std::fmt::Result 
 
 fn print_load(f: &mut impl std::fmt::Write, load: &Load) -> std::fmt::Result {
 	match load.register {
-		Register::Outer(n) => write!(f, "$outer.{}", n.0)?,
+		Register::Outer(n) => write!(f, "$env.{}", n.0)?,
 		Register::Parameter => write!(f, "$param")?,
 		Register::Local(n) => write!(f, "${}", n.0)?,
 	}
 	for projector in &load.projectors {
 		match projector {
-			Projector::Exp(n, _) => write!(f, ".[{n}]")?,
+			Projector::Exp(n, _) => write!(f, ".{n}")?,
 			Projector::Procedure => write!(f, ".proc")?,
-			Projector::Captures => write!(f, ".snap")?,
+			Projector::Environment => write!(f, ".env")?,
 			Projector::Field(Field::Base, _) => write!(f, ".0")?,
 			Projector::Field(Field::Fiber, _) => write!(f, ".1")?,
-			Projector::Bx(_) => write!(f, ".box")?,
+			Projector::Bx(_) => write!(f, ".deref")?,
 		}
 	}
 	Ok(())

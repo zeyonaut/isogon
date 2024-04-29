@@ -10,12 +10,12 @@ use crate::{
 };
 
 /// Performs closure-conversion on an object term, hoisting all functions to top level.
-pub fn flatten(value: &DynamicTerm) -> Program {
+pub fn flatten(value: &DynamicTerm, kind: UniverseKind) -> Program {
 	let mut flattener = Flattener { amplifiers: vec![], context: vec![], procedures: vec![] };
 
 	let entry = flattener.flatten(value, &mut vec![]);
 
-	Program { entry, procedures: flattener.procedures }
+	Program { entry, repr: kind.repr, procedures: flattener.procedures }
 }
 
 struct Flattener {

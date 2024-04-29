@@ -43,7 +43,7 @@ pub fn linearize(program: flat::Program) -> Program {
 		})
 		.collect::<Vec<_>>();
 
-	Program { entry, procedures }
+	Program { entry, repr: program.repr.as_ref().map(Into::into), procedures }
 }
 
 enum ValueProducer {
@@ -226,7 +226,6 @@ impl ProcedureBuilder {
 				},
 
 			Term::Function { procedure_id, captures } => {
-				// FIXME: This should take copyability into account at the binding site, not just make up a copyability on the spot.
 				let (frame, captures) = self
 					.generate_many(
 						frame,
@@ -374,13 +373,14 @@ impl ProcedureBuilder {
 
 	fn call(&mut self, frame: &Frame, callee: Value, argument: Value, result_repr: Option<Layout>) -> Symbol {
 		let symbol = self.local_symbol_generator.generate();
-		self.register_context.local.insert(symbol, result_repr);
+		self.register_context.local.insert(symbol, result_repr.clone());
 		self.append(
 			frame,
 			Statement::Call {
 				symbol,
+				result_repr,
 				procedure: callee.project(Projector::Procedure),
-				captures: callee.project(Projector::Captures),
+				captures: callee.project(Projector::Environment),
 				argument,
 			},
 		);
@@ -444,7 +444,7 @@ impl ProcedureBuilder {
 			match load.projectors.last().unwrap() {
 				Projector::Exp(_, layout) => layout.clone(),
 				Projector::Procedure => Some(Layout::Ptr),
-				Projector::Captures => Some(Layout::Ptr),
+				Projector::Environment => Some(Layout::Ptr),
 				Projector::Field(Field::Base, [base, _]) => base.clone(),
 				Projector::Field(Field::Fiber, [_, fiber]) => fiber.clone(),
 				Projector::Bx(layout) => layout.clone(),
