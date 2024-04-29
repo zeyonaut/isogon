@@ -105,7 +105,7 @@ impl<'a> Executor<'a> {
 				Terminator::Return(operand) => {
 					let data = self.compute(operand);
 					if let Some(prototype) = self.prototype() {
-						if !prototype.outer.is_empty() {
+						if !prototype.outer.as_ref().unwrap().is_empty() {
 							self.free(self.environment.outer.clone());
 						}
 					}

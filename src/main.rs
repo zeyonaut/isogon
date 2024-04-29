@@ -1,11 +1,13 @@
-use bpaf::{construct, short, Parser};
+use std::{fs::File, io::Write, path::Path};
+
+use bpaf::{construct, long, short, Parser};
 use isogon::{
 	common::Fragment,
 	exec::linear::execute,
 	ir::{linear::pretty_print_linear, source::lex},
 	op::{
 		elaborate::elaborate,
-		emit::emit_cranelift,
+		emit::emit_object,
 		evaluate::Evaluate as _,
 		flatten::flatten,
 		linearize::linearize,
@@ -18,12 +20,17 @@ use isogon::{
 	report::{report_elaboration_error, report_parse_error, report_tokenization_error},
 };
 
-pub fn run(source: &str) {
+fn run(options: Options) {
+	let source = match options.input {
+		InputOption::Direct(command) => command,
+		InputOption::FilePath(file_path) => std::fs::read_to_string(file_path).unwrap(),
+	};
+
 	// Parsing.
-	let lexed_source = match lex(source) {
+	let lexed_source = match lex(&source) {
 		Ok(x) => x,
 		Err(e) => {
-			report_tokenization_error(source, e);
+			report_tokenization_error(&source, e);
 			panic!()
 		}
 	};
@@ -81,9 +88,13 @@ pub fn run(source: &str) {
 	// Linearization.
 	let linearized_program = linearize(flat_term);
 	println!("Linearization complete.");
-	let mut printed = String::new();
-	pretty_print_linear(&mut printed, &linearized_program).unwrap();
-	print!("{printed}");
+
+	if options.show_lir {
+		let mut printed = String::new();
+		println!();
+		pretty_print_linear(&mut printed, &linearized_program).unwrap();
+		print!("{printed}");
+	}
 	let (heap, result) = execute(&linearized_program);
 	println!("Execution heap: {heap:?}");
 	println!("Execution result: {result:?}");
@@ -91,12 +102,25 @@ pub fn run(source: &str) {
 	println!();
 
 	// Emission
-	let emitted_program = emit_cranelift(&linearized_program);
+	let emission = emit_object("program".to_owned(), &linearized_program);
 	println!("Emission complete.");
-	println!();
-	println!("{}", emitted_program.entry.display());
-	for function in &emitted_program.functions {
-		println!("{}", function.display());
+
+	if options.show_clif {
+		println!();
+		println!("{}", emission.entry.display());
+		for function in &emission.functions {
+			println!("{}", function.display());
+		}
+	}
+
+	// Object file generation.
+	if let Some(object_path) = options.object_path {
+		let object_path = Path::new(&object_path);
+		// Create parent directories and file.
+		std::fs::create_dir_all(object_path.parent().unwrap()).unwrap();
+		let mut object_file = File::create(object_path).expect("failed to create object file");
+		let object_buffer = emission.object.write().unwrap();
+		object_file.write_all(&object_buffer).unwrap();
 	}
 }
 
@@ -107,6 +131,9 @@ enum InputOption {
 
 struct Options {
 	input: InputOption,
+	show_lir: bool,
+	show_clif: bool,
+	object_path: Option<String>,
 }
 
 fn main() {
@@ -114,15 +141,13 @@ fn main() {
 		input(construct!([
 			c(short('c').argument::<String>("\"preterm\"").help("Read input from argument").map(InputOption::Direct)),
 			f(short('f').argument::<String>("PATH").help("Read input from file").map(InputOption::FilePath)),
-		]))
+		])),
+		show_lir(long("lir").switch()),
+		show_clif(long("clif").switch()),
+		object_path(short('o').argument::<String>("PATH").help("Emit object to file").optional())
 	})
 	.to_options()
 	.run();
 
-	let input = match options.input {
-		InputOption::Direct(command) => command,
-		InputOption::FilePath(file_path) => std::fs::read_to_string(file_path).unwrap(),
-	};
-
-	run(&input);
+	run(options);
 }

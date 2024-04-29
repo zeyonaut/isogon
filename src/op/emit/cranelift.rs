@@ -4,106 +4,132 @@ use cranelift::{
 	codegen::{
 		ir::{
 			types::{I16, I32, I64, I8},
-			AbiParam, Block, BlockCall, ExtFuncData, ExternalName, FuncRef, Function, InstBuilder,
-			InstBuilderBase as _, JumpTableData, MemFlags, Signature, StackSlot, StackSlotData, StackSlotKind,
-			TrapCode, Type, UserExternalName, UserFuncName, Value,
+			AbiParam, Block, BlockCall, FuncRef, Function, InstBuilder, InstBuilderBase as _, JumpTableData,
+			MemFlags, Signature, StackSlot, StackSlotData, StackSlotKind, TrapCode, Type, UserExternalName,
+			UserFuncName, Value,
 		},
-		isa::{CallConv, TargetFrontendConfig},
-		settings, verifier,
+		isa::{self, CallConv, TargetFrontendConfig},
+		settings, verifier, Context,
 	},
 	frontend::{FunctionBuilder, FunctionBuilderContext},
 };
+use cranelift_module::{FuncId, Linkage, Module};
+use cranelift_object::{ObjectBuilder, ObjectModule};
+use target_lexicon::triple;
 
 use crate::{
 	common::{Field, Symbol},
 	ir::linear,
 };
 
-pub fn emit_cranelift(program: &linear::Program) -> EmittedProgram {
-	let flags = settings::Flags::new(settings::builder());
-	let entry = Emitter::build(
-		MAIN_NAME,
-		&linear::Prototype { outer: Vec::new(), parameter: (None, None), result: program.repr.clone() },
-		&program.entry,
-		&program.procedures,
-	);
-	verifier::verify_function(&entry, &flags).unwrap();
-	let mut functions = Vec::new();
-	for (i, (prototype, procedure)) in program.procedures.iter().enumerate() {
-		let function = Emitter::build(
-			UserExternalName { namespace: USER_NAMESPACE, index: i as u32 },
-			prototype,
-			procedure,
-			&program.procedures,
-		);
-		verifier::verify_function(&function, &flags).unwrap();
-		functions.push(function);
-	}
-	EmittedProgram { entry, functions }
-}
-
-pub struct EmittedProgram {
+pub struct CraneliftProgram {
+	pub object: cranelift_object::object::write::Object<'static>,
 	pub entry: Function,
 	pub functions: Vec<Function>,
 }
 
-const MAIN_NAME: UserExternalName = UserExternalName { namespace: 0, index: 0 };
-const USER_NAMESPACE: u32 = 1;
-const EXT_NAMESPACE: u32 = 2;
-const MALLOC_NAME: UserExternalName = UserExternalName { namespace: EXT_NAMESPACE, index: 0 };
-const FREE_NAME: UserExternalName = UserExternalName { namespace: EXT_NAMESPACE, index: 1 };
+pub fn emit_object(name: String, program: &linear::Program) -> CraneliftProgram {
+	let settings_builder = settings::builder();
+	let settings_flags = settings::Flags::new(settings_builder);
+	let isa_builder = isa::lookup(triple!("x86_64-pc-windows-msvc")).unwrap();
+	let isa = isa_builder.finish(settings_flags.clone()).unwrap();
+	let object_builder = ObjectBuilder::new(isa, name, cranelift_module::default_libcall_names()).unwrap();
+	let mut object_module = ObjectModule::new(object_builder);
 
-const POINTER_TYPE: Type = I64;
-const OVERSIZED_TYPE: Type = POINTER_TYPE;
+	let free_id = {
+		let mut free_signature = object_module.make_signature();
+		free_signature.params.push(AbiParam::new(I64));
+		object_module.declare_function("free", Linkage::Import, &free_signature).unwrap()
+	};
 
-const CALL_CONV: CallConv = CallConv::WindowsFastcall;
+	let malloc_id = {
+		let mut malloc_signature = object_module.make_signature();
+		malloc_signature.params.push(AbiParam::new(I64));
+		malloc_signature.returns.push(AbiParam::new(I64));
+		object_module.declare_function("malloc", Linkage::Import, &malloc_signature).unwrap()
+	};
 
-struct Emitter<'a, 'b> {
-	builder: &'a mut FunctionBuilder<'b>,
-	parameter: Option<Predata>,
-	environment: Option<Predata>,
-	environment_offset_layouts: Vec<Option<(i32, DataLayout)>>,
-	blocks_to_parameter_slots: Vec<Vec<Option<StackSlot>>>,
-	locals: HashMap<Symbol, Option<Predata>>,
-	result: Option<ResultKind>,
-	func_refs: Vec<Option<FuncRef>>,
-	func_ref_free: Option<FuncRef>,
-	func_ref_malloc: Option<FuncRef>,
-	blocks: Vec<Block>,
-	prototypes: Vec<linear::Prototype>,
+	let (entry_id, entry_flags) = {
+		let (entry_signature, entry_flags) = emit_signature(
+			&mut object_module,
+			&linear::Prototype { outer: None, parameter: (None, None), result: program.repr.clone() },
+		);
+		let entry_id = object_module.declare_function("entry", Linkage::Export, &entry_signature).unwrap();
+		(entry_id, entry_flags)
+	};
+
+	let (proc_ids, proc_flags_list): (Vec<_>, Vec<_>) = program
+		.procedures
+		.iter()
+		.enumerate()
+		.map(|(i, procedure)| {
+			let (signature, flags) = emit_signature(&mut object_module, &procedure.0);
+			let mut name = "proc_".to_owned();
+			name.push_str(&i.to_string());
+			let id = object_module.declare_function(&name, Linkage::Local, &signature).unwrap();
+			(id, flags)
+		})
+		.unzip();
+
+	let mut emitter_context =
+		EmitterContext { object_module: &mut object_module, free_id, malloc_id, entry_id, proc_ids: &proc_ids };
+
+	let entry = emit_procedure(
+		&mut emitter_context,
+		entry_id,
+		entry_flags,
+		&linear::Prototype { outer: None, parameter: (None, None), result: program.repr.clone() },
+		&program.entry,
+		&settings_flags,
+	);
+
+	let mut functions = Vec::new();
+	for ((proc_id, proc_flags), (prototype, procedure)) in
+		proc_ids.iter().zip(proc_flags_list).zip(&program.procedures)
+	{
+		functions.push(emit_procedure(
+			&mut emitter_context,
+			*proc_id,
+			proc_flags,
+			prototype,
+			procedure,
+			&settings_flags,
+		));
+	}
+
+	let object_product = object_module.finish();
+	CraneliftProgram { object: object_product.object, entry, functions }
 }
 
-#[derive(Clone, Copy)]
-enum ResultKind {
-	Direct,
-	Indirect(Value),
-}
+fn emit_procedure(
+	emitter_context: &mut EmitterContext,
+	id: FuncId,
+	signature_flags: SignatureFlags,
+	prototype: &linear::Prototype,
+	procedure: &linear::Procedure,
+	settings_flags: &settings::Flags,
+) -> Function {
+	let signature = emitter_context.object_module.declarations().get_function_decl(id).signature.clone();
+	// NOTE: This naming convention agrees with cranelift-module.
+	let mut function = Function::with_name_signature(
+		UserFuncName::User(UserExternalName { namespace: 0, index: id.as_u32() }),
+		signature,
+	);
 
-impl<'a, 'b> Emitter<'a, 'b> {
-	fn build(
-		name: UserExternalName,
-		prototype: &linear::Prototype,
-		procedure: &linear::Procedure,
-		procedures: &[(linear::Prototype, linear::Procedure)],
-	) -> Function {
-		// TODO: Reorganize.
-		let (signature, signature_flags) = emit_signature(prototype);
-		let mut function = Function::with_name_signature(UserFuncName::User(name), signature);
-
-		let mut ctx = FunctionBuilderContext::new();
-		let mut builder = FunctionBuilder::new(&mut function, &mut ctx);
-		let blocks = (0..procedure.blocks.len()).map(|_| builder.create_block()).collect::<Vec<_>>();
-		let entry = *(blocks.first().unwrap());
-		builder.append_block_params_for_function_params(entry);
-
+	let mut ctx = FunctionBuilderContext::new();
+	let mut builder = FunctionBuilder::new(&mut function, &mut ctx);
+	let blocks = (0..procedure.blocks.len()).map(|_| builder.create_block()).collect::<Vec<_>>();
+	let entry = *(blocks.first().unwrap());
+	builder.append_block_params_for_function_params(entry);
+	{
 		let mut emitter = {
 			let parameters = builder.block_params(entry);
-			let environment =
-				(!signature_flags.is_environment_erased).then(|| Predata::Direct(parameters[0], DataLayout::I64));
+			let environment = (!signature_flags.is_closed && !signature_flags.is_environment_erased)
+				.then(|| Predata::Direct(parameters[0], DataLayout::I64));
 			let mut environment_offset_layouts = Vec::new();
-			{
+			if let Some(outer) = prototype.outer.as_ref() {
 				let mut environment_layout = DataLayout::I0;
-				for (_, layout) in &prototype.outer {
+				for (_, layout) in outer {
 					environment_offset_layouts.push(layout.as_ref().map(|layout| {
 						let layout = DataLayout::from(layout);
 						let offset = environment_layout.next_offset(layout);
@@ -116,19 +142,30 @@ impl<'a, 'b> Emitter<'a, 'b> {
 
 			let parameter = (!signature_flags.is_parameter_erased).then(|| {
 				if signature_flags.is_parameter_oversized {
-					Predata::Indirect(parameters[1], 0, prototype.parameter.1.as_ref().unwrap().into())
+					Predata::Indirect(
+						parameters[!signature_flags.is_closed as usize],
+						0,
+						prototype.parameter.1.as_ref().unwrap().into(),
+					)
 				} else {
-					Predata::Direct(parameters[1], prototype.parameter.1.as_ref().unwrap().into())
+					Predata::Direct(
+						parameters[!signature_flags.is_closed as usize],
+						prototype.parameter.1.as_ref().unwrap().into(),
+					)
 				}
 			});
 			let result = (!signature_flags.is_result_erased).then(|| {
 				if signature_flags.is_result_oversized {
-					ResultKind::Indirect(parameters[1 + (!signature_flags.is_parameter_erased as usize)])
+					ResultKind::Indirect(
+						parameters[(!signature_flags.is_closed as usize)
+							+ (!signature_flags.is_parameter_erased as usize)],
+					)
 				} else {
 					ResultKind::Direct
 				}
 			});
 			Emitter {
+				ctx: emitter_context,
 				builder: &mut builder,
 				environment,
 				environment_offset_layouts,
@@ -139,71 +176,130 @@ impl<'a, 'b> Emitter<'a, 'b> {
 				blocks_to_parameter_slots: Vec::new(),
 				func_ref_free: None,
 				func_ref_malloc: None,
-				func_refs: vec![None; procedures.len()],
-				prototypes: procedures.iter().map(|(prototype, _)| prototype.clone()).collect(),
+				func_refs: Vec::new(),
 			}
 		};
 
 		emitter.preprocess_blocks(&procedure.blocks);
 		emitter.build_blocks(&procedure.blocks);
-
-		builder.seal_all_blocks();
-		builder.finalize();
-		function
 	}
 
-	fn get_func_ref_free(&mut self) -> FuncRef {
-		if let Some(func_ref) = self.func_ref_free {
-			func_ref
+	builder.seal_all_blocks();
+	builder.finalize();
+
+	let mut context = Context::for_function(function);
+	emitter_context.object_module.define_function(id, &mut context).unwrap();
+	context.func
+}
+
+fn emit_signature(
+	object_module: &mut ObjectModule,
+	prototype: &linear::Prototype,
+) -> (Signature, SignatureFlags) {
+	let parameter_ty = prototype.parameter.1.as_ref().map(|x| DataLayout::from(x).ty());
+	let is_closed = prototype.outer.is_none();
+	let is_environment_erased = if is_closed {
+		true
+	} else {
+		prototype.outer.as_ref().unwrap().iter().map(|(_, layout)| layout).all(|x| x.is_none())
+	};
+	let result_ty = prototype.result.as_ref().map(|x| DataLayout::from(x).ty());
+
+	let mut signature = object_module.make_signature();
+	// Environment.
+	if !is_closed {
+		signature.params.push(AbiParam::new(POINTER_TYPE))
+	};
+
+	// TODO: Reorganize.
+	let mut is_parameter_oversized = false;
+	if let Some(ty) = parameter_ty {
+		signature.params.push(AbiParam::new(if let Some(ty) = ty {
+			ty
 		} else {
-			let free_name = self.builder.func.declare_imported_user_function(FREE_NAME);
-			let mut free_signature = Signature::new(CALL_CONV);
-			free_signature.params.push(AbiParam::new(I64));
-			let free_sigref = self.builder.import_signature(free_signature);
-			self.func_ref_free = Some(self.builder.import_function(ExtFuncData {
-				name: ExternalName::user(free_name),
-				signature: free_sigref,
-				colocated: false,
-			}));
-			self.func_ref_free.unwrap()
-		}
+			is_parameter_oversized = true;
+			POINTER_TYPE
+		}));
+	}
+	let mut is_result_oversized = false;
+	if let Some(ty) = result_ty {
+		if let Some(ty) = ty {
+			signature.returns.push(AbiParam::new(ty));
+		} else {
+			is_result_oversized = true;
+			signature.params.push(AbiParam::new(POINTER_TYPE));
+		};
+	}
+
+	(
+		signature,
+		SignatureFlags {
+			is_closed,
+			is_environment_erased,
+			is_parameter_erased: parameter_ty.is_none(),
+			is_parameter_oversized,
+			is_result_erased: result_ty.is_none(),
+			is_result_oversized,
+		},
+	)
+}
+
+const MAIN_NAME: UserExternalName = UserExternalName { namespace: 0, index: 0 };
+const USER_NAMESPACE: u32 = 1;
+const EXT_NAMESPACE: u32 = 2;
+const POINTER_TYPE: Type = I64;
+
+const CALL_CONV: CallConv = CallConv::WindowsFastcall;
+
+struct EmitterContext<'a> {
+	object_module: &'a mut ObjectModule,
+	free_id: FuncId,
+	malloc_id: FuncId,
+	entry_id: FuncId,
+	proc_ids: &'a [FuncId],
+}
+
+struct Emitter<'a, 'b, 'c, 'd> {
+	ctx: &'c mut EmitterContext<'d>,
+	builder: &'a mut FunctionBuilder<'b>,
+	parameter: Option<Predata>,
+	environment: Option<Predata>,
+	environment_offset_layouts: Vec<Option<(i32, DataLayout)>>,
+	blocks_to_parameter_slots: Vec<Vec<Option<StackSlot>>>,
+	locals: HashMap<Symbol, Option<Predata>>,
+	result: Option<ResultKind>,
+	func_refs: Vec<Option<FuncRef>>,
+	func_ref_free: Option<FuncRef>,
+	func_ref_malloc: Option<FuncRef>,
+	blocks: Vec<Block>,
+}
+
+#[derive(Clone, Copy)]
+enum ResultKind {
+	Direct,
+	Indirect(Value),
+}
+
+impl<'a, 'b, 'c, 'd> Emitter<'a, 'b, 'c, 'd> {
+	fn get_func_ref_free(&mut self) -> FuncRef {
+		*self.func_ref_free.get_or_insert_with(|| {
+			self.ctx.object_module.declare_func_in_func(self.ctx.free_id, self.builder.func)
+		})
 	}
 
 	fn get_func_ref_malloc(&mut self) -> FuncRef {
-		if let Some(func_ref) = self.func_ref_malloc {
-			func_ref
-		} else {
-			let malloc_name = self.builder.func.declare_imported_user_function(MALLOC_NAME);
-			let mut malloc_signature = Signature::new(CALL_CONV);
-			malloc_signature.params.push(AbiParam::new(I64));
-			malloc_signature.returns.push(AbiParam::new(I64));
-			let malloc_sigref = self.builder.import_signature(malloc_signature);
-			self.func_ref_malloc = Some(self.builder.import_function(ExtFuncData {
-				name: ExternalName::user(malloc_name),
-				signature: malloc_sigref,
-				colocated: false,
-			}));
-			self.func_ref_malloc.unwrap()
-		}
+		*self.func_ref_malloc.get_or_insert_with(|| {
+			self.ctx.object_module.declare_func_in_func(self.ctx.malloc_id, self.builder.func)
+		})
 	}
 
-	fn get_func_ref_user(&mut self, i: usize) -> FuncRef {
-		if let Some(func_ref) = self.func_refs[i] {
-			func_ref
-		} else {
-			let name = self
-				.builder
-				.func
-				.declare_imported_user_function(UserExternalName { namespace: USER_NAMESPACE, index: i as u32 });
-			let (signature, _) = emit_signature(&self.prototypes[i]);
-			let sigref = self.builder.import_signature(signature);
-			self.func_refs[i] = Some(self.builder.import_function(ExtFuncData {
-				name: ExternalName::user(name),
-				signature: sigref,
-				colocated: true,
-			}));
-			self.func_refs[i].unwrap()
+	fn get_func_ref_proc(&mut self, i: usize) -> FuncRef {
+		if self.func_refs.len() <= i {
+			self.func_refs.resize(i + 1, None);
 		}
+		*self.func_refs[i].get_or_insert_with(|| {
+			self.ctx.object_module.declare_func_in_func(self.ctx.proc_ids[i], self.builder.func)
+		})
 	}
 
 	fn preprocess_blocks(&mut self, preblocks: &[linear::Block]) {
@@ -397,10 +493,10 @@ impl<'a, 'b> Emitter<'a, 'b> {
 					let exit_arg = self.value(exit_arg);
 					self.builder.ins().brif(
 						condition,
-						self.blocks[exit.0],
-						&[exit_arg],
 						self.blocks[body.0],
 						&body_args,
+						self.blocks[exit.0],
+						&[exit_arg],
 					);
 				} else {
 					// Accumulator is oversized; we need to generate extra blocks after the branch.
@@ -409,14 +505,14 @@ impl<'a, 'b> Emitter<'a, 'b> {
 					let body_prelude = self.builder.create_block();
 					self.builder.append_block_param(body_prelude, I64);
 					let exit_prelude = self.builder.create_block();
-					self.builder.ins().brif(condition, exit_prelude, &[], body_prelude, &[next_index]);
+					self.builder.ins().brif(condition, body_prelude, &[next_index], exit_prelude, &[]);
 
 					// Generate body prelude.
 					self.builder.switch_to_block(body_prelude);
 					let body_prelude_args = self.builder.block_params(body_prelude).to_vec();
 					let body_accumulator_slot = self.blocks_to_parameter_slots[body.0][1].unwrap();
 					// NOTE: Stack slots should never be zero-sized.
-					let body_accumulator_data = self.predata(&body_args[0]).unwrap();
+					let body_accumulator_data = self.predata(&body_args[1]).unwrap();
 					let body_accumulator_data = self.data(body_accumulator_data);
 					self.store_data_in_slot(body_accumulator_slot, 0, body_accumulator_data);
 					let body_block = self.blocks[body.0];
@@ -476,9 +572,14 @@ impl<'a, 'b> Emitter<'a, 'b> {
 		});
 		signature_params.push(AbiParam::new(I64));
 		if let Some(argument) = argument {
-			let data = self.data(argument);
-			arguments.push(data.value());
-			signature_params.push(AbiParam::new(data.ty()));
+			if let Some(ty) = argument.layout().ty() {
+				arguments.push(self.value(argument));
+				signature_params.push(AbiParam::new(ty));
+			} else {
+				let argument = self.data(argument);
+				arguments.push(argument.value());
+				signature_params.push(AbiParam::new(I64));
+			}
 		}
 		if let Some(layout) = result {
 			if let Some(ty) = layout.ty() {
@@ -539,7 +640,7 @@ impl<'a, 'b> Emitter<'a, 'b> {
 			}
 			linear::Value::Enum(_, n) =>
 				Predata::Direct(self.builder.ins().iconst(I8, *n as i64), DataLayout::I8),
-			linear::Value::Procedure(n) => Predata::FuncRef(self.get_func_ref_user(*n)),
+			linear::Value::Procedure(n) => Predata::FuncRef(self.get_func_ref_proc(*n)),
 			linear::Value::Load(load) => self.emit_load(load)?,
 			linear::Value::Function { procedure, captures } => {
 				let layout = DataLayout::FUNCTION;
@@ -849,6 +950,7 @@ impl Predata {
 }
 
 struct SignatureFlags {
+	is_closed: bool,
 	is_environment_erased: bool,
 	is_parameter_erased: bool,
 	is_parameter_oversized: bool,
@@ -914,45 +1016,4 @@ impl From<&linear::Layout> for DataLayout {
 			}
 		}
 	}
-}
-
-fn emit_signature(prototype: &linear::Prototype) -> (Signature, SignatureFlags) {
-	let parameter_ty = prototype.parameter.1.as_ref().map(|x| DataLayout::from(x).ty());
-	let is_environment_erased = prototype.outer.iter().map(|(_, layout)| layout).all(|x| x.is_none());
-	let result_ty = prototype.result.as_ref().map(|x| DataLayout::from(x).ty());
-
-	let mut signature = Signature::new(CALL_CONV);
-	// Environment.
-	signature.params.push(AbiParam::new(POINTER_TYPE));
-
-	// TODO: Reorganize.
-	let mut is_parameter_oversized = false;
-	if let Some(ty) = parameter_ty {
-		signature.params.push(AbiParam::new(if let Some(ty) = ty {
-			ty
-		} else {
-			is_parameter_oversized = true;
-			POINTER_TYPE
-		}));
-	}
-	let mut is_result_oversized = false;
-	if let Some(ty) = result_ty {
-		if let Some(ty) = ty {
-			signature.returns.push(AbiParam::new(ty));
-		} else {
-			is_result_oversized = true;
-			signature.params.push(AbiParam::new(POINTER_TYPE));
-		};
-	}
-
-	(
-		signature,
-		SignatureFlags {
-			is_environment_erased,
-			is_parameter_erased: parameter_ty.is_none(),
-			is_parameter_oversized,
-			is_result_erased: result_ty.is_none(),
-			is_result_oversized,
-		},
-	)
 }

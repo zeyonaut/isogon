@@ -2,10 +2,11 @@ use std::{ffi::OsStr, fs};
 
 use isogon::{
 	common::Fragment,
+	exec::linear::execute,
 	ir::source::lex,
 	op::{
 		elaborate::elaborate,
-		emit::emit_cranelift,
+		emit::emit_object,
 		evaluate::Evaluate,
 		flatten::flatten,
 		linearize::linearize,
@@ -57,7 +58,8 @@ fn run_examples() {
 
 		let program = flatten(&staged_term, kind);
 		let linearized_program = linearize(program);
-		let _emitted_program = emit_cranelift(&linearized_program);
+		let _ = execute(&linearized_program);
+		let _emitted_object = emit_object("program".to_owned(), &linearized_program);
 
 		assert_eq!(
 			pretty_print(&term.evaluate().unevaluate().unelaborate(), &resolver),

@@ -9,7 +9,7 @@ pub struct Program {
 
 #[derive(Debug, Clone)]
 pub struct Prototype {
-	pub outer: Vec<(Label, Option<Layout>)>,
+	pub outer: Option<Vec<(Label, Option<Layout>)>>,
 	pub parameter: (Label, Option<Layout>),
 	pub result: Option<Layout>,
 }

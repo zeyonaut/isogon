@@ -27,14 +27,20 @@ pub fn linearize(program: flat::Program) -> Program {
 		.map(|procedure| {
 			(
 				Prototype {
-					outer: procedure
-						.captured_parameters
-						.iter()
-						.map(|x| (x.name, x.repr.as_ref().map(Into::into)))
-						.collect(),
+					outer: Some(
+						procedure
+							.captured_parameters
+							.iter()
+							.map(|x| (x.name, x.repr.as_ref().map(Into::into)))
+							.collect(),
+					),
 					parameter: (
 						procedure.parameter.as_ref().unwrap().name,
-						procedure.parameter.as_ref().unwrap().repr.as_ref().map(Into::into),
+						if procedure.parameter.as_ref().unwrap().grade == Cost::Fin(0) {
+							None
+						} else {
+							procedure.parameter.as_ref().unwrap().repr.as_ref().map(Into::into)
+						},
 					),
 					result: procedure.result_repr.as_ref().map(Into::into),
 				},

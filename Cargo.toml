@@ -7,7 +7,9 @@ edition = "2021"
 
 [dependencies]
 bpaf = "0.9.11"
-cranelift = "0.106.2"
+cranelift = "0.107.0"
+cranelift-module = "0.107.0"
+cranelift-object = "0.107.0"
 lasso = "0.7.2"
 peg = "0.8.2"
 target-lexicon = "0.12.14"
