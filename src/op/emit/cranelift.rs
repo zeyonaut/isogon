@@ -66,10 +66,11 @@ struct Emitter<'a, 'b> {
 	blocks_to_parameter_slots: Vec<Vec<Option<StackSlot>>>,
 	locals: HashMap<Symbol, Option<Predata>>,
 	result: Option<ResultKind>,
-	func_refs: Vec<FuncRef>,
-	func_ref_free: FuncRef,
-	func_ref_malloc: FuncRef,
+	func_refs: Vec<Option<FuncRef>>,
+	func_ref_free: Option<FuncRef>,
+	func_ref_malloc: Option<FuncRef>,
 	blocks: Vec<Block>,
+	prototypes: Vec<linear::Prototype>,
 }
 
 #[derive(Clone, Copy)]
@@ -88,19 +89,6 @@ impl<'a, 'b> Emitter<'a, 'b> {
 		// TODO: Reorganize.
 		let (signature, signature_flags) = emit_signature(prototype);
 		let mut function = Function::with_name_signature(UserFuncName::User(name), signature);
-		let free_name = function.declare_imported_user_function(FREE_NAME);
-		let malloc_name = function.declare_imported_user_function(MALLOC_NAME);
-
-		let mut procedure_names = Vec::new();
-		for i in 0..procedures.len() {
-			procedure_names.push(
-				function.declare_imported_user_function(UserExternalName {
-					namespace: USER_NAMESPACE,
-					index: i as u32,
-				}),
-			)
-		}
-		// TODO: Declare other procedures here.
 
 		let mut ctx = FunctionBuilderContext::new();
 		let mut builder = FunctionBuilder::new(&mut function, &mut ctx);
@@ -109,36 +97,6 @@ impl<'a, 'b> Emitter<'a, 'b> {
 		builder.append_block_params_for_function_params(entry);
 
 		let mut emitter = {
-			let mut free_signature = Signature::new(CALL_CONV);
-			free_signature.params.push(AbiParam::new(I64));
-			let free_sigref = builder.import_signature(free_signature);
-			let func_ref_free = builder.import_function(ExtFuncData {
-				name: ExternalName::user(free_name),
-				signature: free_sigref,
-				colocated: false,
-			});
-
-			let mut malloc_signature = Signature::new(CALL_CONV);
-			malloc_signature.params.push(AbiParam::new(I64));
-			malloc_signature.returns.push(AbiParam::new(I64));
-			let malloc_sigref = builder.import_signature(malloc_signature);
-			let func_ref_malloc = builder.import_function(ExtFuncData {
-				name: ExternalName::user(malloc_name),
-				signature: malloc_sigref,
-				colocated: false,
-			});
-
-			let mut func_refs = Vec::new();
-			for (procedure_name, (prototype, _)) in procedure_names.iter().zip(procedures) {
-				let (signature, _) = emit_signature(prototype);
-				let sigref = builder.import_signature(signature);
-				func_refs.push(builder.import_function(ExtFuncData {
-					name: ExternalName::user(*procedure_name),
-					signature: sigref,
-					colocated: true,
-				}));
-			}
-
 			let parameters = builder.block_params(entry);
 			let environment =
 				(!signature_flags.is_environment_erased).then(|| Predata::Direct(parameters[0], DataLayout::I64));
@@ -179,9 +137,10 @@ impl<'a, 'b> Emitter<'a, 'b> {
 				result,
 				blocks,
 				blocks_to_parameter_slots: Vec::new(),
-				func_ref_free,
-				func_ref_malloc,
-				func_refs,
+				func_ref_free: None,
+				func_ref_malloc: None,
+				func_refs: vec![None; procedures.len()],
+				prototypes: procedures.iter().map(|(prototype, _)| prototype.clone()).collect(),
 			}
 		};
 
@@ -191,6 +150,60 @@ impl<'a, 'b> Emitter<'a, 'b> {
 		builder.seal_all_blocks();
 		builder.finalize();
 		function
+	}
+
+	fn get_func_ref_free(&mut self) -> FuncRef {
+		if let Some(func_ref) = self.func_ref_free {
+			func_ref
+		} else {
+			let free_name = self.builder.func.declare_imported_user_function(FREE_NAME);
+			let mut free_signature = Signature::new(CALL_CONV);
+			free_signature.params.push(AbiParam::new(I64));
+			let free_sigref = self.builder.import_signature(free_signature);
+			self.func_ref_free = Some(self.builder.import_function(ExtFuncData {
+				name: ExternalName::user(free_name),
+				signature: free_sigref,
+				colocated: false,
+			}));
+			self.func_ref_free.unwrap()
+		}
+	}
+
+	fn get_func_ref_malloc(&mut self) -> FuncRef {
+		if let Some(func_ref) = self.func_ref_malloc {
+			func_ref
+		} else {
+			let malloc_name = self.builder.func.declare_imported_user_function(MALLOC_NAME);
+			let mut malloc_signature = Signature::new(CALL_CONV);
+			malloc_signature.params.push(AbiParam::new(I64));
+			malloc_signature.returns.push(AbiParam::new(I64));
+			let malloc_sigref = self.builder.import_signature(malloc_signature);
+			self.func_ref_malloc = Some(self.builder.import_function(ExtFuncData {
+				name: ExternalName::user(malloc_name),
+				signature: malloc_sigref,
+				colocated: false,
+			}));
+			self.func_ref_malloc.unwrap()
+		}
+	}
+
+	fn get_func_ref_user(&mut self, i: usize) -> FuncRef {
+		if let Some(func_ref) = self.func_refs[i] {
+			func_ref
+		} else {
+			let name = self
+				.builder
+				.func
+				.declare_imported_user_function(UserExternalName { namespace: USER_NAMESPACE, index: i as u32 });
+			let (signature, _) = emit_signature(&self.prototypes[i]);
+			let sigref = self.builder.import_signature(signature);
+			self.func_refs[i] = Some(self.builder.import_function(ExtFuncData {
+				name: ExternalName::user(name),
+				signature: sigref,
+				colocated: true,
+			}));
+			self.func_refs[i].unwrap()
+		}
 	}
 
 	fn preprocess_blocks(&mut self, preblocks: &[linear::Block]) {
@@ -239,7 +252,8 @@ impl<'a, 'b> Emitter<'a, 'b> {
 				let predata = self.predata(value);
 				let pointer = predata.map(|predata| {
 					let size = self.builder.ins().iconst(I64, predata.layout().size as i64);
-					let malloc_inst = self.builder.ins().call(self.func_ref_malloc, &[size]);
+					let func_ref_malloc = self.get_func_ref_malloc();
+					let malloc_inst = self.builder.ins().call(func_ref_malloc, &[size]);
 					let results = self.builder.inst_results(malloc_inst);
 					assert_eq!(results.len(), 1);
 					let pointer = results[0];
@@ -264,7 +278,8 @@ impl<'a, 'b> Emitter<'a, 'b> {
 					None
 				} else {
 					let size = self.builder.ins().iconst(I64, layout.size as i64);
-					let malloc_inst = self.builder.ins().call(self.func_ref_malloc, &[size]);
+					let func_ref_malloc = self.get_func_ref_malloc();
+					let malloc_inst = self.builder.ins().call(func_ref_malloc, &[size]);
 					let results = self.builder.inst_results(malloc_inst);
 					assert_eq!(results.len(), 1);
 					let pointer = results[0];
@@ -285,7 +300,8 @@ impl<'a, 'b> Emitter<'a, 'b> {
 			linear::Statement::Free(pointer) => {
 				let pointer = self.emit_load(pointer).unwrap();
 				let pointer = self.value(pointer);
-				self.builder.ins().call(self.func_ref_free, &[pointer]);
+				let func_ref_free = self.get_func_ref_free();
+				self.builder.ins().call(func_ref_free, &[pointer]);
 			}
 			linear::Statement::Call { symbol, result_repr, procedure, captures, argument } => {
 				let callee = self.predata(procedure).unwrap();
@@ -310,7 +326,8 @@ impl<'a, 'b> Emitter<'a, 'b> {
 							let value = self.value(argument);
 							if let Some(pointer) = self.environment {
 								let pointer = self.value(pointer);
-								self.builder.ins().call(self.func_ref_free, &[pointer]);
+								let func_ref_free = self.get_func_ref_free();
+								self.builder.ins().call(func_ref_free, &[pointer]);
 							}
 							self.builder.ins().return_(&[value]);
 						}
@@ -320,7 +337,8 @@ impl<'a, 'b> Emitter<'a, 'b> {
 							self.copy_memory(dest, src, layout);
 							if let Some(pointer) = self.environment {
 								let pointer = self.value(pointer);
-								self.builder.ins().call(self.func_ref_free, &[pointer]);
+								let func_ref_free = self.get_func_ref_free();
+								self.builder.ins().call(func_ref_free, &[pointer]);
 							}
 							self.builder.ins().return_(&[]);
 						}
@@ -407,7 +425,7 @@ impl<'a, 'b> Emitter<'a, 'b> {
 					// Generate exit prelude.
 					self.builder.switch_to_block(exit_prelude);
 					let exit_accumulator_slot = self.blocks_to_parameter_slots[exit.0][0].unwrap();
-					let exit_accumulator_data = self.predata(&exit_arg).unwrap();
+					let exit_accumulator_data = self.predata(exit_arg).unwrap();
 					let exit_accumulator_data = self.data(exit_accumulator_data);
 					self.store_data_in_slot(exit_accumulator_slot, 0, exit_accumulator_data);
 					let exit_block = self.blocks[exit.0];
@@ -521,7 +539,7 @@ impl<'a, 'b> Emitter<'a, 'b> {
 			}
 			linear::Value::Enum(_, n) =>
 				Predata::Direct(self.builder.ins().iconst(I8, *n as i64), DataLayout::I8),
-			linear::Value::Procedure(n) => Predata::FuncRef(self.func_refs[*n]),
+			linear::Value::Procedure(n) => Predata::FuncRef(self.get_func_ref_user(*n)),
 			linear::Value::Load(load) => self.emit_load(load)?,
 			linear::Value::Function { procedure, captures } => {
 				let layout = DataLayout::FUNCTION;

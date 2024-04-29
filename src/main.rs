@@ -95,7 +95,7 @@ pub fn run(source: &str) {
 	println!("Emission complete.");
 	println!();
 	println!("{}", emitted_program.entry.display());
-	for (i, function) in emitted_program.functions.iter().enumerate() {
+	for function in &emitted_program.functions {
 		println!("{}", function.display());
 	}
 }

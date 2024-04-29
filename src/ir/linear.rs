@@ -7,7 +7,7 @@ pub struct Program {
 	pub procedures: Vec<(Prototype, Procedure)>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Prototype {
 	pub outer: Vec<(Label, Option<Layout>)>,
 	pub parameter: (Label, Option<Layout>),

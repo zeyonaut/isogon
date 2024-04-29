@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-	common::{Binder, Cost, Cpy, Index, Label, Level, Repr, ReprAtom, UniverseKind},
+	common::{Binder, Cost, Cpy, Index, Label, Level, Repr, UniverseKind},
 	ir::{
 		flat::{Capture, Parameter, Procedure, Program, Substitute, Term, Variable},
 		syntax::DynamicTerm,
