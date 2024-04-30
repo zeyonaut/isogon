@@ -28,7 +28,7 @@ pub enum Preterm<L, E> {
 	Variable(Name),
 	Index(Index),
 
-	Let { is_meta: bool, grade: Option<Cost>, ty: Box<E>, argument: Box<E>, tail: Binder<L, Box<E>> },
+	Let { is_meta: bool, grade: Option<Cost>, ty: Option<Box<E>>, argument: Box<E>, tail: Binder<L, Box<E>> },
 
 	SwitchLevel(Box<E>),
 

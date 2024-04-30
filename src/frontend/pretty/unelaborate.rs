@@ -21,7 +21,7 @@ impl Unelaborate for StaticTerm {
 			StaticTerm::Let { grade, ty, argument, tail } => Preterm::Let {
 				is_meta: true,
 				grade: Some(grade),
-				ty: ty.unelaborate().into(),
+				ty: Some(ty.unelaborate().into()),
 				argument: argument.unelaborate().into(),
 				tail: tail.unelaborate(),
 			},
@@ -141,15 +141,14 @@ impl Unelaborate for DynamicTerm {
 			DynamicTerm::Def { grade, ty, argument, tail } => Preterm::Let {
 				is_meta: true,
 				grade: Some(grade),
-				ty: ty.unelaborate().into(),
+				ty: Some(ty.unelaborate().into()),
 				argument: argument.unelaborate().into(),
 				tail: tail.unelaborate(),
 			},
-
 			DynamicTerm::Let { grade, ty, argument_kind: _, argument, tail } => Preterm::Let {
 				is_meta: false,
 				grade: Some(grade.into()),
-				ty: ty.unelaborate().into(),
+				ty: Some(ty.unelaborate().into()),
 				argument: argument.unelaborate().into(),
 				tail: tail.unelaborate(),
 			},

@@ -203,14 +203,24 @@ impl ProcedureBuilder {
 				Variable::Local(level) => self.level_to_producer[level.0].next(),
 			}),
 
-			Term::Let { grade, argument_repr: _, argument, tail } =>
+			Term::Let { grade, argument_kind, argument, tail } =>
 				if *grade == 0 {
 					self.generate_with(frame, tail, [Value::None].map(ValueProducer::Value))?
-				} else if *grade == 1 {
+				} else if *grade == 1 || argument_kind.copy == Cpy::Tr {
 					let (frame, argument) = self.generate(frame, argument)?.unframe();
 					self.generate_with(frame, tail, [argument].map(ValueProducer::Value))?
 				} else {
-					unimplemented!();
+					let (frame, argument) = self
+						.generate(
+							frame,
+							&Term::Repeat { grade: *grade, copy: argument_kind.copy, term: argument.clone() },
+						)?
+						.unframe();
+					self.generate_with(
+						frame,
+						tail,
+						[ValueProducer::Exp(0, argument_kind.repr.as_ref().map(Into::into), argument)],
+					)?
 				},
 
 			Term::Repeat { grade, copy, term } => {

@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, collections::HashMap};
 
-use crate::common::{Binder, Cost, Cpy, Label, Level, Name, Repr};
+use crate::common::{Binder, Cost, Cpy, Label, Level, Name, Repr, UniverseKind};
 
 #[derive(Clone, Debug)]
 pub enum Term {
@@ -13,7 +13,7 @@ pub enum Term {
 	// Let-expressions.
 	Let {
 		grade: u64,
-		argument_repr: Option<Repr>,
+		argument_kind: UniverseKind,
 		argument: Box<Self>,
 		tail: Binder<Label, Box<Self>>,
 	},
@@ -132,7 +132,7 @@ impl Substitute for Term {
 			Term::Variable(_, variable) => variable.substitute(substitution, minimum_level),
 
 			// Let-expressions.
-			Term::Let { grade: _, argument_repr: _, argument, tail } => {
+			Term::Let { grade: _, argument_kind: _, argument, tail } => {
 				argument.substitute(substitution, minimum_level);
 				tail.substitute(substitution, minimum_level);
 			}

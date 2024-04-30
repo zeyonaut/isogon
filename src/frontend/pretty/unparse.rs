@@ -21,11 +21,14 @@ pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver
 			let parameter = resolve(interner, &tail.parameter());
 			write!(
 				f,
-				"{} {}{parameter} : ",
+				"{} {}{parameter}",
 				if *is_meta { "def" } else { "let" },
 				if let Some(grade) = grade { optional_grade_prefix(*grade, parameter) } else { "".into() }
 			)?;
-			print(ty, f, interner)?;
+			if let Some(ty) = ty {
+				write!(f, " : ")?;
+				print(ty, f, interner)?;
+			}
 			write!(f, " = ")?;
 			print(argument, f, interner)?;
 			write!(f, "; ")?;

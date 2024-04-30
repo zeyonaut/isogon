@@ -50,7 +50,7 @@ pub enum ElaborationErrorKind {
 	ExpectedDynamicFoundStaticVariable,
 	UsedNonCrispLockedVariable,
 	VariableHasUsesLeft(u64),
-	SynthesizedLambdaOrPair,
+	SynthesizedLambda,
 	InvalidFormer,
 	InvalidConstructor,
 	InvalidProjector,
@@ -409,7 +409,7 @@ impl Context {
 
 			// Let-expressions.
 			Preterm::Let { is_meta: true, grade, ty, argument, tail } => self.elaborate_static_let(
-				PreLet { grade, ty: *ty, argument: *argument, tail },
+				PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail },
 				(),
 				|ctx, tail_body, ()| ctx.synthesize_static(tail_body),
 				|grade, ty, argument, tail| {
@@ -472,7 +472,7 @@ impl Context {
 					Cpy::Tr,
 				)
 			}
-			Preterm::Lambda { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
+			Preterm::Lambda { .. } => return Err(ElaborationErrorKind::SynthesizedLambda.at(expr.range)),
 			Preterm::Call { callee, argument } => {
 				let (callee, scrutinee_ty, _) = self.synthesize_static(*callee)?;
 				let StaticValue::IndexedProduct { fragment, base, family_copy, family, .. } = scrutinee_ty else {
@@ -503,7 +503,21 @@ impl Context {
 					Cpy::Tr,
 				)
 			}
-			Preterm::Pair { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
+			Preterm::Pair { basepoint, fiberpoint } => {
+				let (basepoint, base, base_copy) = self.synthesize_static(*basepoint)?;
+				let (fiberpoint, fiber, fiber_copy) = self.synthesize_static(*fiberpoint)?;
+				let family = bind([None], fiber.unevaluate_in(self.len() + 1)).evaluate();
+				(
+					StaticTerm::Pair { basepoint: basepoint.into(), fiberpoint: fiberpoint.into() },
+					StaticValue::IndexedSum {
+						base_copy,
+						base: base.into(),
+						family_copy: fiber_copy,
+						family: family.into(),
+					},
+					base_copy.max(fiber_copy),
+				)
+			}
 			Preterm::SgLet { grade, argument, tail } => self.elaborate_static_sg_let(
 				PreSgLet { grade, argument: *argument, tail },
 				(),
@@ -816,7 +830,7 @@ impl Context {
 		Ok(match (preterm, ty) {
 			// Let-expressions.
 			(Preterm::Let { is_meta: true, grade, ty, argument, tail }, tail_ty) => self.elaborate_static_let(
-				PreLet { grade, ty: *ty, argument: *argument, tail },
+				PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail },
 				tail_ty,
 				Self::verify_static,
 				|grade, ty, argument, tail| StaticTerm::Let {
@@ -927,7 +941,7 @@ impl Context {
 			Preterm::Let { is_meta, grade, ty, argument, tail } =>
 				if is_meta {
 					self.elaborate_static_let(
-						PreLet { grade, ty: *ty, argument: *argument, tail },
+						PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail },
 						(),
 						|ctx, tail_body, ()| ctx.synthesize_dynamic(tail_body),
 						|grade, ty, argument, tail| {
@@ -946,7 +960,7 @@ impl Context {
 					)?
 				} else {
 					self.elaborate_dynamic_let(
-						PreLet { grade, ty: *ty, argument: *argument, tail },
+						PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail },
 						(),
 						|ctx, tail_body, ()| ctx.synthesize_dynamic(tail_body),
 						|grade, ty, argument_kind, argument, tail| {
@@ -1020,7 +1034,7 @@ impl Context {
 					KindValue::ty(),
 				)
 			}
-			Preterm::Lambda { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
+			Preterm::Lambda { .. } => return Err(ElaborationErrorKind::SynthesizedLambda.at(expr.range)),
 			Preterm::Call { callee, argument } => {
 				let (scrutinee, scrutinee_ty, _) = self.synthesize_dynamic(*callee)?;
 				let DynamicValue::IndexedProduct { fragment, base, family_kind, family, .. } = scrutinee_ty
@@ -1067,7 +1081,21 @@ impl Context {
 					KindValue::ty(),
 				)
 			}
-			Preterm::Pair { .. } => return Err(ElaborationErrorKind::SynthesizedLambdaOrPair.at(expr.range)),
+			Preterm::Pair { basepoint, fiberpoint } => {
+				let (basepoint, base, base_kind) = self.synthesize_dynamic(*basepoint)?;
+				let (fiberpoint, fiber, fiber_kind) = self.synthesize_dynamic(*fiberpoint)?;
+				let family = bind([None], fiber.unevaluate_in(self.len() + 1)).evaluate();
+				(
+					DynamicTerm::Pair { basepoint: basepoint.into(), fiberpoint: fiberpoint.into() },
+					DynamicValue::IndexedSum {
+						base_kind: base_kind.clone().into(),
+						base: base.into(),
+						family_kind: fiber_kind.clone().into(),
+						family: family.into(),
+					},
+					KindValue::pair(self.len(), base_kind, fiber_kind),
+				)
+			}
 			Preterm::SgLet { grade, argument, tail } => self.elaborate_dynamic_sg_let(
 				PreSgLet { grade, argument: *argument, tail },
 				(),
@@ -1494,7 +1522,7 @@ impl Context {
 			(Preterm::Let { is_meta, grade, ty, argument, tail }, tail_ty) =>
 				if is_meta {
 					self.elaborate_static_let(
-						PreLet { grade, ty: *ty, argument: *argument, tail },
+						PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail },
 						tail_ty,
 						Self::verify_dynamic,
 						|grade, ty, argument, tail| DynamicTerm::Def {
@@ -1506,7 +1534,7 @@ impl Context {
 					)?
 				} else {
 					self.elaborate_dynamic_let(
-						PreLet { grade, ty: *ty, argument: *argument, tail },
+						PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail },
 						tail_ty,
 						Self::verify_dynamic,
 						|grade, ty, argument_kind, argument, tail| DynamicTerm::Let {
@@ -1646,10 +1674,20 @@ impl Context {
 		produce_let: impl FnOnce(Cost, StaticTerm, StaticTerm, Binder<Label, B>) -> B,
 	) -> Result<B, ElaborationError> {
 		let grade = grade.unwrap_or_else(|| if tail.parameter().label.is_some() { 1 } else { 0 }.into());
-		let (ty, ty_c) = self.elaborate_static_type(ty)?;
-		let ty_value = ty.clone().evaluate_in(&self.environment);
-		let argument =
-			self.amplify(grade).erase_if(grade == 0.into()).verify_static(argument, ty_value.clone())?;
+
+		let (ty_c, ty_value, ty, argument) = if let Some(ty) = ty {
+			let (ty, ty_c) = self.elaborate_static_type(ty)?;
+			let ty_value = ty.clone().evaluate_in(&self.environment);
+			let argument =
+				self.amplify(grade).erase_if(grade == 0.into()).verify_static(argument, ty_value.clone())?;
+			(ty_c, ty_value, ty, argument)
+		} else {
+			let (argument, ty_value, ty_c) =
+				self.amplify(grade).erase_if(grade == 0.into()).synthesize_static(argument)?;
+			let ty = ty_value.unevaluate_in(self.len());
+			(ty_c, ty_value, ty, argument)
+		};
+
 		// TODO: Lazy evaluation.
 		let argument_value = argument.clone().evaluate_in(&self.environment);
 		let tail_b = self
@@ -1672,9 +1710,18 @@ impl Context {
 				ElaborationErrorKind::InvalidGrade.at((tail.parameter().locus, tail.parameter().locus + 1)),
 			);
 		};
-		let (ty, argument_kind) = self.elaborate_dynamic_type(ty)?;
-		let ty_value = ty.clone().evaluate_in(&self.environment);
-		let argument = self.amplify(grade).erase_if(grade == 0).verify_dynamic(argument, ty_value.clone())?;
+		let (argument_kind, ty_value, ty, argument) = if let Some(ty) = ty {
+			let (ty, argument_kind) = self.elaborate_dynamic_type(ty)?;
+			let ty_value = ty.clone().evaluate_in(&self.environment);
+			let argument =
+				self.amplify(grade).erase_if(grade == 0).verify_dynamic(argument, ty_value.clone())?;
+			(argument_kind, ty_value, ty, argument)
+		} else {
+			let (argument, ty_value, argument_kind) =
+				self.amplify(grade).erase_if(grade == 0).synthesize_dynamic(argument)?;
+			let ty = ty_value.unevaluate_in(self.len());
+			(argument_kind, ty_value, ty, argument)
+		};
 		// TODO: Lazy evaluation.
 		let argument_value = argument.clone().evaluate_in(&self.environment);
 		let tail_b = self
@@ -1797,7 +1844,7 @@ impl Context {
 
 struct PreLet {
 	grade: Option<Cost>,
-	ty: Expression,
+	ty: Option<Expression>,
 	argument: Expression,
 	tail: Binder<ParsedLabel, Box<Expression>>,
 }

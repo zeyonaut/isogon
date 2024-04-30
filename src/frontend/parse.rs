@@ -172,8 +172,8 @@ peg::parser! {
 		rule preterm() -> Expression
 			= init:position!() preterm:(
 				is_meta:([Token::Keyword(Keyword::Let)] {false} / [Token::Keyword(Keyword::Def)] {true})
-					_ grade:(cost_annotation())? _ name:optional_parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
-				{ Preterm::Let { is_meta, grade, ty: ty.into(), argument: argument.into(), tail: bind([name], tail) }}
+					_ grade:(cost_annotation())? _ name:optional_parameter() _ ty:([Token::Colon] _ ty:spine_headed() {ty})? _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
+				{ Preterm::Let { is_meta, grade, ty: ty.map(Box::new), argument: argument.into(), tail: bind([name], tail) }}
 				/ [Token::Keyword(Keyword::Let)] _ grade:(cost_annotation())? _ [Token::At] grade_argument:cost_annotation() _ name:optional_parameter() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() {
 					Preterm::ExpLet { grade, grade_argument, argument: argument.into(), tail: bind([name], tail) }
 				}

@@ -52,7 +52,7 @@ impl Flattener {
 				let kind = argument_kind.clone().stage();
 				Term::Let {
 					grade: *grade,
-					argument_repr: kind.repr.clone(),
+					argument_kind: kind.clone(),
 					argument: if *grade == 0 {
 						Term::Irrelevant
 					} else {
