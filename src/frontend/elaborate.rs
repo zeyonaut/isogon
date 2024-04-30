@@ -16,14 +16,26 @@ use crate::{
 			Projector,
 		},
 		semantics::{DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue, Value},
-		syntax::{DynamicTerm, KindTerm, StaticTerm},
+		syntax::{CoreProgram, DynamicTerm, KindTerm, StaticTerm},
 	},
 };
 
 /// Elaborates a dynamic preterm to a dynamic term and synthesizes its type.
-pub fn elaborate(program: ParsedProgram) -> Result<(DynamicTerm, DynamicValue, KindValue), ElaborationError> {
-	let (term, ty, kind) = Context::empty(program.fragment).synthesize_dynamic(program.expr)?;
-	Ok((term, ty, kind))
+pub fn elaborate(program: ParsedProgram) -> Result<CoreProgram, ElaborationError> {
+	let mut context = Context::empty(program.fragment);
+	if let Some((input, domain)) = program.input {
+		let (domain, domain_kind) = context.elaborate_dynamic_type(domain)?;
+		let domain_value = domain.evaluate();
+		let (binder, ty, kind) = context
+			.extend(bind([input], program.expr))
+			.bind_dynamic(false, 1.into(), domain_kind.clone(), domain_value)
+			.map(|context, body| context.synthesize_dynamic(body))?
+			.retract2();
+		Ok(CoreProgram { input: Some((input.label, domain_kind)), term: binder.body, ty, kind })
+	} else {
+		let (term, ty, kind) = context.synthesize_dynamic(program.expr)?;
+		Ok(CoreProgram { input: None, term, ty, kind })
+	}
 }
 
 #[derive(Debug, Clone)]

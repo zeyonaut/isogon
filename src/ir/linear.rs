@@ -2,15 +2,15 @@ use crate::common::{ArraySize, Field, Label, Level, Repr, ReprAtom, Symbol};
 
 #[derive(Debug)]
 pub struct Program {
+	pub entry_prototype: Prototype,
 	pub entry: Procedure,
-	pub repr: Option<Layout>,
 	pub procedures: Vec<(Prototype, Procedure)>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Prototype {
 	pub outer: Option<Vec<(Label, Option<Layout>)>>,
-	pub parameter: (Label, Option<Layout>),
+	pub parameter: Option<(Label, Option<Layout>)>,
 	pub result: Option<Layout>,
 }
 

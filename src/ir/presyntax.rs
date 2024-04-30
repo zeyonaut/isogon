@@ -3,6 +3,7 @@ use crate::common::{AnyBinder, Binder, Cost, Cpy, Field, Fragment, Index, Label,
 #[derive(Debug, Clone)]
 pub struct ParsedProgram {
 	pub fragment: Fragment,
+	pub input: Option<(ParsedLabel, Expression)>,
 	pub expr: Expression,
 }
 

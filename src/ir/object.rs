@@ -1,7 +1,12 @@
 use std::{fmt::Debug, rc::Rc};
 
 use super::syntax::{DynamicTerm, StaticTerm};
-use crate::common::{Closure, Cpy, Field, Fragment, Index, Level, Name, Repr, UniverseKind};
+use crate::common::{Closure, Cpy, Field, Fragment, Index, Label, Level, Name, Repr, UniverseKind};
+pub struct ObjectProgram {
+	pub input: Option<(Label, UniverseKind)>,
+	pub term: DynamicTerm,
+	pub kind: UniverseKind,
+}
 
 #[derive(Clone)]
 pub enum StaticValue {

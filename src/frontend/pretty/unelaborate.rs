@@ -136,7 +136,8 @@ impl Unelaborate for DynamicTerm {
 	type Pre = PurePreterm;
 	fn unelaborate(self) -> Self::Pre {
 		PurePreterm(match self {
-			DynamicTerm::Variable(name, _) => Preterm::Variable(name.unwrap()),
+			DynamicTerm::Variable(Some(name), _) => Preterm::Variable(name),
+			DynamicTerm::Variable(None, index) => Preterm::Index(index),
 
 			DynamicTerm::Def { grade, ty, argument, tail } => Preterm::Let {
 				is_meta: true,

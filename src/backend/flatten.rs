@@ -5,17 +5,33 @@ use crate::{
 	common::{Binder, Cost, Cpy, Index, Label, Level, Repr, UniverseKind},
 	ir::{
 		flat::{Capture, Parameter, Procedure, Program, Substitute, Term, Variable},
+		object::ObjectProgram,
 		syntax::DynamicTerm,
 	},
 };
 
 /// Performs closure-conversion on an object term, hoisting all functions to top level.
-pub fn flatten(value: &DynamicTerm, kind: UniverseKind) -> Program {
+pub fn flatten(object_program: &ObjectProgram) -> Program {
 	let mut flattener = Flattener { amplifiers: vec![], context: vec![], procedures: vec![] };
+	let entry = if let Some((input, kind)) = &object_program.input {
+		flattener.context.push(Parameter {
+			name: *input,
+			grade: if kind.copy == Cpy::Tr { Cost::Inf } else { Cost::Fin(1) },
+			repr: kind.repr.clone(),
+		});
+		let mut entry = flattener.flatten(&object_program.term, &mut vec![0.into()]);
+		entry.substitute(&HashMap::new(), Level(0));
+		entry
+	} else {
+		flattener.flatten(&object_program.term, &mut vec![])
+	};
 
-	let entry = flattener.flatten(value, &mut vec![]);
-
-	Program { entry, repr: kind.repr, procedures: flattener.procedures }
+	Program {
+		input: object_program.input.clone(),
+		entry,
+		repr: object_program.kind.repr.clone(),
+		procedures: flattener.procedures,
+	}
 }
 
 struct Flattener {

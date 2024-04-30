@@ -187,8 +187,11 @@ peg::parser! {
 			= [Token::Pragma(Pragma::Fragment)] _ number:number() {if number > 0 {Fragment::Material} else {Fragment::Logical}}
 			/ {Fragment::Material}
 
+		rule pragma_input() -> (ParsedLabel, Expression)
+			= [Token::Pragma(Pragma::Input)] _ label:optional_parameter() _ [Token::Colon] _ ty:spine_headed() {(label, ty)}
+
 		pub rule program() -> ParsedProgram
-			= _ fragment:pragma_fragment() _ expr:preterm() _ {ParsedProgram {fragment, expr}}
+			= _ fragment:pragma_fragment() _ input:pragma_input()? _ expr:preterm() _ {ParsedProgram {fragment, input, expr}}
 
   }
 }

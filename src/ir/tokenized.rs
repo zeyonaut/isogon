@@ -36,6 +36,7 @@ pub enum Token {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Pragma {
 	Fragment,
+	Input,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

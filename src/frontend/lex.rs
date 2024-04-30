@@ -137,6 +137,7 @@ impl<'s> Scanner<'s> {
 
 fn pragma(string: &str) -> Option<Token> {
 	Some(Token::Pragma(match string {
+		"input" => Pragma::Input,
 		"fragment" => Pragma::Fragment,
 		_ => return None,
 	}))

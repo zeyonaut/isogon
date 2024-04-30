@@ -1,15 +1,24 @@
 use crate::{
 	common::{Binder, Closure, Cpy, Field, Label, Level, Repr, UniverseKind},
+	frontend::unevaluate::Unevaluate,
 	ir::{
-		object::{DynamicValue, Environment, StaticValue, Value},
-		syntax::{DynamicTerm, KindTerm, StaticTerm},
+		object::{DynamicValue, Environment, ObjectProgram, StaticValue, Value},
+		syntax::{CoreProgram, DynamicTerm, KindTerm, StaticTerm},
 	},
 };
 
-pub fn stage(dynamic_term: DynamicTerm) -> DynamicTerm {
+pub fn stage(core_program: CoreProgram) -> ObjectProgram {
 	use super::unstage::Unstage;
-
-	dynamic_term.stage().unstage()
+	let kind = core_program.kind.unevaluate().stage();
+	if let Some((input, domain_kind)) = core_program.input {
+		let environment = Environment::new().extend([Value::Dynamic(DynamicValue::Variable(input, Level(0)))]);
+		let term = core_program.term.stage_in(&environment).unstage_in(Level(1));
+		let domain_kind = domain_kind.unevaluate().stage();
+		ObjectProgram { input: Some((input, domain_kind)), term, kind }
+	} else {
+		let term = core_program.term.stage().unstage();
+		ObjectProgram { input: None, term, kind }
+	}
 }
 
 pub trait Stage {

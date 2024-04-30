@@ -2,13 +2,7 @@ use std::{fs::File, io::Write, path::Path};
 
 use bpaf::{construct, long, short, Parser};
 use isogon::{
-	backend::{
-		emit::emit_object,
-		flatten::flatten,
-		interpret::execute,
-		linearize::linearize,
-		stage::{stage, Stage as _},
-	},
+	backend::{emit::emit_object, flatten::flatten, interpret::execute, linearize::linearize, stage::stage},
 	common::Fragment,
 	frontend::{
 		elaborate::elaborate,
@@ -53,29 +47,35 @@ fn run(options: Options) {
 	println!();
 
 	// Elaboration.
-	let (term, ty, kind) = match elaborate(parsed_program) {
+	let core_program = match elaborate(parsed_program) {
 		Ok(x) => x,
 		Err(e) => {
 			report_elaboration_error(lexed_source, &resolver, e);
 			panic!()
 		}
 	};
-	let kind = kind.unevaluate().stage();
 	println!("Elaboration complete.");
-	println!("Elaborated term: {}", pretty_print(&term.clone().unelaborate(), &resolver));
-	println!("Synthesized type: {}", pretty_print(&ty.unevaluate().unelaborate(), &resolver));
-	println!("Evaluation: {}", pretty_print(&term.clone().evaluate().unevaluate().unelaborate(), &resolver));
+	println!("Elaborated term: {}", pretty_print(&core_program.term.clone().unelaborate(), &resolver));
+	println!("Synthesized type: {}", pretty_print(&core_program.ty.unevaluate().unelaborate(), &resolver));
+	if core_program.input.is_none() {
+		println!(
+			"Evaluation: {}",
+			pretty_print(&core_program.term.clone().evaluate().unevaluate().unelaborate(), &resolver)
+		);
+	}
 
 	println!();
 
 	// Staging.
-	let staged_term = stage(term);
+	let object_program = stage(core_program);
 	println!("Staging complete.");
-	println!("Staged term: {}", pretty_print(&staged_term.clone().unelaborate(), &resolver));
-	println!(
-		"Evaluation: {}",
-		pretty_print(&staged_term.clone().evaluate().unevaluate().unelaborate(), &resolver)
-	);
+	println!("Staged term: {}", pretty_print(&object_program.term.clone().unelaborate(), &resolver));
+	if object_program.input.is_none() {
+		println!(
+			"Evaluation: {}",
+			pretty_print(&object_program.term.clone().evaluate().unevaluate().unelaborate(), &resolver)
+		);
+	}
 
 	// Early return for irrelevant programs.
 	if fragment == Fragment::Logical {
@@ -85,13 +85,13 @@ fn run(options: Options) {
 	println!();
 
 	// Closure conversion.
-	let flat_term = flatten(&staged_term, kind);
+	let flat_program = flatten(&object_program);
 	println!("Closure conversion complete.");
 
 	println!();
 
 	// Linearization.
-	let linearized_program = linearize(flat_term);
+	let linearized_program = linearize(flat_program);
 	println!("Linearization complete.");
 
 	if options.show_lir {
@@ -100,9 +100,11 @@ fn run(options: Options) {
 		pretty_print_linear(&mut printed, &linearized_program).unwrap();
 		print!("{printed}");
 	}
-	let (heap, result) = execute(&linearized_program);
-	println!("Execution heap: {heap:?}");
-	println!("Execution result: {result:?}");
+	if linearized_program.entry_prototype.parameter.is_none() {
+		let (heap, result) = execute(&linearized_program);
+		println!("Execution heap: {heap:?}");
+		println!("Execution result: {result:?}");
+	}
 
 	println!();
 

@@ -14,11 +14,24 @@ use crate::{
 /// Converts a hoisted program into a control-flow graph representation.
 pub fn linearize(program: flat::Program) -> Program {
 	// FIXME: Pass an actual representation of the entry.
+	let entry_prototype = Prototype {
+		outer: None,
+		parameter: if let Some((input, kind)) = &program.input {
+			Some((*input, kind.repr.as_ref().map(Into::into)))
+		} else {
+			None
+		},
+		result: program.repr.clone().as_ref().map(Into::into),
+	};
 	let entry = build_procedure(flat::Procedure {
 		captured_parameters: Vec::new(),
-		parameter: None,
+		parameter: if let Some((input, kind)) = program.input {
+			Some(flat::Parameter { name: input, grade: 1.into(), repr: kind.repr })
+		} else {
+			None
+		},
 		body: program.entry,
-		result_repr: None,
+		result_repr: program.repr.clone(),
 	});
 
 	let procedures = program
@@ -34,14 +47,14 @@ pub fn linearize(program: flat::Program) -> Program {
 							.map(|x| (x.name, x.repr.as_ref().map(Into::into)))
 							.collect(),
 					),
-					parameter: (
+					parameter: Some((
 						procedure.parameter.as_ref().unwrap().name,
 						if procedure.parameter.as_ref().unwrap().grade == Cost::Fin(0) {
 							None
 						} else {
 							procedure.parameter.as_ref().unwrap().repr.as_ref().map(Into::into)
 						},
-					),
+					)),
 					result: procedure.result_repr.as_ref().map(Into::into),
 				},
 				build_procedure(procedure),
@@ -49,7 +62,7 @@ pub fn linearize(program: flat::Program) -> Program {
 		})
 		.collect::<Vec<_>>();
 
-	Program { entry, repr: program.repr.as_ref().map(Into::into), procedures }
+	Program { entry_prototype, entry, procedures }
 }
 
 enum ValueProducer {

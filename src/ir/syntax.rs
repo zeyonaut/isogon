@@ -1,4 +1,15 @@
-use crate::common::{ArraySize, Binder, Cost, Cpy, Field, Fragment, Index, Label, Name, Repr, ReprAtom};
+use crate::{
+	common::{ArraySize, Binder, Cost, Cpy, Field, Fragment, Index, Label, Name, Repr, ReprAtom},
+	ir::semantics::{DynamicValue, KindValue},
+};
+
+#[derive(Clone)]
+pub struct CoreProgram {
+	pub input: Option<(Label, KindValue)>,
+	pub term: DynamicTerm,
+	pub ty: DynamicValue,
+	pub kind: KindValue,
+}
 
 #[derive(Clone, Debug)]
 pub enum StaticTerm {

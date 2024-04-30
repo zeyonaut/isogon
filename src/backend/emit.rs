@@ -50,10 +50,7 @@ pub fn emit_object(name: String, program: &linear::Program) -> CraneliftProgram 
 	};
 
 	let (entry_id, entry_flags) = {
-		let (entry_signature, entry_flags) = emit_signature(
-			&mut object_module,
-			&linear::Prototype { outer: None, parameter: (None, None), result: program.repr.clone() },
-		);
+		let (entry_signature, entry_flags) = emit_signature(&mut object_module, &program.entry_prototype);
 		let entry_id = object_module.declare_function("entry", Linkage::Export, &entry_signature).unwrap();
 		(entry_id, entry_flags)
 	};
@@ -74,13 +71,8 @@ pub fn emit_object(name: String, program: &linear::Program) -> CraneliftProgram 
 	let mut emitter_context =
 		EmitterContext { object_module: &mut object_module, free_id, malloc_id, proc_ids: &proc_ids };
 
-	let entry = emit_procedure(
-		&mut emitter_context,
-		entry_id,
-		entry_flags,
-		&linear::Prototype { outer: None, parameter: (None, None), result: program.repr.clone() },
-		&program.entry,
-	);
+	let entry =
+		emit_procedure(&mut emitter_context, entry_id, entry_flags, &program.entry_prototype, &program.entry);
 
 	let mut functions = Vec::new();
 	for ((proc_id, proc_flags), (prototype, procedure)) in
@@ -136,12 +128,12 @@ fn emit_procedure(
 					Predata::Indirect(
 						parameters[!signature_flags.is_closed as usize],
 						0,
-						prototype.parameter.1.as_ref().unwrap().into(),
+						prototype.parameter.as_ref().unwrap().1.as_ref().unwrap().into(),
 					)
 				} else {
 					Predata::Direct(
 						parameters[!signature_flags.is_closed as usize],
-						prototype.parameter.1.as_ref().unwrap().into(),
+						prototype.parameter.as_ref().unwrap().1.as_ref().unwrap().into(),
 					)
 				}
 			});
@@ -188,7 +180,8 @@ fn emit_signature(
 	object_module: &mut ObjectModule,
 	prototype: &linear::Prototype,
 ) -> (Signature, SignatureFlags) {
-	let parameter_ty = prototype.parameter.1.as_ref().map(|x| DataLayout::from(x).ty());
+	let parameter_ty =
+		prototype.parameter.as_ref().and_then(|x| x.1.as_ref().map(|x| DataLayout::from(x).ty()));
 	let is_closed = prototype.outer.is_none();
 	let is_environment_erased = if is_closed {
 		true

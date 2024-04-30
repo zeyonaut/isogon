@@ -1,13 +1,7 @@
 use std::{ffi::OsStr, fs};
 
 use isogon::{
-	backend::{
-		emit::emit_object,
-		flatten::flatten,
-		interpret::execute,
-		linearize::linearize,
-		stage::{stage, Stage as _},
-	},
+	backend::{emit::emit_object, flatten::flatten, interpret::execute, linearize::linearize, stage::stage},
 	common::Fragment,
 	frontend::{
 		elaborate::elaborate,
@@ -49,22 +43,21 @@ fn run_examples() {
 		let lexed_source = lex(&source).ok().unwrap();
 		let (parsed_program, resolver) = parse(&lexed_source).ok().unwrap();
 		let fragment = parsed_program.fragment;
-		let (term, _, kind) = elaborate(parsed_program).unwrap();
-		let staged_term = stage(term.clone());
-		let kind = kind.unevaluate().stage();
+		let core_program = elaborate(parsed_program).unwrap();
+		let object_program = stage(core_program.clone());
+
+		assert_eq!(
+			pretty_print(&core_program.term.evaluate().unevaluate().unelaborate(), &resolver),
+			pretty_print(&object_program.term.clone().evaluate().unevaluate().unelaborate(), &resolver)
+		);
 
 		if fragment == Fragment::Logical {
 			return;
 		}
 
-		let program = flatten(&staged_term, kind);
-		let linearized_program = linearize(program);
+		let flat_program = flatten(&object_program);
+		let linearized_program = linearize(flat_program);
 		let _ = execute(&linearized_program);
 		let _emitted_object = emit_object("program".to_owned(), &linearized_program);
-
-		assert_eq!(
-			pretty_print(&term.evaluate().unevaluate().unelaborate(), &resolver),
-			pretty_print(&staged_term.clone().evaluate().unevaluate().unelaborate(), &resolver)
-		);
 	}
 }
