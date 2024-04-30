@@ -1,10 +1,10 @@
 use crate::{
+	backend::stage::StageAuto,
 	common::{bind, Binder, Closure, Cpy, Index, Label, Level, UniverseKind},
 	ir::{
 		object::{DynamicValue, Environment},
 		syntax::{DynamicTerm, KindTerm, StaticTerm},
 	},
-	op::stage::StageAuto,
 };
 
 pub trait Unstage {

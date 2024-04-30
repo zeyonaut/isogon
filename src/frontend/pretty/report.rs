@@ -2,19 +2,19 @@ use lasso::Resolver;
 use peg::error::ParseError;
 
 use crate::{
-	ir::source::{LexError, LexErrorKind, LexedSource},
-	op::{
+	frontend::{
 		elaborate::{ElaborationError, ElaborationErrorKind},
-		unelaborate::Unelaborate as _,
-		unparse::print,
+		lex::{LexError, LexErrorKind},
+		pretty::{unelaborate::Unelaborate as _, unparse::print},
 	},
+	ir::tokenized::TokenizedSource,
 };
 
 pub fn report_tokenization_error(source: &str, lex_error: LexError) {
 	report_line_error(source, (lex_error.0, lex_error.0 + 1), &format_lex_error(source, lex_error))
 }
 
-pub fn report_parse_error(source: LexedSource, error: ParseError<usize>) {
+pub fn report_parse_error(source: TokenizedSource, error: ParseError<usize>) {
 	report_line_error(
 		source.source,
 		source.ranges.get(error.location).copied().unwrap_or((source.source.len(), source.source.len() + 1)),
@@ -22,7 +22,7 @@ pub fn report_parse_error(source: LexedSource, error: ParseError<usize>) {
 	);
 }
 
-pub fn report_elaboration_error(source: LexedSource, interner: &impl Resolver, error: ElaborationError) {
+pub fn report_elaboration_error(source: TokenizedSource, interner: &impl Resolver, error: ElaborationError) {
 	report_line_error(
 		source.source,
 		source.ranges.get(error.range.0).copied().unwrap_or((source.source.len(), source.source.len() + 1)),

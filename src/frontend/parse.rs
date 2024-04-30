@@ -5,12 +5,12 @@ use crate::{
 	common::{any_bind, bind, AnyBinder, Cost, Cpy, Fragment, Name, ReprAtom},
 	ir::{
 		presyntax::{Constructor, Expression, Former, ParsedLabel, ParsedProgram, Pattern, Preterm, Projector},
-		source::{Keyword, LexedSource, Pragma, Token},
+		tokenized::{Keyword, Pragma, Token, TokenizedSource},
 	},
 };
 
 /// Parses a dynamic preterm from a source string.
-pub fn parse(source: &LexedSource) -> Result<(ParsedProgram, RodeoResolver), ParseError<usize>> {
+pub fn parse(source: &TokenizedSource) -> Result<(ParsedProgram, RodeoResolver), ParseError<usize>> {
 	let mut parser = Parser { source: source.source, interner: Rodeo::new(), ranges: source.ranges.clone() };
 	Ok((presyntax_parse::program(&source.tokens, &mut parser)?, parser.interner.into_resolver()))
 }

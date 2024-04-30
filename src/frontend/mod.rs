@@ -1,12 +1,7 @@
 pub mod conversion;
 pub mod elaborate;
-pub mod emit;
 pub mod evaluate;
-pub mod flatten;
-pub mod linearize;
+pub mod lex;
 pub mod parse;
-pub mod stage;
-pub mod unelaborate;
+pub mod pretty;
 pub mod unevaluate;
-pub mod unparse;
-pub mod unstage;

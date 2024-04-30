@@ -5,6 +5,11 @@ use std::{
 
 use crate::{
 	common::{bind, ArraySize, Binder, Cost, Cpy, Field, Fragment, Index, Label, Level, Name},
+	frontend::{
+		conversion::Conversion as _,
+		evaluate::{Evaluate as _, EvaluateWith as _},
+		unevaluate::Unevaluate as _,
+	},
 	ir::{
 		presyntax::{
 			Constructor, Expression, Former, ParsedLabel, ParsedPreterm, ParsedProgram, Pattern, Preterm,
@@ -12,11 +17,6 @@ use crate::{
 		},
 		semantics::{DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue, Value},
 		syntax::{DynamicTerm, KindTerm, StaticTerm},
-	},
-	op::{
-		conversion::Conversion as _,
-		evaluate::{Evaluate as _, EvaluateWith as _},
-		unevaluate::Unevaluate as _,
 	},
 };
 

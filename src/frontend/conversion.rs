@@ -2,13 +2,13 @@ use std::rc::Rc;
 
 use crate::{
 	common::{Closure, Field, Level},
+	frontend::evaluate::EvaluateAuto,
 	ir::{
 		semantics::{
 			CpyValue, DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue,
 		},
 		syntax::{DynamicTerm, StaticTerm},
 	},
-	op::evaluate::EvaluateAuto,
 };
 
 pub trait Conversion<T> {

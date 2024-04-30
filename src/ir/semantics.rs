@@ -3,7 +3,7 @@ use std::rc::Rc;
 use super::syntax::{DynamicTerm, StaticTerm};
 use crate::{
 	common::{ArraySize, Closure, Cost, Cpy, Field, Fragment, Index, Level, Name, Repr, ReprAtom},
-	op::conversion::Conversion,
+	frontend::conversion::Conversion,
 };
 
 #[derive(Clone, Debug)]

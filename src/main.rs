@@ -2,22 +2,27 @@ use std::{fs::File, io::Write, path::Path};
 
 use bpaf::{construct, long, short, Parser};
 use isogon::{
-	common::Fragment,
-	exec::linear::execute,
-	ir::{linear::pretty_print_linear, source::lex},
-	op::{
-		elaborate::elaborate,
+	backend::{
 		emit::emit_object,
-		evaluate::Evaluate as _,
 		flatten::flatten,
+		interpret::execute,
 		linearize::linearize,
-		parse::parse,
-		stage::{stage, Stage},
-		unelaborate::Unelaborate as _,
-		unevaluate::Unevaluate as _,
-		unparse::pretty_print,
+		stage::{stage, Stage as _},
 	},
-	report::{report_elaboration_error, report_parse_error, report_tokenization_error},
+	common::Fragment,
+	frontend::{
+		elaborate::elaborate,
+		evaluate::Evaluate as _,
+		lex::lex,
+		parse::parse,
+		pretty::{
+			report::{report_elaboration_error, report_parse_error, report_tokenization_error},
+			unelaborate::Unelaborate as _,
+			unparse::pretty_print,
+		},
+		unevaluate::Unevaluate as _,
+	},
+	ir::linear::pretty_print_linear,
 };
 
 fn run(options: Options) {

@@ -1,12 +1,12 @@
 use crate::{
 	common::{bind, Binder, Closure, Index, Label, Level},
+	frontend::evaluate::EvaluateAuto,
 	ir::{
 		semantics::{
 			CpyValue, DynamicNeutral, DynamicValue, Environment, KindValue, StaticNeutral, StaticValue,
 		},
 		syntax::{DynamicTerm, KindTerm, StaticTerm},
 	},
-	op::evaluate::EvaluateAuto,
 };
 
 pub trait Unevaluate {

@@ -1,8 +1,7 @@
-use super::super::ir::presyntax::Preterm;
 use crate::{
 	common::{AnyBinder, Binder, Cpy, Label},
 	ir::{
-		presyntax::{Constructor, Former, Pattern, Projector, PurePreterm},
+		presyntax::{Constructor, Former, Pattern, Preterm, Projector, PurePreterm},
 		syntax::{DynamicTerm, StaticTerm},
 	},
 };

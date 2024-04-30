@@ -1,20 +1,21 @@
 use std::{ffi::OsStr, fs};
 
 use isogon::{
-	common::Fragment,
-	exec::linear::execute,
-	ir::source::lex,
-	op::{
-		elaborate::elaborate,
+	backend::{
 		emit::emit_object,
-		evaluate::Evaluate,
 		flatten::flatten,
+		interpret::execute,
 		linearize::linearize,
+		stage::{stage, Stage as _},
+	},
+	common::Fragment,
+	frontend::{
+		elaborate::elaborate,
+		evaluate::Evaluate as _,
+		lex::lex,
 		parse::parse,
-		stage::{stage, Stage},
-		unelaborate::Unelaborate,
-		unevaluate::Unevaluate,
-		unparse::pretty_print,
+		pretty::{unelaborate::Unelaborate as _, unparse::pretty_print},
+		unevaluate::Unevaluate as _,
 	},
 };
 

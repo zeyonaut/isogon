@@ -9,7 +9,7 @@ use cranelift::{
 			UserFuncName, Value,
 		},
 		isa::{self, CallConv, TargetFrontendConfig},
-		settings, verifier, Context,
+		settings, Context,
 	},
 	frontend::{FunctionBuilder, FunctionBuilderContext},
 };
