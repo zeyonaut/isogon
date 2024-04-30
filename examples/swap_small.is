@@ -1,0 +1,9 @@
+def [*] id 
+: |c : copy| @ -> |r : repr| @ -> |T : '(* c r)| @ -> '(<T> -> <T>)
+= |_| |_| |_| <|a| a >;
+
+def [*] swap : |ca : copy| @ -> |ra : repr| @ -> |T0 : '(* ca ra)| @ -> 
+	|cb : copy| @ -> |rb : repr| @ -> |T1 : '(* cb rb)| @ -> '((<T0> & <T1>) -> <T1> & <T0>)
+= |_| |_| |_| |_| |_| |_| <|a| (let (x, y) = a; (y, x))>;
+
+<swap c0 (rpair rbyte (rpair rbyte rbyte)) <#256 & #256 & #256> c0 rbyte <#256>> ((72_256, 136_256, 124_256), 12_256)

@@ -187,6 +187,7 @@ fn emit_procedure(
 	builder.seal_all_blocks();
 	builder.finalize();
 
+	// println!("{}", function.display());
 	let mut context = Context::for_function(function);
 	emitter_context.object_module.define_function(id, &mut context).unwrap();
 	context.func
@@ -669,12 +670,20 @@ impl<'a, 'b, 'c, 'd> Emitter<'a, 'b, 'c, 'd> {
 							if ty != sublayout_ty { self.builder.ins().uextend(ty, value) } else { value };
 						for (i, predata) in predatas.iter().copied().enumerate().skip(1) {
 							let data = self.value(predata.unwrap());
-							let data = if ty != sublayout_ty { self.builder.ins().uextend(ty, data) } else { data };
-							let data = self
-								.builder
-								.ins()
-								.ishl_imm(data, (u32::try_from(i).unwrap() * sublayout_stride) as i64);
-							value = self.builder.ins().band(value, data);
+							let data = if !sublayout.size.is_power_of_two() {
+								self.builder.ins().band_imm(data, ((1 << (sublayout.size * 8)) - 1) as i64)
+							} else {
+								data
+							};
+							let mut data =
+								if ty != sublayout_ty { self.builder.ins().uextend(ty, data) } else { data };
+							if i > 0 {
+								data = self
+									.builder
+									.ins()
+									.ishl_imm(data, (u32::try_from(i).unwrap() * sublayout_stride) as i64 * 8);
+							}
+							value = self.builder.ins().bor(value, data);
 						}
 						Predata::Direct(value, layout)
 					}
@@ -707,14 +716,24 @@ impl<'a, 'b, 'c, 'd> Emitter<'a, 'b, 'c, 'd> {
 						match layout.ty() {
 							Some(ty) => {
 								let a = self.value(a);
+								let a = if !a_layout.size.is_power_of_two() {
+									self.builder.ins().band_imm(a, ((1 << (a_layout.size * 8)) - 1) as i64)
+								} else {
+									a
+								};
 								let a =
 									if ty != a_layout.ty().unwrap() { self.builder.ins().uextend(ty, a) } else { a };
 								let b = self.value(b);
+								let b = if !b_layout.size.is_power_of_two() {
+									self.builder.ins().band_imm(b, ((1 << (b_layout.size * 8)) - 1) as i64)
+								} else {
+									b
+								};
 								let b =
 									if ty != b_layout.ty().unwrap() { self.builder.ins().uextend(ty, b) } else { b };
 								let b =
-									if b_offset > 0 { self.builder.ins().ishl_imm(b, b_offset as i64) } else { b };
-								let value = self.builder.ins().band(a, b);
+									if b_offset > 0 { self.builder.ins().ishl_imm(b, b_offset as i64 * 8) } else { b };
+								let value = self.builder.ins().bor(a, b);
 								Predata::Direct(value, layout)
 							}
 							None => {
@@ -749,8 +768,16 @@ impl<'a, 'b, 'c, 'd> Emitter<'a, 'b, 'c, 'd> {
 					let additional_offset = (layout.stride() * *n as u32) as i32;
 					match predata {
 						Predata::FuncRef(_) => panic!(),
-						Predata::Direct(value, _) =>
-							Predata::Direct(self.builder.ins().ushr_imm(value, additional_offset as i64), layout),
+						Predata::Direct(mut value, old_layout) => {
+							if additional_offset > 0 {
+								value = self.builder.ins().ushr_imm(value, additional_offset as i64 * 8)
+							}
+							if layout.ty() != old_layout.ty() {
+								value = self.builder.ins().ireduce(layout.ty().unwrap(), value);
+							}
+							Predata::Direct(value, layout)
+						}
+
 						Predata::Indirect(address, offset, _) =>
 							Predata::Indirect(address, offset + additional_offset, layout),
 						Predata::StackSlot(slot, offset, _) =>
@@ -782,8 +809,15 @@ impl<'a, 'b, 'c, 'd> Emitter<'a, 'b, 'c, 'd> {
 						};
 						match predata {
 							Predata::FuncRef(_) => panic!(),
-							Predata::Direct(value, _) =>
-								Predata::Direct(self.builder.ins().ushr_imm(value, additional_offset as i64), layout),
+							Predata::Direct(mut value, old_layout) => {
+								if additional_offset > 0 {
+									value = self.builder.ins().ushr_imm(value, additional_offset as i64 * 8)
+								}
+								if layout.ty() != old_layout.ty() {
+									value = self.builder.ins().ireduce(layout.ty().unwrap(), value);
+								}
+								Predata::Direct(value, layout)
+							}
 							Predata::Indirect(address, offset, _) =>
 								Predata::Indirect(address, offset + additional_offset, layout),
 							Predata::StackSlot(slot, offset, _) =>
