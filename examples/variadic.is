@@ -1,0 +1,46 @@
+% A type with one element, erased at runtime.
+let [0] Unit = ![0] #1;
+def [*] tt : 'Unit = <@[0] 0_1>;
+
+% Type of lists of known length.
+let [0] List : |n : Nat| -> * c1 rptr
+= |n| n :: |_| * c1 rptr {
+	| 0        -> Box Unit
+	| suc @n.T -> Box (T & Nat)
+};
+
+% Converts meta-naturals to object-naturals.
+def [*] lower : Nat -> 'Nat = |n| n :: |_| 'Nat {
+	| 0        -> <0>
+	| suc @_.x -> <suc <x>>
+};
+
+% For any n : Nat and A : *, the type of functions which takes n terms of Nat and produces an A.
+def [0] Curry : Nat -> '(* c1 rptr) -> '(* c1 rfun) = 
+	|n| |T| n :: |_| '(* c1 rfun) {
+		| 0        -> <Unit -> <T>>
+		| suc @_.F -> <Nat -> <F>>
+	};
+
+% Postcomposition with Curry.
+def [*] Curry_map : |n : Nat| -> |A : '(* c1 rptr)| @ -> |B : '(* c1 rptr)| @ -> ('<A> -> '<B>) -> '<Curry n A> -> '<Curry n B> =
+|n| |A| |B| |f| 
+n :: |n| '<Curry n A> -> '<Curry n B> {
+	| 0        -> |g| <|x| <f <<g> x>>>
+	| suc @_.k -> |g| <|x| <k <<g> x>>>
+}
+;
+
+% Variadic list constructor.
+def [*] make_list : |n : Nat| -> '<Curry n <List <lower n>>> = 
+	|n| n :: |n| '<Curry n <List <lower n>>> {
+		| 0        -> <|x| box x>
+		| suc @n.a -> <|x| <Curry_map n 
+			<List <lower n>>
+			<List (suc <lower n>)>
+			(|list| <box (<list>, x)>) 
+			a
+		>>
+	};
+
+(8, <make_list 8> 1 2 4 8 16 32 64 128 <tt>)

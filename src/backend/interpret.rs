@@ -73,8 +73,12 @@ impl<'a> Executor<'a> {
 					Statement::Alloc(symbol, value) => {
 						let data = self.compute(value);
 						let pointer = self.heap_generator.generate();
-						self.heap.insert(pointer, data);
-						self.environment.locals.insert(*symbol, Data::Heap(pointer));
+						if data != Data::None {
+							self.heap.insert(pointer, data);
+							self.environment.locals.insert(*symbol, Data::Heap(pointer));
+						} else {
+							self.environment.locals.insert(*symbol, Data::PtrToNone);
+						}
 					}
 					Statement::Captures(symbol, values) =>
 						if values.is_empty() {
@@ -156,9 +160,14 @@ impl<'a> Executor<'a> {
 	}
 
 	fn free(&mut self, data: Data) {
-		let Data::Heap(symbol) = data else { panic!() };
-		let removed = self.heap.remove(&symbol);
-		assert!(removed.is_some())
+		match data {
+			Data::Heap(symbol) => {
+				let removed = self.heap.remove(&symbol);
+				assert!(removed.is_some())
+			}
+			Data::PtrToNone => (),
+			_ => panic!(),
+		}
 	}
 
 	fn compute(&self, operand: &Value) -> Data {
@@ -214,19 +223,25 @@ impl<'a> Executor<'a> {
 						Field::Fiber => *right.clone(),
 					}
 				}
-				Projector::Bx(_) => {
-					let Data::Heap(ptr) = &data else { panic!() };
-					data = self.heap[ptr].clone()
-				}
+				Projector::Bx(_) => match &data {
+					Data::Heap(ptr) => {
+						data = self.heap[ptr].clone();
+					}
+					Data::PtrToNone => {
+						data = Data::None;
+					}
+					_ => panic!(),
+				},
 			}
 		}
 		data
 	}
 }
 
-#[derive(Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub enum Data {
 	None,
+	PtrToNone,
 	Heap(Symbol),
 	Num(u64),
 	Enum(u16, u8),

@@ -101,7 +101,7 @@ fn format_lex_error(source: &str, LexError(location, kind): LexError) -> String 
 fn display_error(kind: ElaborationErrorKind, interner: &impl Resolver) -> String {
 	match kind {
 		ElaborationErrorKind::StaticBidirectionalMismatch { synthesized, expected } => {
-			println!("elaboration error: type mismatch\nexpected: {synthesized:#?}\nfound: {expected:#?}");
+			// println!("elaboration error: type mismatch\nexpected: {synthesized:#?}\nfound: {expected:#?}");
 			let mut ty_sy = String::new();
 			print(&synthesized.unelaborate(), &mut ty_sy, interner).unwrap();
 			let mut ty_ex = String::new();

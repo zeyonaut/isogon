@@ -325,7 +325,7 @@ impl<'a, 'b, 'c, 'd> Emitter<'a, 'b, 'c, 'd> {
 			}
 			linear::Statement::Alloc(symbol, value) => {
 				let predata = self.predata(value);
-				let pointer = predata.map(|predata| {
+				let pointer = if let Some(predata) = predata {
 					let size = self.builder.ins().iconst(I64, predata.layout().size as i64);
 					let func_ref_malloc = self.get_func_ref_malloc();
 					let malloc_inst = self.builder.ins().call(func_ref_malloc, &[size]);
@@ -334,8 +334,11 @@ impl<'a, 'b, 'c, 'd> Emitter<'a, 'b, 'c, 'd> {
 					let pointer = results[0];
 					self.store(pointer, predata);
 					Predata::Direct(pointer, DataLayout::I64)
-				});
-				self.assign(*symbol, pointer)
+				} else {
+					// Don't allocate, but keep the same representation.
+					Predata::Direct(self.builder.ins().iconst(I64, 1), DataLayout::I64)
+				};
+				self.assign(*symbol, Some(pointer))
 			}
 			linear::Statement::Captures(symbol, values) => {
 				let predatas = values.iter().map(|value| self.predata(value)).collect::<Vec<_>>();
