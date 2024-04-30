@@ -32,7 +32,7 @@ pub fn emit_object(name: String, program: &linear::Program) -> CraneliftProgram 
 	let settings_builder = settings::builder();
 	let settings_flags = settings::Flags::new(settings_builder);
 	let isa_builder = isa::lookup(triple!("x86_64-pc-windows-msvc")).unwrap();
-	let isa = isa_builder.finish(settings_flags.clone()).unwrap();
+	let isa = isa_builder.finish(settings_flags).unwrap();
 	let object_builder = ObjectBuilder::new(isa, name, cranelift_module::default_libcall_names()).unwrap();
 	let mut object_module = ObjectModule::new(object_builder);
 
@@ -72,7 +72,7 @@ pub fn emit_object(name: String, program: &linear::Program) -> CraneliftProgram 
 		.unzip();
 
 	let mut emitter_context =
-		EmitterContext { object_module: &mut object_module, free_id, malloc_id, entry_id, proc_ids: &proc_ids };
+		EmitterContext { object_module: &mut object_module, free_id, malloc_id, proc_ids: &proc_ids };
 
 	let entry = emit_procedure(
 		&mut emitter_context,
@@ -80,21 +80,13 @@ pub fn emit_object(name: String, program: &linear::Program) -> CraneliftProgram 
 		entry_flags,
 		&linear::Prototype { outer: None, parameter: (None, None), result: program.repr.clone() },
 		&program.entry,
-		&settings_flags,
 	);
 
 	let mut functions = Vec::new();
 	for ((proc_id, proc_flags), (prototype, procedure)) in
 		proc_ids.iter().zip(proc_flags_list).zip(&program.procedures)
 	{
-		functions.push(emit_procedure(
-			&mut emitter_context,
-			*proc_id,
-			proc_flags,
-			prototype,
-			procedure,
-			&settings_flags,
-		));
+		functions.push(emit_procedure(&mut emitter_context, *proc_id, proc_flags, prototype, procedure));
 	}
 
 	let object_product = object_module.finish();
@@ -107,7 +99,6 @@ fn emit_procedure(
 	signature_flags: SignatureFlags,
 	prototype: &linear::Prototype,
 	procedure: &linear::Procedure,
-	settings_flags: &settings::Flags,
 ) -> Function {
 	let signature = emitter_context.object_module.declarations().get_function_decl(id).signature.clone();
 	// NOTE: This naming convention agrees with cranelift-module.
@@ -209,7 +200,7 @@ fn emit_signature(
 	let mut signature = object_module.make_signature();
 	// Environment.
 	if !is_closed {
-		signature.params.push(AbiParam::new(POINTER_TYPE))
+		signature.params.push(AbiParam::new(I64))
 	};
 
 	// TODO: Reorganize.
@@ -219,7 +210,7 @@ fn emit_signature(
 			ty
 		} else {
 			is_parameter_oversized = true;
-			POINTER_TYPE
+			I64
 		}));
 	}
 	let mut is_result_oversized = false;
@@ -228,7 +219,7 @@ fn emit_signature(
 			signature.returns.push(AbiParam::new(ty));
 		} else {
 			is_result_oversized = true;
-			signature.params.push(AbiParam::new(POINTER_TYPE));
+			signature.params.push(AbiParam::new(I64));
 		};
 	}
 
@@ -245,18 +236,12 @@ fn emit_signature(
 	)
 }
 
-const MAIN_NAME: UserExternalName = UserExternalName { namespace: 0, index: 0 };
-const USER_NAMESPACE: u32 = 1;
-const EXT_NAMESPACE: u32 = 2;
-const POINTER_TYPE: Type = I64;
-
 const CALL_CONV: CallConv = CallConv::WindowsFastcall;
 
 struct EmitterContext<'a> {
 	object_module: &'a mut ObjectModule,
 	free_id: FuncId,
 	malloc_id: FuncId,
-	entry_id: FuncId,
 	proc_ids: &'a [FuncId],
 }
 
@@ -946,20 +931,6 @@ impl Data {
 		match self {
 			Self::Direct(value, _) => value,
 			Self::Indirect(value, _) => value,
-		}
-	}
-
-	fn ty(self) -> Type {
-		match self {
-			Self::Direct(_, layout) => layout.ty().unwrap(),
-			Self::Indirect(_, _) => I64,
-		}
-	}
-
-	fn layout(self) -> DataLayout {
-		match self {
-			Self::Direct(_, layout) => layout,
-			Self::Indirect(_, layout) => layout,
 		}
 	}
 }
