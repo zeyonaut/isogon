@@ -1,0 +1,13 @@
+def [*] tr
+: |c_0 : copy| @ -> |r_0 : repr| @ -> |c_1 : copy| @ -> |r_1 : repr|
+@ -> '(
+	|B : * c_0 r_0| @ -> |F : B -> * c_1 r_1| @ -> |x : B| @ -> |y : B| @ -> Id B x y @ -> F x -> F y
+) = |_| |_| |_| |_| <
+	|_| |F| |_| |_| |p| |a| p cast :: |v._| F v {
+		refl -> a
+	}
+>;
+
+let [0] bool_family : #2 -> * c0 rbyte = |b| b :: |_| * c0 rbyte { false -> #0 | true -> #256 };
+
+<tr c0 rbyte c0 rbyte> #2 bool_family true true refl 199_256

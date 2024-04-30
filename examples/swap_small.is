@@ -1,6 +1,4 @@
-def [*] id 
-: |c : copy| @ -> |r : repr| @ -> |T : '(* c r)| @ -> '(<T> -> <T>)
-= |_| |_| |_| <|a| a >;
+% Swapping asymmetric, non-power-of-two types within a register. 
 
 def [*] swap : |ca : copy| @ -> |ra : repr| @ -> |T0 : '(* ca ra)| @ -> 
 	|cb : copy| @ -> |rb : repr| @ -> |T1 : '(* cb rb)| @ -> '((<T0> & <T1>) -> <T1> & <T0>)

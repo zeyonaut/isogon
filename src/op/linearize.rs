@@ -55,6 +55,7 @@ pub fn linearize(program: flat::Program) -> Program {
 enum ValueProducer {
 	Value(Value),
 	Exp(u64, Option<Layout>, Value),
+	ExpExp { outer_index: u64, inner_index: u64, inner_limit: u64, layout: Option<Layout>, value: Value },
 }
 
 impl ValueProducer {
@@ -64,6 +65,17 @@ impl ValueProducer {
 			Self::Exp(n, layout, complex) => {
 				let result = complex.project(Projector::Exp(*n, layout.clone()));
 				*n += 1;
+				result
+			}
+			Self::ExpExp { outer_index, inner_index, inner_limit, layout, value } => {
+				let result = value
+					.project(Projector::Exp(*outer_index, layout.clone()))
+					.project(Projector::Exp(*inner_index, layout.clone()));
+				*inner_index += 1;
+				if inner_index >= inner_limit {
+					*outer_index += 1;
+					*inner_index = 0;
+				}
 				result
 			}
 		}
