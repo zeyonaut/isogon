@@ -181,7 +181,7 @@ impl Flattener {
 						argument
 					}
 					.into(),
-					bound_reprs: kinds.each_ref().map(|kind| kind.repr.clone()),
+					kinds: kinds.clone(),
 					tail: self.flatten_with(tail, [Cost::Fin(*grade); 2], kinds, occurrences),
 				}
 			}

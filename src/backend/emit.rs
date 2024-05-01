@@ -15,7 +15,6 @@ use cranelift::{
 };
 use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
-use target_lexicon::triple;
 
 use crate::{
 	common::{Field, Symbol},

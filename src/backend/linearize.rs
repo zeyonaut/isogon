@@ -69,6 +69,7 @@ enum ValueProducer {
 	Value(Value),
 	Exp(u64, Option<Layout>, Value),
 	ExpExp { outer_index: u64, inner_index: u64, inner_limit: u64, layout: Option<Layout>, value: Value },
+	ExpField { index: u64, field: Field, layouts: [Option<Layout>; 2], value: Value },
 }
 
 impl ValueProducer {
@@ -89,6 +90,13 @@ impl ValueProducer {
 					*outer_index += 1;
 					*inner_index = 0;
 				}
+				result
+			}
+			Self::ExpField { index, field, layouts, value } => {
+				let result = value
+					.project(Projector::Exp(*index, Layout::pair(layouts.clone())))
+					.project(Projector::Field(*field, layouts.clone()));
+				*index += 1;
 				result
 			}
 		}
@@ -219,7 +227,7 @@ impl ProcedureBuilder {
 			Term::Let { grade, argument_kind, argument, tail } =>
 				if *grade == 0 {
 					self.generate_with(frame, tail, [Value::None].map(ValueProducer::Value))?
-				} else if *grade == 1 || argument_kind.copy == Cpy::Tr {
+				} else if *grade == 1 {
 					let (frame, argument) = self.generate(frame, argument)?.unframe();
 					self.generate_with(frame, tail, [argument].map(ValueProducer::Value))?
 				} else {
@@ -229,11 +237,14 @@ impl ProcedureBuilder {
 							&Term::Repeat { grade: *grade, copy: argument_kind.copy, term: argument.clone() },
 						)?
 						.unframe();
-					self.generate_with(
-						frame,
-						tail,
-						[ValueProducer::Exp(0, argument_kind.repr.as_ref().map(Into::into), argument)],
-					)?
+					match argument_kind.copy {
+						Cpy::Tr => self.generate_with(frame, tail, [argument].map(ValueProducer::Value))?,
+						Cpy::Nt => self.generate_with(
+							frame,
+							tail,
+							[ValueProducer::Exp(0, argument_kind.repr.as_ref().map(Into::into), argument)],
+						)?,
+					}
 				},
 
 			Term::Repeat { grade, copy, term } => {
@@ -249,7 +260,7 @@ impl ProcedureBuilder {
 					Cpy::Nt => frame.and(Value::Array(many)),
 				}
 			}
-			Term::ExpLet { grade, grade_argument: _, copy, repr, argument, tail } =>
+			Term::ExpLet { grade, grade_argument, copy, repr, argument, tail } =>
 				if *grade == 0 {
 					self.generate_with(frame, tail, [Value::None].map(ValueProducer::Value))?
 				} else if *grade == 1 {
@@ -263,7 +274,23 @@ impl ProcedureBuilder {
 						)?,
 					}
 				} else {
-					unimplemented!();
+					let (frame, argument) = self
+						.generate(frame, &Term::Repeat { grade: *grade, copy: *copy, term: argument.clone() })?
+						.unframe();
+					match *copy {
+						Cpy::Tr => self.generate_with(frame, tail, [argument].map(ValueProducer::Value))?,
+						Cpy::Nt => self.generate_with(
+							frame,
+							tail,
+							[ValueProducer::ExpExp {
+								outer_index: 0,
+								inner_index: 0,
+								inner_limit: *grade_argument,
+								layout: repr.as_ref().map(Into::into),
+								value: argument,
+							}],
+						)?,
+					}
 				},
 
 			Term::Function { procedure_id, captures } => {
@@ -296,23 +323,56 @@ impl ProcedureBuilder {
 				let (frame, fiberpoint) = self.generate(frame, fiberpoint)?.unframe();
 				frame.and(Value::pair(basepoint, fiberpoint))
 			}
-			Term::SgLet { grade, argument, bound_reprs, tail } =>
+			Term::SgLet { grade, argument, kinds, tail } =>
 				if *grade == 0 {
 					self.generate_with(frame, tail, [Value::None, Value::None].map(ValueProducer::Value))?
 				} else if *grade == 1 {
 					let (frame, argument) = self.generate(frame, argument)?.unframe();
-					let bound_reprs = bound_reprs.each_ref().map(|x| x.as_ref().map(Into::into));
+					let bound_reprs = kinds.each_ref().map(|x| x.repr.as_ref().map(Into::into));
 					self.generate_with(
 						frame,
 						tail,
 						[
 							argument.project(Projector::Field(Field::Base, bound_reprs.clone())),
-							argument.project(Projector::Field(Field::Fiber, bound_reprs.clone())),
+							argument.project(Projector::Field(Field::Fiber, bound_reprs)),
 						]
 						.map(ValueProducer::Value),
 					)?
 				} else {
-					unimplemented!();
+					let copy = kinds[0].copy.max(kinds[1].copy);
+					let bound_reprs = kinds.each_ref().map(|x| x.repr.as_ref().map(Into::into));
+					let (frame, argument) = self
+						.generate(frame, &Term::Repeat { grade: *grade, copy, term: argument.clone() })?
+						.unframe();
+					match copy {
+						Cpy::Tr => self.generate_with(
+							frame,
+							tail,
+							[
+								argument.project(Projector::Field(Field::Base, bound_reprs.clone())),
+								argument.project(Projector::Field(Field::Fiber, bound_reprs)),
+							]
+							.map(ValueProducer::Value),
+						)?,
+						Cpy::Nt => self.generate_with(
+							frame,
+							tail,
+							[
+								ValueProducer::ExpField {
+									index: 0,
+									field: Field::Base,
+									layouts: bound_reprs.clone(),
+									value: argument.clone(),
+								},
+								ValueProducer::ExpField {
+									index: 0,
+									field: Field::Fiber,
+									layouts: bound_reprs,
+									value: argument,
+								},
+							],
+						)?,
+					}
 				},
 
 			Term::EnumValue(k, v) => frame.and(Value::Enum(*k, *v)),

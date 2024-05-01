@@ -1,0 +1,6 @@
+% Tests graded irrefutable patterns.
+
+let [4] a = box true;
+let [2] @[2] b = @[2] (a unbox);
+let [2] (c, d) = (b, b);
+(c, d, d, c)

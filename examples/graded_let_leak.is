@@ -1,0 +1,5 @@
+% Ensure that pointers are not leaked in copyability/exponential/graded-let interaction.
+
+let [2] a = box true;
+let [2] b = a unbox;
+0

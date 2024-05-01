@@ -84,6 +84,15 @@ pub enum Layout {
 	Array(ArraySize, Box<Self>),
 }
 
+impl Layout {
+	pub fn pair(layouts: [Option<Self>; 2]) -> Option<Self> {
+		let [a, b] = layouts;
+		let Some(a) = a else { return b };
+		let Some(b) = b else { return Some(a) };
+		Some(Self::Pair([a, b].into()))
+	}
+}
+
 #[derive(Debug)]
 pub enum Terminator {
 	Abort,

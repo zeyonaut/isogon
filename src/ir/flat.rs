@@ -52,7 +52,7 @@ pub enum Term {
 	SgLet {
 		grade: u64,
 		argument: Box<Self>,
-		bound_reprs: [Option<Repr>; 2],
+		kinds: [UniverseKind; 2],
 		tail: Binder<Label, Box<Self>, 2>,
 	},
 
@@ -160,7 +160,7 @@ impl Substitute for Term {
 				basepoint.substitute(substitution, minimum_level);
 				fiberpoint.substitute(substitution, minimum_level);
 			}
-			Term::SgLet { grade: _, argument, bound_reprs: _, tail } => {
+			Term::SgLet { grade: _, argument, kinds: _, tail } => {
 				argument.substitute(substitution, minimum_level);
 				tail.substitute(substitution, minimum_level);
 			}
