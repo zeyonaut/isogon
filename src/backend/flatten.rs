@@ -125,18 +125,41 @@ impl Flattener {
 				codomain_kind.clone().unwrap().stage().repr,
 				occurrences,
 			),
-			DynamicTerm::Apply { scrutinee, fragment, argument, family_kind } => Term::Apply {
-				callee: self.flatten(scrutinee, occurrences).into(),
-				argument: {
-					let fragment = fragment.unwrap();
-					if fragment.is_logical() {
-						Term::Irrelevant
-					} else {
-						self.flatten(argument, occurrences)
+			DynamicTerm::Apply { scrutinee, fragment, argument, family_kind } => match scrutinee.as_ref() {
+				// Inline syntactically-immediate function applications.
+				// This is only intended to affect applications of spliced functions.
+				// It is unclear how effective or useful this will be in the presence of future optimizations.
+				DynamicTerm::Function { fragment, domain_kind, codomain_kind: _, body } => {
+					let kind = domain_kind.as_ref().unwrap().clone().stage();
+					let grade = *fragment as u8 as u64;
+					Term::Let {
+						grade,
+						argument_kind: kind.clone(),
+						argument: if grade == 0 {
+							Term::Irrelevant
+						} else {
+							self.amplifiers.push((self.context.len(), Cost::Fin(grade)));
+							let argument = self.flatten(argument, occurrences);
+							self.amplifiers.pop();
+							argument
+						}
+						.into(),
+						tail: self.flatten_with(body, [Cost::Fin(grade)], [kind], occurrences),
 					}
 				}
-				.into(),
-				result_repr: family_kind.clone().unwrap().stage().repr,
+				scrutinee => Term::Apply {
+					callee: self.flatten(scrutinee, occurrences).into(),
+					argument: {
+						let fragment = fragment.unwrap();
+						if fragment.is_logical() {
+							Term::Irrelevant
+						} else {
+							self.flatten(argument, occurrences)
+						}
+					}
+					.into(),
+					result_repr: family_kind.clone().unwrap().stage().repr,
+				},
 			},
 
 			// Dependent pairs.

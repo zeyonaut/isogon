@@ -280,6 +280,6 @@ fn cost(grade: Cost) -> String {
 	if let Cost::Fin(grade) = grade {
 		format!("{grade}")
 	} else {
-		"* ".to_owned()
+		"*".to_owned()
 	}
 }
