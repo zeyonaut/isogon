@@ -206,13 +206,17 @@ pub enum Register {
 }
 
 pub fn pretty_print_linear(f: &mut impl std::fmt::Write, program: &Program) -> std::fmt::Result {
-	writeln!(f, "entry {{")?;
+	write!(f, "entry : ")?;
+	print_prototype(f, &program.entry_prototype)?;
+	writeln!(f, " {{")?;
 	print_procedure(f, &program.entry)?;
 	writeln!(f, "}}")?;
 	writeln!(f)?;
 
-	for (i, (_, procedure)) in program.procedures.iter().enumerate() {
-		writeln!(f, "procedure $proc.{i}: {{")?;
+	for (i, (prototype, procedure)) in program.procedures.iter().enumerate() {
+		write!(f, "proc_{i} : ")?;
+		print_prototype(f, prototype)?;
+		writeln!(f, " {{")?;
 		print_procedure(f, procedure)?;
 		writeln!(f, "}}")?;
 		writeln!(f)?;
@@ -223,31 +227,36 @@ pub fn pretty_print_linear(f: &mut impl std::fmt::Write, program: &Program) -> s
 
 fn print_procedure(f: &mut impl std::fmt::Write, procedure: &Procedure) -> std::fmt::Result {
 	for (i, block) in procedure.blocks.iter().enumerate() {
-		write!(f, "   ")?;
-		write!(f, "block {i}")?;
+		write!(f, "    block{i}")?;
 		if !block.parameters.is_empty() {
 			write!(f, "(")?;
 			// TODO: Maybe also print layouts?
 			if let Some(n) = block.parameters.len().checked_sub(1) {
-				for x in block.parameters.iter().take(n) {
-					write!(f, "${}, ", x.0 .0)?;
+				for (x, layout) in block.parameters.iter().take(n) {
+					write!(f, "v{} : ", x.0)?;
+					print_opt_layout(f, layout)?;
+					write!(f, ", ")?;
 				}
 			}
-			if let Some(x) = block.parameters.last() {
-				write!(f, "${}", x.0 .0)?;
+			if let Some((x, layout)) = block.parameters.last() {
+				write!(f, "v{} : ", x.0)?;
+				print_opt_layout(f, layout)?;
 			}
 			write!(f, ")")?;
 		}
 		writeln!(f, ":")?;
 
 		for statement in &block.statements {
-			write!(f, "      ")?;
+			write!(f, "    ")?;
 			print_statement(f, statement)?;
 			writeln!(f)?;
 		}
-		write!(f, "      ")?;
+		write!(f, "    ")?;
 		print_terminator(f, block.terminator.as_ref().unwrap())?;
 		writeln!(f)?;
+		if i + 1 < procedure.blocks.len() {
+			writeln!(f)?;
+		}
 	}
 
 	Ok(())
@@ -261,7 +270,7 @@ fn print_terminator(f: &mut impl std::fmt::Write, terminator: &Terminator) -> st
 			print_value(f, value)?;
 		}
 		Terminator::Jump(id, values) => {
-			write!(f, "jump @{}(", id.0)?;
+			write!(f, "jump block{}(", id.0)?;
 			print_values(f, values)?;
 			write!(f, ")")?;
 		}
@@ -271,27 +280,26 @@ fn print_terminator(f: &mut impl std::fmt::Write, terminator: &Terminator) -> st
 			write!(f, " into (")?;
 			if let Some(n) = blocks.len().checked_sub(1) {
 				for x in blocks.iter().take(n) {
-					write!(f, "@{}, ", x.0)?;
+					write!(f, "block{}, ", x.0)?;
 				}
 			}
 			if let Some(block) = blocks.last() {
-				write!(f, "@{}", block.0)?;
+				write!(f, "block{}", block.0)?;
 			}
 			write!(f, ")")?;
 		}
 		Terminator::CaseNat { index, limit, body, body_args, exit, exit_arg } => {
-			write!(f, "test ")?;
+			write!(f, "if ")?;
 			print_value(f, index)?;
 			write!(f, " < ")?;
 			print_value(f, limit)?;
-			write!(f, " into (")?;
-			write!(f, "@{}(", body.0)?;
+			write!(f, " then ")?;
+			write!(f, "block{}(", body.0)?;
 			print_values(f, body_args)?;
 			write!(f, ")")?;
-			write!(f, ", ")?;
-			write!(f, "@{}(", exit.0)?;
+			write!(f, " else ")?;
+			write!(f, "block{}(", exit.0)?;
 			print_value(f, exit_arg)?;
-			write!(f, ")")?;
 			write!(f, ")")?;
 		}
 	}
@@ -301,15 +309,15 @@ fn print_terminator(f: &mut impl std::fmt::Write, terminator: &Terminator) -> st
 fn print_statement(f: &mut impl std::fmt::Write, statement: &Statement) -> std::fmt::Result {
 	match statement {
 		Statement::Assign(symbol, value) => {
-			write!(f, "${} = ", symbol.0)?;
+			write!(f, "v{} = ", symbol.0)?;
 			print_value(f, value)?;
 		}
 		Statement::Alloc(symbol, value) => {
-			write!(f, "${} = alloc ", symbol.0)?;
+			write!(f, "v{} = alloc ", symbol.0)?;
 			print_value(f, value)?;
 		}
 		Statement::Captures(symbol, values) => {
-			write!(f, "${} = env (", symbol.0)?;
+			write!(f, "v{} = env (", symbol.0)?;
 			print_values(f, values)?;
 			write!(f, ")")?;
 		}
@@ -318,7 +326,7 @@ fn print_statement(f: &mut impl std::fmt::Write, statement: &Statement) -> std::
 			print_load(f, load)?;
 		}
 		Statement::Call { symbol, result_repr: _, procedure, captures, argument } => {
-			write!(f, "${} = call ", symbol.0)?;
+			write!(f, "v{} = call ", symbol.0)?;
 			print_value(f, procedure)?;
 			write!(f, " in ")?;
 			print_value(f, captures)?;
@@ -351,7 +359,7 @@ fn print_value(f: &mut impl std::fmt::Write, value: &Value) -> std::fmt::Result 
 			write!(f, " + {b}")?;
 		}
 		Value::Enum(k, n) => write!(f, "{n}_{k}")?,
-		Value::Procedure(n) => write!(f, "$proc.{n}")?,
+		Value::Procedure(n) => write!(f, "proc_{n}")?,
 		Value::Load(load) => print_load(f, load)?,
 		Value::Function { procedure, captures } => {
 			write!(f, "fun (")?;
@@ -378,9 +386,9 @@ fn print_value(f: &mut impl std::fmt::Write, value: &Value) -> std::fmt::Result 
 
 fn print_load(f: &mut impl std::fmt::Write, load: &Load) -> std::fmt::Result {
 	match load.register {
-		Register::Outer(n) => write!(f, "$env.{}", n.0)?,
-		Register::Parameter => write!(f, "$param")?,
-		Register::Local(n) => write!(f, "${}", n.0)?,
+		Register::Outer(n) => write!(f, "env.{}", n.0)?,
+		Register::Parameter => write!(f, "param")?,
+		Register::Local(n) => write!(f, "v{}", n.0)?,
 	}
 	for projector in &load.projectors {
 		match projector {
@@ -392,5 +400,66 @@ fn print_load(f: &mut impl std::fmt::Write, load: &Load) -> std::fmt::Result {
 			Projector::Bx(_) => write!(f, ".deref")?,
 		}
 	}
+	Ok(())
+}
+
+pub fn print_opt_layout(f: &mut impl std::fmt::Write, layout: &Option<Layout>) -> std::fmt::Result {
+	if let Some(layout) = &layout {
+		print_layout(f, layout)?;
+	} else {
+		writeln!(f, "()")?;
+	}
+	Ok(())
+}
+
+pub fn print_layout(f: &mut impl std::fmt::Write, layout: &Layout) -> std::fmt::Result {
+	match layout {
+		Layout::Byte => write!(f, "u8")?,
+		Layout::Nat => write!(f, "nat")?,
+		Layout::Ptr => write!(f, "ptr")?,
+		Layout::Fun => write!(f, "fun")?,
+		Layout::Pair(pair) => {
+			let [a, b] = pair.each_ref();
+			write!(f, "(")?;
+			print_layout(f, a)?;
+			write!(f, ", ")?;
+			print_layout(f, b)?;
+			write!(f, ")")?;
+		}
+		Layout::Array(n, l) => {
+			write!(f, "[")?;
+			print_layout(f, l)?;
+			write!(f, "; {}]", n.0)?;
+		}
+	}
+	Ok(())
+}
+
+fn print_layouts(f: &mut impl std::fmt::Write, layouts: &[Option<Layout>]) -> std::fmt::Result {
+	if let Some(n) = layouts.len().checked_sub(1) {
+		for x in layouts.iter().take(n) {
+			print_opt_layout(f, x)?;
+			write!(f, ", ")?;
+		}
+	}
+	if let Some(value) = layouts.last() {
+		print_opt_layout(f, value)?;
+	}
+	Ok(())
+}
+
+fn print_prototype(f: &mut impl std::fmt::Write, prototype: &Prototype) -> std::fmt::Result {
+	if let Some(outer) = &prototype.outer {
+		let layouts = outer.iter().map(|(_, l)| l.clone()).collect::<Vec<_>>();
+		write!(f, "[")?;
+		print_layouts(f, &layouts)?;
+		write!(f, "]")?;
+	}
+	write!(f, "(")?;
+	if let Some((_, parameter)) = &prototype.parameter {
+		print_opt_layout(f, parameter)?;
+	}
+	write!(f, ") -> ")?;
+	print_opt_layout(f, &prototype.result)?;
 	Ok(())
 }
