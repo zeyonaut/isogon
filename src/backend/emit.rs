@@ -28,10 +28,14 @@ pub struct CraneliftProgram {
 	pub functions: Vec<Function>,
 }
 
-pub fn emit_object(name: String, program: &linear::Program) -> CraneliftProgram {
+pub fn emit_object(
+	name: String,
+	program: &linear::Program,
+	triple: target_lexicon::Triple,
+) -> CraneliftProgram {
 	let settings_builder = settings::builder();
 	let settings_flags = settings::Flags::new(settings_builder);
-	let isa_builder = isa::lookup(triple!("x86_64-pc-windows-msvc")).unwrap();
+	let isa_builder = isa::lookup(triple).unwrap();
 	let isa = isa_builder.finish(settings_flags).unwrap();
 	let object_builder = ObjectBuilder::new(isa, name, cranelift_module::default_libcall_names()).unwrap();
 	let mut object_module = ObjectModule::new(object_builder);

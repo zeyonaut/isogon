@@ -58,6 +58,10 @@ fn run_examples() {
 		let flat_program = flatten(&object_program);
 		let linearized_program = linearize(flat_program);
 		let _ = execute(&linearized_program);
-		let _emitted_object = emit_object("program".to_owned(), &linearized_program);
+		let _emitted_object = emit_object(
+			"program".to_owned(),
+			&linearized_program,
+			target_lexicon::triple!("x86_64-pc-windows-msvc"),
+		);
 	}
 }

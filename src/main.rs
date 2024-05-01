@@ -1,4 +1,4 @@
-use std::{fs::File, io::Write, path::Path};
+use std::{fs::File, io::Write, path::Path, str::FromStr};
 
 use bpaf::{construct, long, short, Parser};
 use isogon::{
@@ -19,7 +19,41 @@ use isogon::{
 	ir::linear::pretty_print_linear,
 };
 
+fn main() {
+	let options: Options = construct!(Options {
+		input(construct!([
+			c(short('c').argument::<String>("\"preterm\"").help("Read input from argument").map(InputOption::Direct)),
+			f(short('f').argument::<String>("PATH").help("Read input from file").map(InputOption::FilePath)),
+		])),
+		show_lir(long("lir").switch()),
+		show_clif(long("clif").switch()),
+		object_path(short('o').argument::<String>("PATH").help("Emit object to file").optional()),
+		target_triple(short('t').argument::<String>("target-triple").help("Code generation target").optional()),
+	})
+	.to_options()
+	.run();
+
+	run(options);
+}
+
+struct Options {
+	input: InputOption,
+	show_lir: bool,
+	show_clif: bool,
+	object_path: Option<String>,
+	target_triple: Option<String>,
+}
+
+enum InputOption {
+	Direct(String),
+	FilePath(String),
+}
+
 fn run(options: Options) {
+	let target_triple = options
+		.target_triple
+		.and_then(|triple| target_lexicon::Triple::from_str(&triple).ok())
+		.unwrap_or_else(target_lexicon::Triple::host);
 	let source = match options.input {
 		InputOption::Direct(command) => command,
 		InputOption::FilePath(file_path) => std::fs::read_to_string(file_path).unwrap(),
@@ -109,8 +143,9 @@ fn run(options: Options) {
 	println!();
 
 	// Emission
-	let emission = emit_object("program".to_owned(), &linearized_program);
-	println!("Emission complete.");
+	let target_triple_string = target_triple.to_string();
+	let emission = emit_object("program".to_owned(), &linearized_program, target_triple);
+	println!("Emission to target {target_triple_string} complete.");
 
 	if options.show_clif {
 		println!();
@@ -129,32 +164,4 @@ fn run(options: Options) {
 		let object_buffer = emission.object.write().unwrap();
 		object_file.write_all(&object_buffer).unwrap();
 	}
-}
-
-enum InputOption {
-	Direct(String),
-	FilePath(String),
-}
-
-struct Options {
-	input: InputOption,
-	show_lir: bool,
-	show_clif: bool,
-	object_path: Option<String>,
-}
-
-fn main() {
-	let options: Options = construct!(Options {
-		input(construct!([
-			c(short('c').argument::<String>("\"preterm\"").help("Read input from argument").map(InputOption::Direct)),
-			f(short('f').argument::<String>("PATH").help("Read input from file").map(InputOption::FilePath)),
-		])),
-		show_lir(long("lir").switch()),
-		show_clif(long("clif").switch()),
-		object_path(short('o').argument::<String>("PATH").help("Emit object to file").optional())
-	})
-	.to_options()
-	.run();
-
-	run(options);
 }
