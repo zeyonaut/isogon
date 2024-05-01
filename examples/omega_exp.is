@@ -1,0 +1,11 @@
+def [*] add_2 : '(Nat -> Nat) = <|n| suc (suc n)>;
+def [*] repeat : Nat -> ![*] ('(Nat -> Nat)) -> '(Nat -> Nat)
+= |n| |f| (
+	def @[*] f = f;
+	n :: |_| '(Nat -> Nat) {
+		| 0 -> <|x| x>
+		| suc @_.g -> <|x| <f> (<g> x)>
+	}
+);
+
+<repeat 4 (@[*] add_2)> 0
