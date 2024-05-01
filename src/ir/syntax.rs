@@ -84,7 +84,7 @@ pub enum StaticTerm {
 		fiberpoint: Box<Self>,
 	},
 	SgLet {
-		grade: u64,
+		grade: Cost,
 		argument: Box<Self>,
 		tail: Binder<Label, Box<Self>, 2>,
 	},

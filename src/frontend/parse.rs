@@ -4,7 +4,10 @@ use peg::error::ParseError;
 use crate::{
 	common::{any_bind, bind, AnyBinder, Cost, Cpy, Fragment, Name, ReprAtom},
 	ir::{
-		presyntax::{Constructor, Expression, Former, ParsedLabel, ParsedProgram, Pattern, Preterm, Projector},
+		presyntax::{
+			Constructor, Expression, Former, IrrefutablePattern, ParsedLabel, ParsedProgram, Pattern, Preterm,
+			Projector,
+		},
 		tokenized::{Keyword, Pragma, Token, TokenizedSource},
 	},
 };
@@ -55,9 +58,6 @@ peg::parser! {
 		= pos:position!() [Token::Number] {parser.number64(pos).unwrap()}
 
 		rule parameter() -> ParsedLabel
-			= locus:position!() name:identifier() {ParsedLabel { locus, label: Some(name) }}
-
-		rule optional_parameter() -> ParsedLabel
 			= locus:position!() label:(name:identifier() {Some(name)} / [Token::LowDash] {None}) {ParsedLabel { locus, label }}
 
 		rule cost_annotation() -> Cost
@@ -127,12 +127,12 @@ peg::parser! {
 			) fini:position!() {preterm.at((init, fini))}
 
 		rule bound_spine_headed() -> AnyBinder<ParsedLabel, Box<Expression>>
-			= [Token::Pipe] _ variables:(variable:optional_parameter())**[Token::Period] _ [Token::Pipe] _ body:spine_headed() {any_bind(variables, body)}
+			= [Token::Pipe] _ variables:(variable:parameter())**[Token::Period] _ [Token::Pipe] _ body:spine_headed() {any_bind(variables, body)}
 
 		// Case arms.
 		rule atomic_pattern() -> Pattern<ParsedLabel>
-			= [Token::At] index:optional_parameter() _ [Token::Period] witness:optional_parameter() {Pattern::Witness {index, witness}}
-			/ [Token::At] variable:optional_parameter() {Pattern::Variable(variable)}
+			= [Token::At] index:parameter() _ [Token::Period] witness:parameter() {Pattern::Witness {index, witness}}
+			/ [Token::At] variable:parameter() {Pattern::Variable(variable)}
 
 		rule pattern() -> Pattern<ParsedLabel>
 			= constructor:constructor() patterns:(_ p:atomic_pattern() {p})* {Pattern::Construction(constructor, patterns)}
@@ -160,26 +160,25 @@ peg::parser! {
 		#[cache]
 		rule spine_headed() -> Expression
 			= init:position!() preterm:(
-				  [Token::Pipe] _ parameter:optional_parameter() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { body: bind([parameter], body) }}
-				/ [Token::Pipe] _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ fragment:[Token::At]? _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { fragment: if fragment.is_some() {Fragment::Logical} else {Fragment::Material}, base: base.into(), family: bind([parameter], right) }}
+				  [Token::Pipe] _ parameter:parameter() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { body: bind([parameter], body) }}
+				/ [Token::Pipe] _ parameter:parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ fragment:[Token::At]? _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { fragment: if fragment.is_some() {Fragment::Logical} else {Fragment::Material}, base: base.into(), family: bind([parameter], right) }}
 				/ locus:position!() left:spine() _ fragment:[Token::At]? _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { fragment: if fragment.is_some() {Fragment::Logical} else {Fragment::Material}, base: left.into(), family: bind([ParsedLabel {locus, label: None}], right) }}
-				/ [Token::Pipe] _ parameter:optional_parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Amp] _ right:spine_headed() {Preterm::Sg { base: base.into(), family: bind([parameter], right) }}
+				/ [Token::Pipe] _ parameter:parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Amp] _ right:spine_headed() {Preterm::Sg { base: base.into(), family: bind([parameter], right) }}
 				/ locus:position!() left:spine() _ [Token::Amp] _ right:spine_headed() {Preterm::Sg { base: left.into(), family: bind([ParsedLabel {locus, label: None}], right) }}
 				/ left:spine() _ [Token::Comma] _ right:spine_headed() {Preterm::Pair { basepoint: left.into(), fiberpoint: right.into() }}
 			) fini:position!() {preterm.at((init, fini))}
 			/ spine()
 
+		rule irrefutable_pattern() -> IrrefutablePattern<ParsedLabel>
+			= label:parameter() {IrrefutablePattern::Label(label)}
+			/ [Token::At] grade:cost_annotation() _ label:parameter() {IrrefutablePattern::Exp(grade, label)}
+			/ [Token::ParenL] _ a:parameter() _ [Token::Comma] _ b:parameter() _ [Token::ParenR] {IrrefutablePattern::Pair([a, b])}
+
 		rule preterm() -> Expression
 			= init:position!() preterm:(
 				is_meta:([Token::Keyword(Keyword::Let)] {false} / [Token::Keyword(Keyword::Def)] {true})
-					_ grade:(cost_annotation())? _ name:optional_parameter() _ ty:([Token::Colon] _ ty:spine_headed() {ty})? _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
-				{ Preterm::Let { is_meta, grade, ty: ty.map(Box::new), argument: argument.into(), tail: bind([name], tail) }}
-				/ [Token::Keyword(Keyword::Let)] _ grade:(cost_annotation())? _ [Token::At] grade_argument:cost_annotation() _ name:optional_parameter() _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() {
-					Preterm::ExpLet { grade, grade_argument, argument: argument.into(), tail: bind([name], tail) }
-				}
-				/ [Token::Keyword(Keyword::Let)] _ grade:(finite_grade_annotation())? _ [Token::ParenL] _ a:parameter() _ [Token::Comma] _ b:parameter() _ [Token::ParenR] _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm() {
-					Preterm::SgLet { grade: grade.unwrap_or(1), argument: argument.into(), tail: bind([a, b], tail) }
-				}
+					_ grade:(cost_annotation())? _ pattern:irrefutable_pattern() _ ty:([Token::Colon] _ ty:spine_headed() {ty})? _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
+				{ Preterm::Let { is_meta, grade, ty: ty.map(Box::new), argument: argument.into(), pattern, tail: tail.into() }}
 			) fini:position!() {preterm.at((init, fini))}
 			/ spine_headed()
 
@@ -188,7 +187,7 @@ peg::parser! {
 			/ {Fragment::Material}
 
 		rule pragma_input() -> (ParsedLabel, Expression)
-			= [Token::Pragma(Pragma::Input)] _ label:optional_parameter() _ [Token::Colon] _ ty:spine_headed() {(label, ty)}
+			= [Token::Pragma(Pragma::Input)] _ label:parameter() _ [Token::Colon] _ ty:spine_headed() {(label, ty)}
 
 		pub rule program() -> ParsedProgram
 			= _ fragment:pragma_fragment() _ input:pragma_input()? _ expr:preterm() _ {ParsedProgram {fragment, input, expr}}

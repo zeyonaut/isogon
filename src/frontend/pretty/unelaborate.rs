@@ -1,7 +1,7 @@
 use crate::{
 	common::{AnyBinder, Binder, Cpy, Label},
 	ir::{
-		presyntax::{Constructor, Former, Pattern, Preterm, Projector, PurePreterm},
+		presyntax::{Constructor, Former, IrrefutablePattern, Pattern, Preterm, Projector, PurePreterm},
 		syntax::{DynamicTerm, StaticTerm},
 	},
 };
@@ -18,13 +18,17 @@ impl Unelaborate for StaticTerm {
 			StaticTerm::Variable(Some(name), _) => Preterm::Variable(name),
 			StaticTerm::Variable(None, index) => Preterm::Index(index),
 
-			StaticTerm::Let { grade, ty, argument, tail } => Preterm::Let {
-				is_meta: true,
-				grade: Some(grade),
-				ty: Some(ty.unelaborate().into()),
-				argument: argument.unelaborate().into(),
-				tail: tail.unelaborate(),
-			},
+			StaticTerm::Let { grade, ty, argument, tail } => {
+				let tail = tail.unelaborate();
+				Preterm::Let {
+					is_meta: true,
+					grade: Some(grade),
+					ty: Some(ty.unelaborate().into()),
+					argument: argument.unelaborate().into(),
+					pattern: IrrefutablePattern::Label(tail.parameter()),
+					tail: tail.body,
+				}
+			}
 
 			StaticTerm::Universe(c) => Preterm::Former(
 				Former::Universe,
@@ -62,12 +66,17 @@ impl Unelaborate for StaticTerm {
 
 			StaticTerm::Exp(n, _, t) => Preterm::Former(Former::Exp(n), vec![t.unelaborate()]),
 			StaticTerm::Repeat(n, e) => Preterm::Constructor(Constructor::Exp(n), vec![e.unelaborate()]),
-			StaticTerm::ExpLet { grade, grade_argument, argument, tail } => Preterm::ExpLet {
-				grade: Some(grade),
-				grade_argument,
-				argument: argument.unelaborate().into(),
-				tail: tail.unelaborate(),
-			},
+			StaticTerm::ExpLet { grade, grade_argument, argument, tail } => {
+				let tail = tail.unelaborate();
+				Preterm::Let {
+					is_meta: true,
+					grade: Some(grade),
+					ty: None,
+					argument: argument.unelaborate().into(),
+					pattern: IrrefutablePattern::Exp(grade_argument, tail.parameter()),
+					tail: tail.body,
+				}
+			}
 			StaticTerm::ExpProject(t) => Preterm::Project(t.unelaborate().into(), Projector::Exp),
 
 			StaticTerm::Pi { fragment, base_copy: _, base, family_copy: _, family } =>
@@ -82,8 +91,17 @@ impl Unelaborate for StaticTerm {
 				basepoint: basepoint.unelaborate().into(),
 				fiberpoint: fiberpoint.unelaborate().into(),
 			},
-			StaticTerm::SgLet { grade, argument, tail } =>
-				Preterm::SgLet { grade, argument: argument.unelaborate().into(), tail: tail.unelaborate() },
+			StaticTerm::SgLet { grade, argument, tail } => {
+				let tail = tail.unelaborate();
+				Preterm::Let {
+					is_meta: true,
+					grade: Some(grade),
+					ty: None,
+					argument: argument.unelaborate().into(),
+					pattern: IrrefutablePattern::Pair(tail.parameters),
+					tail: tail.body,
+				}
+			}
 			StaticTerm::SgField(s, f) => Preterm::Project(s.unelaborate().into(), Projector::Field(f)),
 
 			StaticTerm::Enum(n) => Preterm::Former(Former::Enum(n), vec![]),
@@ -139,20 +157,28 @@ impl Unelaborate for DynamicTerm {
 			DynamicTerm::Variable(Some(name), _) => Preterm::Variable(name),
 			DynamicTerm::Variable(None, index) => Preterm::Index(index),
 
-			DynamicTerm::Def { grade, ty, argument, tail } => Preterm::Let {
-				is_meta: true,
-				grade: Some(grade),
-				ty: Some(ty.unelaborate().into()),
-				argument: argument.unelaborate().into(),
-				tail: tail.unelaborate(),
-			},
-			DynamicTerm::Let { grade, ty, argument_kind: _, argument, tail } => Preterm::Let {
-				is_meta: false,
-				grade: Some(grade.into()),
-				ty: Some(ty.unelaborate().into()),
-				argument: argument.unelaborate().into(),
-				tail: tail.unelaborate(),
-			},
+			DynamicTerm::Def { grade, ty, argument, tail } => {
+				let tail = tail.unelaborate();
+				Preterm::Let {
+					is_meta: true,
+					grade: Some(grade),
+					ty: Some(ty.unelaborate().into()),
+					argument: argument.unelaborate().into(),
+					pattern: IrrefutablePattern::Label(tail.parameter()),
+					tail: tail.body,
+				}
+			}
+			DynamicTerm::Let { grade, ty, argument_kind: _, argument, tail } => {
+				let tail = tail.unelaborate();
+				Preterm::Let {
+					is_meta: false,
+					grade: Some(grade.into()),
+					ty: Some(ty.unelaborate().into()),
+					argument: argument.unelaborate().into(),
+					pattern: IrrefutablePattern::Label(tail.parameter()),
+					tail: tail.body,
+				}
+			}
 
 			DynamicTerm::Universe { kind } =>
 				Preterm::Former(Former::Universe, vec![kind.copy.unelaborate(), kind.repr.unelaborate()]),
@@ -162,12 +188,17 @@ impl Unelaborate for DynamicTerm {
 			DynamicTerm::Exp(n, _, t) => Preterm::Former(Former::Exp(n.into()), vec![t.unelaborate()]),
 			DynamicTerm::Repeat { grade, kind: _, term } =>
 				Preterm::Constructor(Constructor::Exp(grade.into()), vec![term.unelaborate()]),
-			DynamicTerm::ExpLet { grade, grade_argument, argument, kind: _, tail } => Preterm::ExpLet {
-				grade: Some(grade.into()),
-				grade_argument: grade_argument.into(),
-				argument: argument.unelaborate().into(),
-				tail: tail.unelaborate(),
-			},
+			DynamicTerm::ExpLet { grade, grade_argument, argument, kind: _, tail } => {
+				let tail = tail.unelaborate();
+				Preterm::Let {
+					is_meta: false,
+					grade: Some(grade.into()),
+					ty: None,
+					argument: argument.unelaborate().into(),
+					pattern: IrrefutablePattern::Exp(grade_argument.into(), tail.parameter()),
+					tail: tail.body,
+				}
+			}
 			DynamicTerm::ExpProject(t) => Preterm::Project(t.unelaborate().into(), Projector::Exp),
 
 			DynamicTerm::Pi { fragment, base_kind: _, base, family_kind: _, family } =>
@@ -183,8 +214,17 @@ impl Unelaborate for DynamicTerm {
 				basepoint: basepoint.unelaborate().into(),
 				fiberpoint: fiberpoint.unelaborate().into(),
 			},
-			DynamicTerm::SgLet { grade, argument, kinds: _, tail } =>
-				Preterm::SgLet { grade, argument: argument.unelaborate().into(), tail: tail.unelaborate() },
+			DynamicTerm::SgLet { grade, argument, kinds: _, tail } => {
+				let tail = tail.unelaborate();
+				Preterm::Let {
+					is_meta: false,
+					grade: Some(grade.into()),
+					ty: None,
+					argument: argument.unelaborate().into(),
+					pattern: IrrefutablePattern::Pair(tail.parameters),
+					tail: tail.body,
+				}
+			}
 			DynamicTerm::SgField { scrutinee, field } =>
 				Preterm::Project(scrutinee.unelaborate().into(), Projector::Field(field)),
 

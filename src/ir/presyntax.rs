@@ -29,24 +29,55 @@ pub enum Preterm<L, E> {
 	Variable(Name),
 	Index(Index),
 
-	Let { is_meta: bool, grade: Option<Cost>, ty: Option<Box<E>>, argument: Box<E>, tail: Binder<L, Box<E>> },
+	Let {
+		is_meta: bool,
+		grade: Option<Cost>,
+		ty: Option<Box<E>>,
+		argument: Box<E>,
+		pattern: IrrefutablePattern<L>,
+		tail: Box<E>,
+	},
 
 	SwitchLevel(Box<E>),
 
-	ExpLet { grade: Option<Cost>, grade_argument: Cost, argument: Box<E>, tail: Binder<L, Box<E>> },
+	Pi {
+		fragment: Fragment,
+		base: Box<E>,
+		family: Binder<L, Box<E>>,
+	},
+	Lambda {
+		body: Binder<L, Box<E>>,
+	},
+	Call {
+		callee: Box<E>,
+		argument: Box<E>,
+	},
 
-	Pi { fragment: Fragment, base: Box<E>, family: Binder<L, Box<E>> },
-	Lambda { body: Binder<L, Box<E>> },
-	Call { callee: Box<E>, argument: Box<E> },
-
-	Sg { base: Box<E>, family: Binder<L, Box<E>> },
-	Pair { basepoint: Box<E>, fiberpoint: Box<E> },
-	SgLet { grade: u64, argument: Box<E>, tail: Binder<L, Box<E>, 2> },
+	Sg {
+		base: Box<E>,
+		family: Binder<L, Box<E>>,
+	},
+	Pair {
+		basepoint: Box<E>,
+		fiberpoint: Box<E>,
+	},
 
 	Former(Former, Vec<E>),
 	Constructor(Constructor, Vec<E>),
 	Project(Box<E>, Projector),
-	Split { scrutinee: Box<E>, is_cast: bool, motive: AnyBinder<L, Box<E>>, cases: Vec<(Pattern<L>, E)> },
+	Split {
+		scrutinee: Box<E>,
+		is_cast: bool,
+		motive: AnyBinder<L, Box<E>>,
+		cases: Vec<(Pattern<L>, E)>,
+	},
+}
+
+#[derive(Debug, Clone)]
+pub enum IrrefutablePattern<L> {
+	Label(L),
+	Exp(Cost, L),
+	Pair([L; 2]),
 }
 
 #[derive(Debug, Clone)]

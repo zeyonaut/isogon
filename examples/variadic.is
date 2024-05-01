@@ -1,6 +1,6 @@
 % A type with one element, erased at runtime.
 let [0] Unit = ![0] #1;
-def [*] tt : 'Unit = <@[0] 0_1>;
+let tt : Unit = @[0] 0_1;
 
 % Type of lists of known length.
 let [0] List : |n : Nat| -> * c1 rptr
@@ -43,4 +43,4 @@ def [*] make_list : |n : Nat| -> '<Curry n <List <lower n>>> =
 		>>
 	};
 
-(8, <make_list 8> 1 2 4 8 16 32 64 128 <tt>)
+(8, <make_list 8> 1 2 4 8 16 32 64 128 tt)

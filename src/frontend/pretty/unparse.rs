@@ -4,7 +4,7 @@ use lasso::Resolver;
 
 use crate::{
 	common::{Cost, Cpy, Field, Fragment, Label, Name, ReprAtom},
-	ir::presyntax::{Constructor, Former, Pattern, Preterm, Projector, PurePreterm},
+	ir::presyntax::{Constructor, Former, IrrefutablePattern, Pattern, Preterm, Projector, PurePreterm},
 };
 
 pub fn pretty_print(term: &PurePreterm, interner: &impl Resolver) -> String {
@@ -17,14 +17,12 @@ pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver
 	match &preterm.0 {
 		Preterm::Variable(name) => write!(f, "{}", interner.resolve(name))?,
 		Preterm::Index(index) => write!(f, "_{}", index.0)?,
-		Preterm::Let { is_meta, grade, ty, argument, tail } => {
-			let parameter = resolve(interner, &tail.parameter());
-			write!(
-				f,
-				"{} {}{parameter}",
-				if *is_meta { "def" } else { "let" },
-				if let Some(grade) = grade { optional_grade_prefix(*grade, parameter) } else { "".into() }
-			)?;
+		Preterm::Let { is_meta, grade, ty, argument, pattern, tail } => {
+			write!(f, "{} ", if *is_meta { "def" } else { "let" })?;
+			if let Some(grade) = grade {
+				write!(f, "[{}] ", cost(*grade))?;
+			}
+			print_irrefutable_pattern(pattern, f, interner)?;
 			if let Some(ty) = ty {
 				write!(f, " : ")?;
 				print(ty, f, interner)?;
@@ -32,24 +30,12 @@ pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver
 			write!(f, " = ")?;
 			print(argument, f, interner)?;
 			write!(f, "; ")?;
-			print(&tail.body, f, interner)?;
+			print(tail, f, interner)?;
 		}
 		Preterm::SwitchLevel(t) => {
 			write!(f, "<")?;
 			print(t, f, interner)?;
 			write!(f, ">")?;
-		}
-		Preterm::ExpLet { grade, grade_argument, argument, tail } => {
-			let parameter = resolve(interner, &tail.parameter());
-			write!(
-				f,
-				"let {}![{}] {{{parameter}}} = ",
-				if let Some(grade) = grade { optional_grade_prefix(*grade, parameter) } else { "".into() },
-				cost(*grade_argument),
-			)?;
-			print(argument, f, interner)?;
-			write!(f, "; ")?;
-			print(&tail.body, f, interner)?;
 		}
 		Preterm::Pi { fragment, base, family } => {
 			let parameter = resolve(interner, &family.parameter());
@@ -92,18 +78,6 @@ pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver
 			print_spine(basepoint, f, interner)?;
 			write!(f, ", ")?;
 			print(fiberpoint, f, interner)?;
-		}
-		Preterm::SgLet { grade, argument, tail } => {
-			write!(
-				f,
-				"let {}({}, {}) = ",
-				optional_grade_prefix(*grade, ":)"),
-				resolve(interner, &tail.parameters[0]),
-				resolve(interner, &tail.parameters[1])
-			)?;
-			print(argument, f, interner)?;
-			write!(f, "; ")?;
-			print(&tail.body, f, interner)?;
 		}
 		Preterm::Former(former, args) => {
 			print_former(former, f, interner)?;
@@ -155,6 +129,19 @@ pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver
 	Ok(())
 }
 
+fn print_irrefutable_pattern(
+	pattern: &IrrefutablePattern<Label>,
+	f: &mut impl Write,
+	interner: &impl Resolver,
+) -> std::fmt::Result {
+	match pattern {
+		IrrefutablePattern::Label(label) => write!(f, "{}", resolve(interner, label)),
+		IrrefutablePattern::Exp(grade, label) =>
+			write!(f, "@[{}] {} = ", cost(*grade), resolve(interner, label)),
+		IrrefutablePattern::Pair([a, b]) => write!(f, "({}, {})", resolve(interner, a), resolve(interner, b)),
+	}
+}
+
 fn print_spine(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver) -> std::fmt::Result {
 	match &preterm.0 {
 		Preterm::Call { .. }
@@ -174,13 +161,11 @@ fn print_atom(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolve
 			print(preterm, f, interner)?,
 
 		Preterm::Let { .. }
-		| Preterm::ExpLet { .. }
 		| Preterm::Pi { .. }
 		| Preterm::Lambda { .. }
 		| Preterm::Call { .. }
 		| Preterm::Sg { .. }
 		| Preterm::Pair { .. }
-		| Preterm::SgLet { .. }
 		| Preterm::Former(..)
 		| Preterm::Constructor(..)
 		| Preterm::Project(..)
@@ -296,18 +281,5 @@ fn cost(grade: Cost) -> String {
 		format!("{grade}")
 	} else {
 		"* ".to_owned()
-	}
-}
-
-fn optional_grade_prefix(grade: impl Into<Cost>, parameter: &str) -> String {
-	let grade = grade.into();
-	if let Cost::Fin(grade) = grade {
-		if (grade == 0 && parameter == "_") || (grade == 1 && parameter != "_") {
-			"".to_owned()
-		} else {
-			format!("[{grade}] ")
-		}
-	} else {
-		"[*] ".to_owned()
 	}
 }
