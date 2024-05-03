@@ -462,56 +462,13 @@ impl<'a, 'b, 'c, 'd> Emitter<'a, 'b, 'c, 'd> {
 				let data = self.builder.ins().uextend(I32, data);
 				self.builder.ins().br_table(data, jump_table);
 			}
-			linear::Terminator::CaseNat { index, limit, body, body_args, exit, exit_arg } => {
+			linear::Terminator::CaseNat { index, limit, body, exit } => {
 				let index = self.predata(index).unwrap();
 				let index = self.value(index);
 				let limit = self.predata(limit).unwrap();
 				let limit = self.value(limit);
 				let condition = self.builder.ins().isub(limit, index);
-				if self.blocks_to_parameter_slots[exit.0][0].is_none() {
-					// Accumulator is small; we can do a simple branch.
-					let body_args = body_args.each_ref().map(|x| {
-						let x = self.predata(x).unwrap();
-						self.value(x)
-					});
-					let exit_arg = self.predata(exit_arg).unwrap();
-					let exit_arg = self.value(exit_arg);
-					self.builder.ins().brif(
-						condition,
-						self.blocks[body.0],
-						&body_args,
-						self.blocks[exit.0],
-						&[exit_arg],
-					);
-				} else {
-					// Accumulator is oversized; we need to generate extra blocks after the branch.
-					let next_index = self.predata(&body_args[0]).unwrap();
-					let next_index = self.value(next_index);
-					let body_prelude = self.builder.create_block();
-					self.builder.append_block_param(body_prelude, I64);
-					let exit_prelude = self.builder.create_block();
-					self.builder.ins().brif(condition, body_prelude, &[next_index], exit_prelude, &[]);
-
-					// Generate body prelude.
-					self.builder.switch_to_block(body_prelude);
-					let body_prelude_args = self.builder.block_params(body_prelude).to_vec();
-					let body_accumulator_slot = self.blocks_to_parameter_slots[body.0][1].unwrap();
-					// NOTE: Stack slots should never be zero-sized.
-					let body_accumulator_data = self.predata(&body_args[1]).unwrap();
-					let body_accumulator_data = self.data(body_accumulator_data);
-					self.store_data_in_slot(body_accumulator_slot, 0, body_accumulator_data);
-					let body_block = self.blocks[body.0];
-					self.builder.ins().jump(body_block, &body_prelude_args);
-
-					// Generate exit prelude.
-					self.builder.switch_to_block(exit_prelude);
-					let exit_accumulator_slot = self.blocks_to_parameter_slots[exit.0][0].unwrap();
-					let exit_accumulator_data = self.predata(exit_arg).unwrap();
-					let exit_accumulator_data = self.data(exit_accumulator_data);
-					self.store_data_in_slot(exit_accumulator_slot, 0, exit_accumulator_data);
-					let exit_block = self.blocks[exit.0];
-					self.builder.ins().jump(exit_block, &[]);
-				}
+				self.builder.ins().brif(condition, self.blocks[body.0], &[], self.blocks[exit.0], &[]);
 			}
 		}
 	}

@@ -413,32 +413,29 @@ impl ProcedureBuilder {
 				let ([c_index, c_previous], condition_check) =
 					self.block([Some(Layout::Nat), motive_repr.as_ref().map(Into::into)]);
 				self.terminate_jump(&condition_check, initial.map(|x| vec![Value::Num(0), x].into()));
-				let ([b_index, b_previous], body) =
-					self.block([Some(Layout::Nat), motive_repr.as_ref().map(Into::into)]);
-				let ([result], frame) = self.block([motive_repr.as_ref().map(Into::into)]);
+				let ([], body) = self.block([]);
+				let ([], frame) = self.block([]);
 				self.terminate(
 					condition_check.clone(),
 					Terminator::CaseNat {
 						index: Register::Local(c_index).into(),
 						limit,
 						body: body.id(),
-						body_args: [c_index, c_previous].map(Register::Local).map(Into::into),
 						exit: frame.id(),
-						exit_arg: Register::Local(c_previous).into(),
 					},
 				);
 				let (body, value) = self
 					.generate_with(
 						body,
 						case_suc,
-						[b_index, b_previous].map(Register::Local).map(Into::into).map(ValueProducer::Value),
+						[c_index, c_previous].map(Register::Local).map(Into::into).map(ValueProducer::Value),
 					)?
 					.unframe();
 				self.terminate_jump(
 					&condition_check,
-					body.and(vec![Value::from(Register::Local(b_index)).suc(), value].into()),
+					body.and(vec![Value::from(Register::Local(c_index)).suc(), value].into()),
 				);
-				frame.and(Register::Local(result).into())
+				frame.and(Register::Local(c_previous).into())
 			}
 
 			Term::BxValue(term) => {

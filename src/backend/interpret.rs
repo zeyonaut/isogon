@@ -135,22 +135,11 @@ impl<'a> Executor<'a> {
 					assert_eq!(k as usize, block_ids.len());
 					current_block_id = block_ids[v as usize].0;
 				}
-				Terminator::CaseNat { index, limit, body, body_args, exit, exit_arg } => {
+				Terminator::CaseNat { index, limit, body, exit } => {
 					let Data::Num(index) = self.compute(index) else { panic!() };
 					let Data::Num(limit) = self.compute(limit) else { panic!() };
-					if index < limit {
-						current_block_id = body.0;
-						let [x, y] = &*self.block(current_block_id).parameters else { panic!() };
-						let x_data = self.compute(&body_args[0]);
-						let y_data = self.compute(&body_args[1]);
-						self.environment.locals.insert(x.0, x_data);
-						self.environment.locals.insert(y.0, y_data);
-					} else {
-						current_block_id = exit.0;
-						let [x] = &*self.block(current_block_id).parameters else { panic!() };
-						let data = self.compute(exit_arg);
-						self.environment.locals.insert(x.0, data);
-					}
+					current_block_id = if index < limit { body.0 } else { exit.0 };
+					let [] = &*self.block(current_block_id).parameters else { panic!() };
 				}
 			}
 

@@ -99,14 +99,7 @@ pub enum Terminator {
 	Return(Value),
 	Jump(BlockId, Box<[Value]>),
 	Split(Value, Box<[BlockId]>),
-	CaseNat {
-		index: Value,
-		limit: Value,
-		body: BlockId,
-		body_args: [Value; 2],
-		exit: BlockId,
-		exit_arg: Value,
-	},
+	CaseNat { index: Value, limit: Value, body: BlockId, exit: BlockId },
 }
 
 #[derive(Debug)]
@@ -288,19 +281,15 @@ fn print_terminator(f: &mut impl std::fmt::Write, terminator: &Terminator) -> st
 			}
 			write!(f, ")")?;
 		}
-		Terminator::CaseNat { index, limit, body, body_args, exit, exit_arg } => {
+		Terminator::CaseNat { index, limit, body, exit } => {
 			write!(f, "if ")?;
 			print_value(f, index)?;
 			write!(f, " < ")?;
 			print_value(f, limit)?;
 			write!(f, " then ")?;
-			write!(f, "block{}(", body.0)?;
-			print_values(f, body_args)?;
-			write!(f, ")")?;
+			write!(f, "block{}()", body.0)?;
 			write!(f, " else ")?;
-			write!(f, "block{}(", exit.0)?;
-			print_value(f, exit_arg)?;
-			write!(f, ")")?;
+			write!(f, "block{}()", exit.0)?;
 		}
 	}
 	Ok(())
