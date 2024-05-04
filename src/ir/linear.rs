@@ -396,7 +396,7 @@ pub fn print_opt_layout(f: &mut impl std::fmt::Write, layout: &Option<Layout>) -
 	if let Some(layout) = &layout {
 		print_layout(f, layout)?;
 	} else {
-		writeln!(f, "()")?;
+		write!(f, "()")?;
 	}
 	Ok(())
 }

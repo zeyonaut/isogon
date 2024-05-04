@@ -93,7 +93,7 @@ impl Flattener {
 			DynamicTerm::Repeat { grade, kind, term } => Term::Repeat {
 				grade: *grade,
 				copy: kind.clone().unwrap().stage().copy,
-				term: self.flatten(term, occurrences).into(),
+				term: if grade == &0 { Term::Irrelevant } else { self.flatten(term, occurrences) }.into(),
 			},
 			DynamicTerm::ExpLet { grade, grade_argument, argument, kind, tail } => {
 				let kind = kind.clone().stage();

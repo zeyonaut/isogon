@@ -26,15 +26,20 @@ pub fn elaborate(program: ParsedProgram) -> Result<CoreProgram, ElaborationError
 	if let Some((input, domain)) = program.input {
 		let (domain, domain_kind) = context.elaborate_dynamic_type(domain)?;
 		let domain_value = domain.evaluate();
-		let (binder, ty, kind) = context
+		let (binder, note) = context
 			.extend(bind([input], program.expr))
 			.bind_dynamic(false, 1.into(), domain_kind.clone(), domain_value)
 			.map(|context, body| context.synthesize_dynamic(body))?
-			.retract2();
-		Ok(CoreProgram { input: Some((input.label, domain_kind)), term: binder.body, ty, kind })
+			.retract_dynamic();
+		Ok(CoreProgram {
+			input: Some((input.label, domain_kind)),
+			term: binder.body,
+			ty: note.ty,
+			kind: note.kind,
+		})
 	} else {
-		let (term, ty, kind) = context.synthesize_dynamic(program.expr)?;
-		Ok(CoreProgram { input: None, term, ty, kind })
+		let term = context.synthesize_dynamic(program.expr)?;
+		Ok(CoreProgram { input: None, term: term.term, ty: term.note.ty, kind: term.note.kind })
 	}
 }
 
@@ -63,6 +68,7 @@ pub enum ElaborationErrorKind {
 	UsedNonCrispLockedVariable,
 	VariableHasUsesLeft(u64),
 	SynthesizedLambda,
+	AttemptedMaterialization,
 	InvalidFormer,
 	InvalidConstructor,
 	InvalidProjector,
@@ -136,12 +142,17 @@ impl<'c> Drop for LockedContext<'c> {
 
 pub struct AmplifiedContext<'c> {
 	context: &'c mut Context,
+	previous_fragment: Fragment,
 }
 
 impl<'c> AmplifiedContext<'c> {
 	fn new(ctx: &'c mut Context, amplifier: Cost) -> Self {
+		let previous_fragment = ctx.fragment;
+		if amplifier == Cost::Fin(0) {
+			ctx.fragment = Fragment::Logical;
+		}
 		ctx.amplifiers.push((ctx.len().0, amplifier));
-		Self { context: ctx }
+		Self { context: ctx, previous_fragment }
 	}
 }
 
@@ -156,7 +167,10 @@ impl<'c> DerefMut for AmplifiedContext<'c> {
 }
 
 impl<'c> Drop for AmplifiedContext<'c> {
-	fn drop(&mut self) { self.context.amplifiers.pop(); }
+	fn drop(&mut self) {
+		self.context.fragment = self.previous_fragment;
+		self.context.amplifiers.pop();
+	}
 }
 
 pub struct ExtendedContext<'c, T, const N: usize> {
@@ -379,11 +393,7 @@ impl Context {
 		Ok(())
 	}
 
-	pub fn erase(&mut self) -> ErasedContext<'_> { self.erase_if(true) }
-
-	pub fn erase_if(&mut self, should_erase: bool) -> ErasedContext<'_> {
-		ErasedContext::new(self, if should_erase { Fragment::Logical } else { self.fragment })
-	}
+	pub fn erase(&mut self) -> ErasedContext<'_> { ErasedContext::new(self, Fragment::Logical) }
 
 	pub fn lock_if(&mut self, should_lock: bool) -> LockedContext<'_> { LockedContext::new(self, should_lock) }
 
@@ -398,18 +408,28 @@ impl Context {
 		ExtendedContext::new(self, binder)
 	}
 
-	fn synthesize_static(
+	fn synthesize_static(&mut self, expr: Expression) -> Result<AnnotatedStaticTerm, ElaborationError> {
+		self.elaborate_static(expr, None)
+	}
+
+	fn verify_static(&mut self, expr: Expression, note: StaticNote) -> Result<StaticTerm, ElaborationError> {
+		self.elaborate_static(expr, Some(note)).map(|x| x.term)
+	}
+
+	fn elaborate_static(
 		&mut self,
 		expr: Expression,
-	) -> Result<(StaticTerm, StaticValue, Cpy), ElaborationError> {
+		note: Option<StaticNote>,
+	) -> Result<AnnotatedStaticTerm, ElaborationError> {
 		let ParsedPreterm(preterm) = expr.preterm;
-		Ok(match preterm {
+		Ok(match (preterm, note) {
 			// Variables.
-			Preterm::Variable(name) => 'var: {
+			(Preterm::Variable(name), None) => 'var: {
 				for (i, (name_1, entry)) in self.tys.iter().rev().enumerate() {
 					if &Some(name) == name_1 {
 						if let ContextType::Static(ty, c) = &entry.ty {
-							let result = (StaticTerm::Variable(Some(name), Index(i)), ty.clone(), *c);
+							let result =
+								StaticTerm::Variable(Some(name), Index(i)).annotate(StaticNote::new(ty.clone(), *c));
 							self.take_index(i).map_err(|e| e.at(expr.range))?;
 							break 'var result;
 						} else {
@@ -421,23 +441,15 @@ impl Context {
 			}
 
 			// Let-expressions.
-			Preterm::Let { is_meta: true, grade, ty, argument, pattern, tail } => match pattern {
+			(Preterm::Let { is_meta: true, grade, ty, argument, pattern, tail }, note) => match pattern {
 				IrrefutablePattern::Label(label) => self.elaborate_static_let(
 					PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail: bind([label], tail) },
-					(),
-					|ctx, tail_body, ()| ctx.synthesize_static(tail_body),
+					note,
+					Self::elaborate_static,
 					|grade, ty, argument, tail| {
-						let (tail, tail_ty, c) = tail.retract2();
-						(
-							StaticTerm::Let {
-								grade,
-								ty: ty.into(),
-								argument: argument.into(),
-								tail: tail.map_into(),
-							},
-							tail_ty,
-							c,
-						)
+						let (tail, note) = tail.retract_static();
+						StaticTerm::Let { grade, ty: ty.into(), argument: argument.into(), tail: tail.map_into() }
+							.annotate(note)
 					},
 				)?,
 
@@ -449,246 +461,282 @@ impl Context {
 						argument: *argument,
 						tail: bind([label], tail),
 					},
-					(),
-					|ctx, tail, ()| ctx.synthesize_static(tail),
+					note,
+					Self::elaborate_static,
 					|grade, grade_argument, argument, tail| {
-						let (tail, tail_ty, c) = tail.retract2();
-						(
-							StaticTerm::ExpLet {
-								grade,
-								grade_argument,
-								argument: argument.into(),
-								tail: tail.map_into(),
-							},
-							tail_ty,
-							c,
-						)
+						let (tail, note) = tail.retract_static();
+						StaticTerm::ExpLet {
+							grade,
+							grade_argument,
+							argument: argument.into(),
+							tail: tail.map_into(),
+						}
+						.annotate(note)
 					},
 				)?,
 
 				// Dependent pairs.
 				IrrefutablePattern::Pair(labels) => self.elaborate_static_sg_let(
 					PreSgLet { grade: grade.unwrap_or(1.into()), argument: *argument, tail: bind(labels, tail) },
-					(),
-					|ctx, tail_body, ()| ctx.synthesize_static(tail_body),
+					note,
+					Self::elaborate_static,
 					|grade, argument, tail| {
-						let (tail, tail_ty, c) = tail.retract2();
-						(StaticTerm::SgLet { grade, argument: argument.into(), tail: tail.map_into() }, tail_ty, c)
+						let (tail, note) = tail.retract_static();
+						StaticTerm::SgLet { grade, argument: argument.into(), tail: tail.map_into() }.annotate(note)
 					},
 				)?,
 			},
 
 			// Quoting.
-			Preterm::SwitchLevel(quotee) => {
-				let (quotee, quotee_ty, kind) = self.synthesize_dynamic(*quotee)?;
-				(
-					StaticTerm::Quote(quotee.into()),
-					StaticValue::Lift { ty: quotee_ty, kind: kind.into() },
-					Cpy::Nt,
-				)
+			(Preterm::SwitchLevel(quotee), None) => {
+				let quotee = self.synthesize_dynamic(*quotee)?;
+				StaticTerm::Quote(quotee.term.into()).annotate(quotee.note.lift())
+			}
+			(Preterm::SwitchLevel(quotee), Some(note)) => {
+				let StaticValue::Lift { kind, ty: liftee } = &note.ty else {
+					return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Lift).at(expr.range));
+				};
+				let quotee = self
+					.elaborate_dynamic(*quotee, Some(DynamicNote::new((*liftee).clone(), (**kind).clone())))?;
+				StaticTerm::Quote(quotee.term.into()).annotate(note)
 			}
 
 			// Dependent functions.
-			Preterm::Pi { fragment, base, family } if self.fragment == Fragment::Logical => {
+			(Preterm::Pi { fragment, base, family }, None) => {
+				if self.fragment != Fragment::Logical {
+					return Err(ElaborationErrorKind::AttemptedMaterialization.at(expr.range));
+				}
 				let (base, base_copy) = self.elaborate_static_type(*base)?;
 				let base_value = base.clone().evaluate_in(&self.environment);
 				let (family, family_copy) = self
 					.extend(family)
 					.bind_static(false, 0.into(), base_copy, base_value)
 					.map_extra(|ctx, body| ctx.elaborate_static_type(*body))?;
-				(
-					StaticTerm::Pi {
-						fragment,
-						base_copy,
-						base: base.into(),
-						family_copy,
-						family: family.map_into(),
-					},
-					StaticValue::Universe(family_copy),
-					Cpy::Tr,
-				)
+				StaticTerm::Pi { fragment, base_copy, base: base.into(), family_copy, family: family.map_into() }
+					.annotate(StaticNote::universe(family_copy))
 			}
-			Preterm::Lambda { .. } => return Err(ElaborationErrorKind::SynthesizedLambda.at(expr.range)),
-			Preterm::Call { callee, argument } => {
-				let (callee, scrutinee_ty, _) = self.synthesize_static(*callee)?;
-				let StaticValue::IndexedProduct { fragment, base, family_copy, family, .. } = scrutinee_ty else {
+			(Preterm::Lambda { .. }, None) =>
+				return Err(ElaborationErrorKind::SynthesizedLambda.at(expr.range)),
+			(Preterm::Lambda { body }, Some(note)) => {
+				let StaticValue::IndexedProduct { fragment, base_copy, base, family_copy, family } = &note.ty
+				else {
+					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
+				};
+				let body = self
+					.extend(body)
+					.bind_static(false, (*fragment).into(), *base_copy, base.as_ref().clone())
+					.map(|ctx, body| {
+						ctx.verify_static(*body, StaticNote::new(family.evaluate_with([ctx.var(0)]), *family_copy))
+					})?;
+				StaticTerm::Function(*fragment, body.map_into()).annotate(note)
+			}
+			(Preterm::Call { callee, argument }, None) => {
+				let callee = self.synthesize_static(*callee)?;
+				let StaticValue::IndexedProduct { fragment, base_copy, base, family_copy, family } =
+					callee.note.ty
+				else {
 					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
 				};
 				let argument = self
 					.amplify(fragment)
-					.erase_if(fragment.is_logical())
-					.verify_static(*argument, (*base).clone())?;
-				(
-					StaticTerm::Apply { scrutinee: callee.into(), argument: argument.clone().into() },
-					family.evaluate_with([argument.evaluate_in(&self.environment)]),
-					family_copy,
+					.verify_static(*argument, StaticNote::new((*base).clone(), base_copy))?;
+				StaticTerm::Apply { scrutinee: callee.term.into(), argument: argument.clone().into() }.annotate(
+					StaticNote::new(family.evaluate_with([argument.evaluate_in(&self.environment)]), family_copy),
 				)
 			}
 
 			// Dependent pairs.
-			Preterm::Sg { base, family } => {
+			(Preterm::Sg { base, family }, None) => {
+				if self.fragment != Fragment::Logical {
+					return Err(ElaborationErrorKind::AttemptedMaterialization.at(expr.range));
+				}
 				let (base, base_copy) = self.elaborate_static_type(*base)?;
 				let base_value = base.clone().evaluate_in(&self.environment);
 				let (family, family_copy) = self
 					.extend(family)
 					.bind_static(false, 0.into(), base_copy, base_value)
 					.map_extra(|ctx, body| ctx.elaborate_static_type(*body))?;
-				(
-					StaticTerm::Sg { base_copy, base: base.into(), family_copy, family: family.map_into() },
-					StaticValue::Universe(base_copy.max(family_copy)),
-					Cpy::Tr,
-				)
+				StaticTerm::Sg { base_copy, base: base.into(), family_copy, family: family.map_into() }
+					.annotate(StaticNote::universe(base_copy.max(family_copy)))
 			}
-			Preterm::Pair { basepoint, fiberpoint } => {
-				let (basepoint, base, base_copy) = self.synthesize_static(*basepoint)?;
-				let (fiberpoint, fiber, fiber_copy) = self.synthesize_static(*fiberpoint)?;
-				let family = bind([None], fiber.unevaluate_in(self.len() + 1)).evaluate();
-				(
-					StaticTerm::Pair { basepoint: basepoint.into(), fiberpoint: fiberpoint.into() },
-					StaticValue::IndexedSum {
-						base_copy,
-						base: base.into(),
-						family_copy: fiber_copy,
-						family: family.into(),
-					},
-					base_copy.max(fiber_copy),
-				)
+			(Preterm::Pair { basepoint, fiberpoint }, None) => {
+				let basepoint = self.synthesize_static(*basepoint)?;
+				let fiberpoint = self.synthesize_static(*fiberpoint)?;
+				StaticTerm::Pair { basepoint: basepoint.term.into(), fiberpoint: fiberpoint.term.into() }
+					.annotate(StaticNote::product(self.len(), basepoint.note, fiberpoint.note))
+			}
+			(Preterm::Pair { basepoint, fiberpoint }, Some(note)) => {
+				let StaticValue::IndexedSum { base_copy, base, family_copy, family } = &note.ty else {
+					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
+				};
+				let basepoint =
+					self.verify_static(*basepoint, StaticNote::new(base.as_ref().clone(), *base_copy))?;
+				let basepoint_value = basepoint.clone().evaluate_in(&self.environment);
+				let fiberpoint = self.verify_static(
+					*fiberpoint,
+					StaticNote::new(family.evaluate_with([basepoint_value]), *family_copy),
+				)?;
+				StaticTerm::Pair { basepoint: basepoint.into(), fiberpoint: fiberpoint.into() }.annotate(note)
 			}
 
 			// Generic type formers.
-			Preterm::Former(former, arguments) if self.fragment == Fragment::Logical => match former {
-				// Types and universe indices.
-				Former::Universe => {
-					let [c] = arguments
-						.try_into()
-						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					match c.preterm {
-						ParsedPreterm(Preterm::Constructor(Constructor::Cpy(c), v)) if v.is_empty() =>
-							(StaticTerm::Universe(c), StaticValue::Universe(Cpy::Tr), Cpy::Tr),
-						_ => return Err(ElaborationErrorKind::InvalidStaticUniverse.at(expr.range)),
+			(Preterm::Former(former, arguments), None) => {
+				if self.fragment != Fragment::Logical {
+					return Err(ElaborationErrorKind::AttemptedMaterialization.at(expr.range));
+				}
+				match former {
+					// Types and universe indices.
+					Former::Universe => {
+						let [c] = arguments
+							.try_into()
+							.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+						match c.preterm {
+							ParsedPreterm(Preterm::Constructor(Constructor::Cpy(c), v)) if v.is_empty() =>
+								StaticTerm::Universe(c).annotate(StaticNote::universe(Cpy::Tr)),
+							_ => return Err(ElaborationErrorKind::InvalidStaticUniverse.at(expr.range)),
+						}
 					}
+					Former::Copy => {
+						let [] = arguments
+							.try_into()
+							.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+						StaticTerm::Cpy.annotate(StaticNote::universe(Cpy::Tr))
+					}
+					Former::Repr => {
+						let [] = arguments
+							.try_into()
+							.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+						StaticTerm::Repr.annotate(StaticNote::universe(Cpy::Tr))
+					}
+
+					// Quoting.
+					Former::Lift => {
+						let [liftee] = arguments
+							.try_into()
+							.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+						let (liftee, kind) = self.elaborate_dynamic_type(liftee)?;
+						StaticTerm::Lift { liftee: liftee.into(), kind: kind.unevaluate_in(self.len()).into() }
+							.annotate(StaticNote::universe(Cpy::Nt))
+					}
+
+					// Repeated programs.
+					Former::Exp(grade) => {
+						let [ty] = arguments
+							.try_into()
+							.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+						let (ty, c) = self.elaborate_static_type(ty)?;
+
+						StaticTerm::Exp(grade, c, ty.into()).annotate(StaticNote::universe(if grade == 0.into() {
+							Cpy::Tr
+						} else {
+							c
+						}))
+					}
+
+					// Enumerated numbers.
+					Former::Enum(card) => {
+						let [] = arguments
+							.try_into()
+							.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+						StaticTerm::Enum(card).annotate(StaticNote::universe(Cpy::Tr))
+					}
+
+					// Natural numbers.
+					Former::Nat => {
+						let [] = arguments
+							.try_into()
+							.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+						StaticTerm::Nat.annotate(StaticNote::universe(Cpy::Tr))
+					}
+
+					// Invalid former.
+					_ => return Err(ElaborationErrorKind::InvalidFormer.at(expr.range)),
 				}
-				Former::Copy if arguments.is_empty() =>
-					(StaticTerm::Cpy, StaticValue::Universe(Cpy::Tr), Cpy::Tr),
-				Former::Repr if arguments.is_empty() =>
-					(StaticTerm::Repr, StaticValue::Universe(Cpy::Tr), Cpy::Tr),
-
-				// Quoting.
-				Former::Lift => {
-					let [liftee] = arguments
-						.try_into()
-						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let (liftee, kind) = self.elaborate_dynamic_type(liftee)?;
-					(
-						StaticTerm::Lift { liftee: liftee.into(), kind: kind.unevaluate_in(self.len()).into() },
-						StaticValue::Universe(Cpy::Nt),
-						Cpy::Tr,
-					)
-				}
-
-				// Repeated programs.
-				Former::Exp(grade) => {
-					let [ty] = arguments
-						.try_into()
-						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let (ty, c) = self.elaborate_static_type(ty)?;
-					(
-						StaticTerm::Exp(grade, c, ty.into()),
-						StaticValue::Universe(if grade == 0.into() { Cpy::Tr } else { c }),
-						Cpy::Tr,
-					)
-				}
-
-				// Enumerated numbers.
-				Former::Enum(card) if arguments.is_empty() =>
-					(StaticTerm::Enum(card), StaticValue::Universe(Cpy::Tr), Cpy::Tr),
-
-				// Natural numbers.
-				Former::Nat if arguments.is_empty() => (StaticTerm::Nat, StaticValue::Universe(Cpy::Tr), Cpy::Tr),
-
-				// Invalid former.
-				_ => return Err(ElaborationErrorKind::InvalidFormer.at(expr.range)),
-			},
+			}
 
 			// Generic term constructors.
-			Preterm::Constructor(constructor, arguments) => match constructor {
+			(Preterm::Constructor(constructor, arguments), None) => match constructor {
 				// Universe indices.
-				Constructor::Cpy(c) if self.fragment == Fragment::Logical && arguments.is_empty() => (
+				Constructor::Cpy(c) => {
+					let [] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
 					match c {
 						Cpy::Tr => StaticTerm::CpyMax(vec![]),
 						Cpy::Nt => StaticTerm::CpyNt,
-					},
-					StaticValue::Cpy,
-					Cpy::Tr,
-				),
-				Constructor::CpyMax if self.fragment == Fragment::Logical => (
-					StaticTerm::CpyMax(
-						arguments
-							.into_iter()
-							.map(|a| self.verify_static(a, StaticValue::Cpy))
-							.collect::<Result<_, _>>()?,
-					),
-					StaticValue::Cpy,
-					Cpy::Tr,
-				),
-				Constructor::ReprAtom(r) if self.fragment == Fragment::Logical && arguments.is_empty() =>
-					(StaticTerm::ReprAtom(r), StaticValue::ReprType, Cpy::Tr),
-				Constructor::ReprExp(grade) if self.fragment == Fragment::Logical => {
+					}
+					.annotate(StaticNote::cpy())
+				}
+				Constructor::CpyMax => StaticTerm::CpyMax(
+					arguments
+						.into_iter()
+						.map(|a| self.verify_static(a, StaticNote::cpy()))
+						.collect::<Result<_, _>>()?,
+				)
+				.annotate(StaticNote::cpy()),
+
+				Constructor::ReprAtom(r) => {
+					let [] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+					StaticTerm::ReprAtom(r).annotate(StaticNote::repr())
+				}
+				Constructor::ReprExp(grade) => {
 					let [c, r] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let c = self.verify_static(c, StaticValue::Cpy)?;
-					let r = self.verify_static(r, StaticValue::ReprType)?;
-					(
-						match grade {
-							0 => StaticTerm::ReprAtom(None),
-							1 => r,
-							grade => StaticTerm::ReprExp {
-								len: ArraySize(grade),
-								kind: KindTerm { copy: c, repr: r }.into(),
-							},
-						},
-						StaticValue::ReprType,
-						Cpy::Tr,
-					)
+					let c = self.verify_static(c, StaticNote::cpy())?;
+					let r = self.verify_static(r, StaticNote::repr())?;
+					match grade {
+						0 => StaticTerm::ReprAtom(None),
+						1 => r,
+						grade =>
+							StaticTerm::ReprExp { len: ArraySize(grade), kind: KindTerm { copy: c, repr: r }.into() },
+					}
+					.annotate(StaticNote::repr())
 				}
-				Constructor::ReprPair if self.fragment == Fragment::Logical => {
+				Constructor::ReprPair => {
 					let [r0, r1] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let r0 = self.verify_static(r0, StaticValue::ReprType)?;
-					let r1 = self.verify_static(r1, StaticValue::ReprType)?;
-					(StaticTerm::ReprPair(r0.into(), r1.into()), StaticValue::ReprType, Cpy::Tr)
+					let r0 = self.verify_static(r0, StaticNote::repr())?;
+					let r1 = self.verify_static(r1, StaticNote::repr())?;
+					StaticTerm::ReprPair(r0.into(), r1.into()).annotate(StaticNote::repr())
 				}
 
 				// Repeated programs.
 				Constructor::Exp(grade) => {
-					let [tm] = arguments
+					let [inner] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let (tm, ty, c) = self.amplify(grade).synthesize_static(tm)?;
-					(
-						StaticTerm::Repeat(grade, tm.into()),
-						StaticValue::Exp(grade, c, ty.into()),
-						if grade == 0.into() { Cpy::Tr } else { c },
-					)
+					let inner = self.amplify(grade).synthesize_static(inner)?;
+					StaticTerm::Repeat(grade, inner.term.into()).annotate(inner.note.exp(grade))
 				}
 
 				// Enumerated numbers.
-				Constructor::Enum(k, v) if arguments.is_empty() =>
-					(StaticTerm::EnumValue(k, v), StaticValue::Enum(k), Cpy::Tr),
+				Constructor::Enum(k, v) => {
+					let [] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+					StaticTerm::EnumValue(k, v).annotate(StaticNote::enu(k))
+				}
 
 				// Natural numbers.
-				Constructor::Num(n) if arguments.is_empty() => (StaticTerm::Num(n), StaticValue::Nat, Cpy::Tr),
+				Constructor::Num(n) => {
+					let [] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+					StaticTerm::Num(n).annotate(StaticNote::nat())
+				}
 				Constructor::Suc => {
 					let [prev] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let prev = self.verify_static(prev, StaticValue::Nat)?;
+					let prev = self.verify_static(prev, StaticNote::nat())?;
 					if let StaticTerm::Num(p) = prev {
-						(StaticTerm::Num(p + 1), StaticValue::Nat, Cpy::Tr)
+						StaticTerm::Num(p + 1).annotate(StaticNote::nat())
 					} else {
-						(StaticTerm::Suc(prev.into()), StaticValue::Nat, Cpy::Tr)
+						StaticTerm::Suc(prev.into()).annotate(StaticNote::nat())
 					}
 				}
 
@@ -697,31 +745,41 @@ impl Context {
 			},
 
 			// Generic projectors.
-			Preterm::Project(scrutinee, projector) => match projector {
+			(Preterm::Project(scrutinee, projector), None) => match projector {
 				// Repeated programs.
-				Projector::Exp if self.fragment == Fragment::Logical => {
-					let (scrutinee, scrutinee_ty, _) = self.synthesize_static(*scrutinee)?;
-					let StaticValue::Exp(_, c, ty) = scrutinee_ty else {
+				Projector::Exp => {
+					if self.fragment != Fragment::Logical {
+						return Err(ElaborationErrorKind::AttemptedMaterialization.at(expr.range));
+					}
+					let scrutinee = self.synthesize_static(*scrutinee)?;
+					let StaticValue::Exp(_, c, ty) = scrutinee.note.ty else {
 						return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Exp).at(expr.range));
 					};
-					(StaticTerm::ExpProject(scrutinee.into()), ty.as_ref().clone(), c)
+					StaticTerm::ExpProject(scrutinee.term.into()).annotate(StaticNote::new(ty.as_ref().clone(), c))
 				}
 
 				// Dependent pairs.
-				Projector::Field(field) if self.fragment == Fragment::Logical => {
-					let (scrutinee, scrutinee_ty, _) = self.synthesize_static(*scrutinee)?;
-					let StaticValue::IndexedSum { base_copy, base, family_copy, family, .. } = scrutinee_ty else {
+				Projector::Field(field) => {
+					if self.fragment != Fragment::Logical {
+						return Err(ElaborationErrorKind::AttemptedMaterialization.at(expr.range));
+					}
+					let scrutinee = self.synthesize_static(*scrutinee)?;
+					let StaticValue::IndexedSum { base_copy, base, family_copy, family } = scrutinee.note.ty
+					else {
 						return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
 					};
 					match field {
-						Field::Base =>
-							(StaticTerm::SgField(scrutinee.into(), field), base.as_ref().clone(), base_copy),
-						Field::Fiber => (
-							StaticTerm::SgField(scrutinee.clone().into(), field),
-							family.evaluate_with([StaticTerm::SgField(scrutinee.clone().into(), Field::Base)
+						Field::Base => StaticTerm::SgField(scrutinee.term.into(), field)
+							.annotate(StaticNote::new(base.as_ref().clone(), base_copy)),
+						Field::Fiber =>
+							StaticTerm::SgField(scrutinee.term.clone().into(), field).annotate(StaticNote::new(
+								family.evaluate_with([StaticTerm::SgField(
+									scrutinee.term.clone().into(),
+									Field::Base,
+								)
 								.evaluate_in(&self.environment)]),
-							family_copy,
-						),
+								family_copy,
+							)),
 					}
 				}
 
@@ -730,10 +788,10 @@ impl Context {
 			},
 
 			// Generic case splits.
-			Preterm::Split { scrutinee, is_cast: false, motive, cases } => {
-				let (scrutinee, scrutinee_ty, _) = self.synthesize_static(*scrutinee)?;
-				let scrutinee_value = scrutinee.clone().evaluate_in(&self.environment);
-				match scrutinee_ty {
+			(Preterm::Split { scrutinee, is_cast: false, motive, cases }, None) => {
+				let scrutinee = self.synthesize_static(*scrutinee)?;
+				let scrutinee_value = scrutinee.term.clone().evaluate_in(&self.environment);
+				match scrutinee.note.ty {
 					StaticValue::Enum(card) => {
 						let motive = motive
 							.try_resolve::<1>()
@@ -764,20 +822,19 @@ impl Context {
 							new_cases.push(
 								self.amplify(if card <= 1 { Cost::Fin(1) } else { Cost::Inf }).verify_static(
 									case,
-									motive_value.evaluate_with([StaticValue::EnumValue(card, v)]),
+									StaticNote::new(
+										motive_value.evaluate_with([StaticValue::EnumValue(card, v)]),
+										motive_copy,
+									),
 								)?,
 							)
 						}
-
-						(
-							StaticTerm::CaseEnum {
-								scrutinee: scrutinee.into(),
-								motive: motive_term.map_into(),
-								cases: new_cases,
-							},
-							motive_value.evaluate_with([scrutinee_value]),
-							motive_copy,
-						)
+						StaticTerm::CaseEnum {
+							scrutinee: scrutinee.term.into(),
+							motive: motive_term.map_into(),
+							cases: new_cases,
+						}
+						.annotate(StaticNote::new(motive_value.evaluate_with([scrutinee_value]), motive_copy))
 					}
 
 					// Natural numbers.
@@ -819,8 +876,10 @@ impl Context {
 							[index, witness]
 						};
 						let case_suc = bind(case_suc_parameters, cases[1 - case_nil_position].1.clone());
-						let case_nil =
-							self.verify_static(case_nil, motive_value.evaluate_with([StaticValue::Num(0)]))?;
+						let case_nil = self.verify_static(
+							case_nil,
+							StaticNote::new(motive_value.evaluate_with([StaticValue::Num(0)]), motive_c),
+						)?;
 						let case_suc = self
 							.amplify(Cost::Inf)
 							.extend(case_suc)
@@ -829,137 +888,75 @@ impl Context {
 								motive_value.evaluate_with([ctx.var(0)])
 							})
 							.map(|ctx, body| {
-								ctx.verify_static(body, motive_value.evaluate_with([ctx.var::<StaticValue>(1).suc()]))
+								ctx.verify_static(
+									body,
+									StaticNote::new(
+										motive_value.evaluate_with([ctx.var::<StaticValue>(1).suc()]),
+										motive_c,
+									),
+								)
 							})?;
-						(
-							StaticTerm::CaseNat {
-								scrutinee: scrutinee.into(),
-								motive: motive.map_into(),
-								case_nil: case_nil.into(),
-								case_suc: case_suc.map_into(),
-							},
-							motive_value.evaluate_with([scrutinee_value]),
-							motive_c,
-						)
+						StaticTerm::CaseNat {
+							scrutinee: scrutinee.term.into(),
+							motive: motive.map_into(),
+							case_nil: case_nil.into(),
+							case_suc: case_suc.map_into(),
+						}
+						.annotate(StaticNote::new(motive_value.evaluate_with([scrutinee_value]), motive_c))
 					}
 
 					// Invalid case split.
 					_ => return Err(ElaborationErrorKind::InvalidCaseSplitScrutineeType.at(expr.range)),
 				}
 			}
-			// Synthesis failure.
-			_ => return Err(ElaborationErrorKind::CouldNotSynthesizeStatic.at(expr.range)),
-		})
-	}
 
-	fn verify_static(&mut self, expr: Expression, ty: StaticValue) -> Result<StaticTerm, ElaborationError> {
-		let ParsedPreterm(preterm) = expr.preterm;
-		Ok(match (preterm, ty) {
-			// Let-expressions.
-			(Preterm::Let { is_meta: true, grade, ty, argument, pattern, tail }, tail_ty) => match pattern {
-				IrrefutablePattern::Label(label) => self.elaborate_static_let(
-					PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail: bind([label], tail) },
-					tail_ty,
-					Self::verify_static,
-					|grade, ty, argument, tail| StaticTerm::Let {
-						grade,
-						ty: ty.into(),
-						argument: argument.into(),
-						tail: tail.map_into(),
-					},
-				)?,
-
-				// Repeated programs.
-				IrrefutablePattern::Exp(grade_argument, label) => self.elaborate_static_exp_let(
-					PreExpLet {
-						grade: grade.unwrap_or(1.into()),
-						grade_argument,
-						argument: *argument,
-						tail: bind([label], tail),
-					},
-					tail_ty,
-					Self::verify_static,
-					|grade, grade_argument, argument, tail| StaticTerm::ExpLet {
-						grade,
-						grade_argument,
-						argument: argument.into(),
-						tail: tail.map_into(),
-					},
-				)?,
-				IrrefutablePattern::Pair(labels) => self.elaborate_static_sg_let(
-					PreSgLet { grade: grade.unwrap_or(1.into()), argument: *argument, tail: bind(labels, tail) },
-					tail_ty,
-					Self::verify_static,
-					|grade, argument, tail| StaticTerm::SgLet {
-						grade,
-						argument: argument.into(),
-						tail: tail.map_into(),
-					},
-				)?,
-			},
-
-			// Quoted programs.
-			(Preterm::SwitchLevel(quotee), ty) => {
-				let StaticValue::Lift { ty: liftee, .. } = ty else {
-					return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Lift).at(expr.range));
-				};
-				let quotee = self.verify_dynamic(*quotee, liftee)?;
-				StaticTerm::Quote(quotee.into())
-			}
-
-			// Dependent functions.
-			(
-				Preterm::Lambda { body },
-				StaticValue::IndexedProduct { fragment, base_copy, base, family_copy: _, family },
-			) => {
-				let body = self
-					.extend(body)
-					.bind_static(false, fragment.into(), base_copy, base.as_ref().clone())
-					.map(|ctx, body| ctx.verify_static(*body, family.evaluate_with([ctx.var(0)])))?;
-				StaticTerm::Function(fragment, body.map_into())
-			}
-
-			// Dependent pairs.
-			(
-				Preterm::Pair { basepoint, fiberpoint },
-				StaticValue::IndexedSum { base_copy: _, base, family_copy: _, family },
-			) => {
-				let basepoint = self.verify_static(*basepoint, base.as_ref().clone())?;
-				let basepoint_value = basepoint.clone().evaluate_in(&self.environment);
-				let fiberpoint = self.verify_static(*fiberpoint, family.evaluate_with([basepoint_value]))?;
-				StaticTerm::Pair { basepoint: basepoint.into(), fiberpoint: fiberpoint.into() }
-			}
-
-			// Synthesize and conversion-check.
-			(term, ty) => {
-				let (term, synthesized_ty, _) = self.synthesize_static(term.at(expr.range))?;
-				if self.len().can_convert(&synthesized_ty, &ty) {
+			// Switch directions
+			(term, Some(note)) => {
+				let term = self.synthesize_static(term.at(expr.range))?;
+				if self.len().can_convert(&term.note.ty, &note.ty) {
 					term
 				} else {
 					return Err(
 						ElaborationErrorKind::StaticBidirectionalMismatch {
-							synthesized: synthesized_ty.unevaluate_in(self.len()),
-							expected: ty.unevaluate_in(self.len()),
+							synthesized: term.note.ty.unevaluate_in(self.len()),
+							expected: note.ty.unevaluate_in(self.len()),
 						}
 						.at(expr.range),
 					);
 				}
 			}
+
+			// Synthesis failure.
+			(_, None) => return Err(ElaborationErrorKind::CouldNotSynthesizeStatic.at(expr.range)),
 		})
 	}
 
-	fn synthesize_dynamic(
+	fn synthesize_dynamic(&mut self, expr: Expression) -> Result<AnnotatedDynamicTerm, ElaborationError> {
+		self.elaborate_dynamic(expr, None)
+	}
+
+	fn verify_dynamic(
 		&mut self,
 		expr: Expression,
-	) -> Result<(DynamicTerm, DynamicValue, KindValue), ElaborationError> {
+		note: DynamicNote,
+	) -> Result<DynamicTerm, ElaborationError> {
+		self.elaborate_dynamic(expr, Some(note)).map(|x| x.term)
+	}
+
+	fn elaborate_dynamic(
+		&mut self,
+		expr: Expression,
+		note: Option<DynamicNote>,
+	) -> Result<AnnotatedDynamicTerm, ElaborationError> {
 		let ParsedPreterm(preterm) = expr.preterm;
-		Ok(match preterm {
+		Ok(match (preterm, note) {
 			// Variables.
-			Preterm::Variable(name) => 'var: {
+			(Preterm::Variable(name), None) => 'var: {
 				for (i, (name_1, entry)) in self.tys.iter().rev().enumerate() {
 					if &Some(name) == name_1 {
 						if let ContextType::Dynamic(ty, kind) = &entry.ty {
-							let result = (DynamicTerm::Variable(Some(name), Index(i)), ty.clone(), kind.clone());
+							let result = DynamicTerm::Variable(Some(name), Index(i))
+								.annotate(DynamicNote::new(ty.clone(), kind.clone()));
 							self.take_index(i).map_err(|e| e.at(expr.range))?;
 							break 'var result;
 						} else {
@@ -971,48 +968,42 @@ impl Context {
 			}
 
 			// Let-expressions.
-			Preterm::Let { is_meta, grade, ty, argument, pattern, tail } =>
+			(Preterm::Let { is_meta, grade, ty, argument, pattern, tail }, note) =>
 				if is_meta {
 					let IrrefutablePattern::Label(label) = pattern else {
 						return Err(ElaborationErrorKind::InvalidIrrefutablePattern.at(expr.range));
 					};
 					self.elaborate_static_let(
 						PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail: bind([label], tail) },
-						(),
-						|ctx, tail_body, ()| ctx.synthesize_dynamic(tail_body),
+						note,
+						|ctx, tail_body, note| ctx.elaborate_dynamic(tail_body, note),
 						|grade, ty, argument, tail| {
-							let (tail, tail_ty, tail_kind) = tail.retract2();
-							(
-								DynamicTerm::Def {
-									grade,
-									ty: ty.into(),
-									argument: argument.into(),
-									tail: tail.map_into(),
-								},
-								tail_ty,
-								tail_kind,
-							)
+							let (tail, note) = tail.retract_dynamic();
+							DynamicTerm::Def {
+								grade,
+								ty: ty.into(),
+								argument: argument.into(),
+								tail: tail.map_into(),
+							}
+							.annotate(note)
 						},
 					)?
 				} else {
 					match pattern {
 						IrrefutablePattern::Label(label) => self.elaborate_dynamic_let(
 							PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail: bind([label], tail) },
-							(),
-							|ctx, tail_body, ()| ctx.synthesize_dynamic(tail_body),
+							note,
+							Self::elaborate_dynamic,
 							|grade, ty, argument_kind, argument, tail| {
-								let (tail, tail_ty, tail_kind) = tail.retract2();
-								(
-									DynamicTerm::Let {
-										grade,
-										ty: ty.into(),
-										argument_kind: argument_kind.into(),
-										argument: argument.into(),
-										tail: tail.map_into(),
-									},
-									tail_ty,
-									tail_kind,
-								)
+								let (tail, note) = tail.retract_dynamic();
+								DynamicTerm::Let {
+									grade,
+									ty: ty.into(),
+									argument_kind: argument_kind.into(),
+									argument: argument.into(),
+									tail: tail.map_into(),
+								}
+								.annotate(note)
 							},
 						)?,
 
@@ -1024,21 +1015,18 @@ impl Context {
 								argument: *argument,
 								tail: bind([label], tail),
 							},
-							(),
-							|ctx, tail_body, ()| ctx.synthesize_dynamic(tail_body),
+							note,
+							Self::elaborate_dynamic,
 							|grade, grade_argument, argument, kind_arg, tail| {
-								let (tail, tail_ty, kind) = tail.retract2();
-								(
-									DynamicTerm::ExpLet {
-										grade,
-										grade_argument,
-										argument: argument.into(),
-										kind: kind_arg.into(),
-										tail: tail.map_into(),
-									},
-									tail_ty,
-									kind,
-								)
+								let (tail, note) = tail.retract_dynamic();
+								DynamicTerm::ExpLet {
+									grade,
+									grade_argument,
+									argument: argument.into(),
+									kind: kind_arg.into(),
+									tail: tail.map_into(),
+								}
+								.annotate(note)
 							},
 						)?,
 
@@ -1049,36 +1037,35 @@ impl Context {
 								argument: *argument,
 								tail: bind(labels, tail),
 							},
-							(),
-							|ctx, tail_body, ()| ctx.synthesize_dynamic(tail_body),
+							note,
+							Self::elaborate_dynamic,
 							|grade, kinds, argument, tail| {
-								let (tail, tail_ty, kind) = tail.retract2();
-								(
-									DynamicTerm::SgLet {
-										grade,
-										kinds,
-										argument: argument.into(),
-										tail: tail.map_into(),
-									},
-									tail_ty,
-									kind,
-								)
+								let (tail, note) = tail.retract_dynamic();
+								DynamicTerm::SgLet { grade, kinds, argument: argument.into(), tail: tail.map_into() }
+									.annotate(note)
 							},
 						)?,
 					}
 				},
 
 			// Splicing.
-			Preterm::SwitchLevel(splicee) => {
-				let ty = self.synthesize_static(*splicee)?;
-				let (splicee, StaticValue::Lift { ty: liftee, kind }, _) = ty else {
+			(Preterm::SwitchLevel(splicee), None) => {
+				let splicee = self.synthesize_static(*splicee)?;
+				let StaticValue::Lift { ty: liftee, kind } = splicee.note.ty else {
 					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Lift).at(expr.range));
 				};
-				(DynamicTerm::Splice(splicee.into()), liftee, (*kind).clone())
+				DynamicTerm::Splice(splicee.term.into()).annotate(DynamicNote::new(liftee, (*kind).clone()))
+			}
+			(Preterm::SwitchLevel(splicee), Some(note)) => {
+				let splicee = self.verify_static(*splicee, note.clone().lift())?;
+				DynamicTerm::Splice(splicee.into()).annotate(note)
 			}
 
 			// Dependent functions.
-			Preterm::Pi { fragment, base, family } if self.fragment == Fragment::Logical => {
+			(Preterm::Pi { fragment, base, family }, None) => {
+				if self.fragment != Fragment::Logical {
+					return Err(ElaborationErrorKind::AttemptedMaterialization.at(expr.range));
+				}
 				let (base, base_kind) = self.elaborate_dynamic_type(*base)?;
 				let base_value = base.clone().evaluate_in(&self.environment);
 				let (family, family_kind) = self
@@ -1089,44 +1076,65 @@ impl Context {
 				let Some(family_kind) = family_kind.try_unevaluate_in(self.len()) else {
 					return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
 				};
-				(
-					DynamicTerm::Pi {
-						fragment,
-						base_kind: base_kind.unevaluate_in(self.len()).into(),
-						base: base.into(),
-						family_kind: family_kind.into(),
-						family: family.map_into(),
-					},
-					DynamicValue::Universe { kind: KindValue::fun().into() },
-					KindValue::ty(),
-				)
+				DynamicTerm::Pi {
+					fragment,
+					base_kind: base_kind.unevaluate_in(self.len()).into(),
+					base: base.into(),
+					family_kind: family_kind.into(),
+					family: family.map_into(),
+				}
+				.annotate(DynamicNote::universe(KindValue::fun()))
 			}
-			Preterm::Lambda { .. } => return Err(ElaborationErrorKind::SynthesizedLambda.at(expr.range)),
-			Preterm::Call { callee, argument } => {
-				let (scrutinee, scrutinee_ty, _) = self.synthesize_dynamic(*callee)?;
-				let DynamicValue::IndexedProduct { fragment, base, family_kind, family, .. } = scrutinee_ty
+			(Preterm::Lambda { .. }, None) =>
+				return Err(ElaborationErrorKind::SynthesizedLambda.at(expr.range)),
+			(Preterm::Lambda { body }, Some(note)) => {
+				let DynamicValue::IndexedProduct { fragment, base_kind, base, family_kind, family } = &note.ty
+				else {
+					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
+				};
+				let body = self
+					.extend(body)
+					.bind_dynamic(false, (*fragment).into(), (**base_kind).clone(), base.as_ref().clone())
+					.map(|ctx, body| {
+						ctx.verify_dynamic(
+							*body,
+							DynamicNote::new(family.evaluate_with([ctx.var(0)]), (**family_kind).clone()),
+						)
+					})?
+					.map_into();
+				DynamicTerm::Function {
+					fragment: *fragment,
+					body,
+					domain_kind: Some(base_kind.unevaluate_in(self.len()).into()),
+					codomain_kind: Some(family_kind.unevaluate_in(self.len()).into()),
+				}
+				.annotate(note)
+			}
+			(Preterm::Call { callee, argument }, None) => {
+				let scrutinee = self.synthesize_dynamic(*callee)?;
+				let DynamicValue::IndexedProduct { fragment, base_kind, base, family_kind, family } =
+					scrutinee.note.ty
 				else {
 					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Pi).at(expr.range));
 				};
 				let argument = self
 					.amplify(fragment)
-					.erase_if(fragment.is_logical())
-					.verify_dynamic(*argument, (*base).clone())?;
+					.verify_dynamic(*argument, DynamicNote::new((*base).clone(), (*base_kind).clone()))?;
 				let argument_value = argument.clone().evaluate_in(&self.environment);
-				(
-					DynamicTerm::Apply {
-						scrutinee: scrutinee.into(),
-						fragment: Some(fragment),
-						argument: argument.into(),
-						family_kind: Some(family_kind.unevaluate_in(self.len()).into()),
-					},
-					family.evaluate_with([argument_value]),
-					(*family_kind).clone(),
-				)
+				DynamicTerm::Apply {
+					scrutinee: scrutinee.term.into(),
+					fragment: Some(fragment),
+					argument: argument.into(),
+					family_kind: Some(family_kind.unevaluate_in(self.len()).into()),
+				}
+				.annotate(DynamicNote::new(family.evaluate_with([argument_value]), (*family_kind).clone()))
 			}
 
 			// Dependent pairs.
-			Preterm::Sg { base, family } if self.fragment == Fragment::Logical => {
+			(Preterm::Sg { base, family }, None) => {
+				if self.fragment != Fragment::Logical {
+					return Err(ElaborationErrorKind::AttemptedMaterialization.at(expr.range));
+				}
 				let (base, base_kind) = self.elaborate_dynamic_type(*base)?;
 				let base_value = base.clone().evaluate_in(&self.environment);
 				let (family, family_kind) = self
@@ -1137,261 +1145,294 @@ impl Context {
 				let Some(family_kind) = family_kind.try_unevaluate_in(self.len()) else {
 					return Err(ElaborationErrorKind::FiberAxesDependentOnBasepoint.at(expr.range));
 				};
-				(
-					DynamicTerm::Sg {
-						base_kind: base_kind.unevaluate_in(self.len()).into(),
-						base: base.into(),
-						family_kind: family_kind.into(),
-						family: family.map_into(),
-					},
-					DynamicValue::Universe { kind: kind.into() },
-					KindValue::ty(),
-				)
+				DynamicTerm::Sg {
+					base_kind: base_kind.unevaluate_in(self.len()).into(),
+					base: base.into(),
+					family_kind: family_kind.into(),
+					family: family.map_into(),
+				}
+				.annotate(DynamicNote::new(DynamicValue::Universe { kind: kind.into() }, KindValue::ty()))
 			}
-			Preterm::Pair { basepoint, fiberpoint } => {
-				let (basepoint, base, base_kind) = self.synthesize_dynamic(*basepoint)?;
-				let (fiberpoint, fiber, fiber_kind) = self.synthesize_dynamic(*fiberpoint)?;
-				let family = bind([None], fiber.unevaluate_in(self.len() + 1)).evaluate();
-				(
-					DynamicTerm::Pair { basepoint: basepoint.into(), fiberpoint: fiberpoint.into() },
-					DynamicValue::IndexedSum {
-						base_kind: base_kind.clone().into(),
-						base: base.into(),
-						family_kind: fiber_kind.clone().into(),
-						family: family.into(),
-					},
-					KindValue::pair(self.len(), base_kind, fiber_kind),
-				)
+			(Preterm::Pair { basepoint, fiberpoint }, None) => {
+				let basepoint = self.synthesize_dynamic(*basepoint)?;
+				let fiberpoint = self.synthesize_dynamic(*fiberpoint)?;
+				DynamicTerm::Pair { basepoint: basepoint.term.into(), fiberpoint: fiberpoint.term.into() }
+					.annotate(DynamicNote::product(self.len(), basepoint.note, fiberpoint.note))
+			}
+			(Preterm::Pair { basepoint, fiberpoint }, Some(note)) => {
+				let DynamicValue::IndexedSum { base_kind, base, family_kind, family } = &note.ty else {
+					return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
+				};
+				let basepoint = self.verify_dynamic(
+					*basepoint,
+					DynamicNote::new(base.as_ref().clone(), base_kind.as_ref().clone()),
+				)?;
+				let basepoint_value = basepoint.clone().evaluate_in(&self.environment);
+				let fiberpoint = self.verify_dynamic(
+					*fiberpoint,
+					DynamicNote::new(family.evaluate_with([basepoint_value]), family_kind.as_ref().clone()),
+				)?;
+				DynamicTerm::Pair { basepoint: basepoint.into(), fiberpoint: fiberpoint.into() }.annotate(note)
 			}
 
 			// Generic type formers.
-			Preterm::Former(former, arguments) if self.fragment == Fragment::Logical => match former {
-				// Types.
-				Former::Universe => {
-					let [copy, repr] = arguments
-						.try_into()
-						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let copy = self.verify_static(copy, StaticValue::Cpy)?;
-					let repr = self.verify_static(repr, StaticValue::ReprType)?;
-					(
-						DynamicTerm::Universe { kind: KindTerm { copy, repr }.into() },
-						DynamicValue::Universe { kind: KindValue::ty().into() },
-						KindValue::ty(),
-					)
+			(Preterm::Former(former, arguments), None) => {
+				if self.fragment != Fragment::Logical {
+					return Err(ElaborationErrorKind::AttemptedMaterialization.at(expr.range));
 				}
+				match former {
+					// Types.
+					Former::Universe => {
+						let [copy, repr] = arguments
+							.try_into()
+							.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+						let copy = self.verify_static(copy, StaticNote::cpy())?;
+						let repr = self.verify_static(repr, StaticNote::repr())?;
+						DynamicTerm::Universe { kind: KindTerm { copy, repr }.into() }
+							.annotate(DynamicNote::universe(KindValue::ty()))
+					}
 
-				// Repeated programs.
-				Former::Exp(Cost::Fin(grade)) => {
-					let [ty] = arguments
-						.try_into()
-						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let (ty, kind) = self.elaborate_dynamic_type(ty)?;
-					(
-						DynamicTerm::Exp(grade, kind.unevaluate_in(self.len()).into(), ty.into()),
-						DynamicValue::Universe { kind: kind.exp(grade).into() },
-						KindValue::ty(),
-					)
-				}
+					// Repeated programs.
+					Former::Exp(Cost::Fin(grade)) => {
+						let [ty] = arguments
+							.try_into()
+							.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+						let (ty, kind) = self.elaborate_dynamic_type(ty)?;
+						DynamicTerm::Exp(grade, kind.unevaluate_in(self.len()).into(), ty.into())
+							.annotate(DynamicNote::universe(kind.exp(grade)))
+					}
 
-				// Enumerated numbers.
-				Former::Enum(card) if arguments.is_empty() => (
-					DynamicTerm::Enum(card),
-					DynamicValue::Universe { kind: KindValue::enu().into() },
-					KindValue::ty(),
-				),
+					// Enumerated numbers.
+					Former::Enum(card) => {
+						let [] = arguments
+							.try_into()
+							.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+						DynamicTerm::Enum(card).annotate(DynamicNote::universe(KindValue::enu()))
+					}
 
-				// Paths.
-				Former::Id => {
-					let [ty, x, y] = arguments
-						.try_into()
-						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let (ty, kind) = self.elaborate_dynamic_type(ty)?;
-					let ty_value = ty.clone().evaluate_in(&self.environment);
-					let x = self.verify_dynamic(x, ty_value.clone())?;
-					let y = self.verify_dynamic(y, ty_value.clone())?;
-					(
+					// Paths.
+					Former::Id => {
+						let [ty, x, y] = arguments
+							.try_into()
+							.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+						let (ty, kind) = self.elaborate_dynamic_type(ty)?;
+						let ty_value = ty.clone().evaluate_in(&self.environment);
+						let x = self.verify_dynamic(x, DynamicNote::new(ty_value.clone(), kind.clone()))?;
+						let y = self.verify_dynamic(y, DynamicNote::new(ty_value, kind.clone()))?;
 						DynamicTerm::Id {
 							kind: kind.unevaluate_in(self.len()).into(),
 							space: ty.into(),
 							left: x.into(),
 							right: y.into(),
-						},
-						DynamicValue::Universe { kind: KindValue::path().into() },
-						KindValue::ty(),
-					)
-				}
+						}
+						.annotate(DynamicNote::universe(KindValue::path()))
+					}
 
-				// Natural numbers.
-				Former::Nat if arguments.is_empty() =>
-					(DynamicTerm::Nat, DynamicValue::Universe { kind: KindValue::nat().into() }, KindValue::ty()),
+					// Natural numbers.
+					Former::Nat => {
+						let [] = arguments
+							.try_into()
+							.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+						DynamicTerm::Nat.annotate(DynamicNote::universe(KindValue::nat()))
+					}
 
-				// Wrappers.
-				Former::Bx => {
-					let [ty] = arguments
-						.try_into()
-						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let (ty, kind) = self.elaborate_dynamic_type(ty)?;
-					(
-						DynamicTerm::Bx { kind: kind.unevaluate_in(self.len()).into(), inner: ty.into() },
-						DynamicValue::Universe { kind: KindValue::ptr().into() },
-						KindValue::ty(),
-					)
-				}
-				Former::Wrap => {
-					let [ty] = arguments
-						.try_into()
-						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let (ty, kind) = self.elaborate_dynamic_type(ty)?;
-					(
-						DynamicTerm::Wrap { inner: ty.into(), kind: kind.unevaluate_in(self.len()).into() },
-						DynamicValue::Universe { kind: kind.wrap().into() },
-						KindValue::ty(),
-					)
-				}
+					// Wrappers.
+					Former::Bx => {
+						let [ty] = arguments
+							.try_into()
+							.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+						let (ty, kind) = self.elaborate_dynamic_type(ty)?;
+						DynamicTerm::Bx { kind: kind.unevaluate_in(self.len()).into(), inner: ty.into() }
+							.annotate(DynamicNote::universe(KindValue::ptr()))
+					}
+					Former::Wrap => {
+						let [ty] = arguments
+							.try_into()
+							.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+						let (ty, kind) = self.elaborate_dynamic_type(ty)?;
+						DynamicTerm::Wrap { inner: ty.into(), kind: kind.unevaluate_in(self.len()).into() }
+							.annotate(DynamicNote::universe(kind.wrap()))
+					}
 
-				// Invalid former.
-				_ => return Err(ElaborationErrorKind::InvalidFormer.at(expr.range)),
-			},
+					// Invalid former.
+					_ => return Err(ElaborationErrorKind::InvalidFormer.at(expr.range)),
+				}
+			}
 
 			// Generic term constructors.
-			Preterm::Constructor(constructor, arguments) => match constructor {
+			(Preterm::Constructor(constructor, arguments), note) => match (constructor, note) {
 				// Repeated programs.
-				Constructor::Exp(Cost::Fin(grade)) => {
-					let [tm] = arguments
+				(Constructor::Exp(Cost::Fin(grade)), None) => {
+					let [inner] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let (tm, ty, kind) = self.amplify(grade).synthesize_dynamic(tm)?;
-					(
-						DynamicTerm::Repeat {
-							grade,
-							kind: Some(kind.unevaluate_in(self.len()).into()),
-							term: tm.into(),
-						},
-						DynamicValue::Exp(grade, kind.clone().into(), ty.into()),
-						kind.exp(grade),
-					)
+					let inner = self.amplify(grade).synthesize_dynamic(inner)?;
+					DynamicTerm::Repeat {
+						grade,
+						kind: Some(inner.note.kind.unevaluate_in(self.len()).into()),
+						term: inner.term.into(),
+					}
+					.annotate(inner.note.exp(grade))
 				}
 
 				// Enumerated numbers.
-				Constructor::Enum(k, v) if arguments.is_empty() =>
-					(DynamicTerm::EnumValue(k, v), DynamicValue::Enum(k), KindValue::enu()),
+				(Constructor::Enum(k, v), None) => {
+					let [] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+					DynamicTerm::EnumValue(k, v).annotate(DynamicNote::enu(k))
+				}
+
+				// Paths.
+				(Constructor::Refl, Some(note)) => {
+					if self.fragment != Fragment::Logical {
+						return Err(ElaborationErrorKind::AttemptedMaterialization.at(expr.range));
+					}
+					let DynamicValue::Id { left, right, .. } = &note.ty else {
+						return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Id).at(expr.range));
+					};
+					assert!(self.len().can_convert(&**left, right));
+					let [] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+					DynamicTerm::Refl.annotate(note)
+				}
 
 				// Natural numbers.
-				Constructor::Num(n) if arguments.is_empty() =>
-					(DynamicTerm::Num(n), DynamicValue::Nat, KindValue::nat()),
-				Constructor::Suc => {
+				(Constructor::Num(n), None) => {
+					let [] = arguments
+						.try_into()
+						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
+					DynamicTerm::Num(n).annotate(DynamicNote::nat())
+				}
+				(Constructor::Suc, None) => {
 					let [prev] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let prev = self.verify_dynamic(prev, DynamicValue::Nat)?;
+					let prev = self.verify_dynamic(prev, DynamicNote::nat())?;
 					if let DynamicTerm::Num(p) = prev {
-						(DynamicTerm::Num(p + 1), DynamicValue::Nat, KindValue::nat())
+						DynamicTerm::Num(p + 1).annotate(DynamicNote::nat())
 					} else {
-						(DynamicTerm::Suc(prev.into()), DynamicValue::Nat, KindValue::nat())
+						DynamicTerm::Suc(prev.into()).annotate(DynamicNote::nat())
 					}
 				}
 
 				// Wrappers.
-				Constructor::Bx => {
-					let [tm] = arguments
+				(Constructor::Bx, note) => {
+					let [inner] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let (tm, ty, kind) = self.synthesize_dynamic(tm)?;
-					(
-						DynamicTerm::BxValue(tm.into()),
-						DynamicValue::Bx { inner: ty.into(), kind: kind.into() },
-						KindValue::ptr(),
-					)
+					if let Some(note) = note {
+						let Some(inner_note) = note.get_if_bx() else {
+							return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Bx).at(expr.range));
+						};
+						let inner = self.verify_dynamic(inner, inner_note)?;
+						DynamicTerm::BxValue(inner.into()).annotate(note)
+					} else {
+						let inner = self.synthesize_dynamic(inner)?;
+						DynamicTerm::BxValue(inner.term.into()).annotate(inner.note.bx())
+					}
 				}
-				Constructor::Wrap => {
-					let [tm] = arguments
+				(Constructor::Wrap, note) => {
+					let [inner] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-					let (tm, ty, kind) = self.synthesize_dynamic(tm)?;
-					(
-						DynamicTerm::WrapValue(tm.into()),
-						DynamicValue::Wrap { inner: ty.into(), kind: kind.clone().into() },
-						kind.wrap(),
-					)
+					if let Some(note) = note {
+						let Some(inner_note) = note.get_if_wrap() else {
+							return Err(
+								ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Wrap).at(expr.range),
+							);
+						};
+						let inner = self.verify_dynamic(inner, inner_note)?;
+						DynamicTerm::WrapValue(inner.into()).annotate(note)
+					} else {
+						let inner = self.synthesize_dynamic(inner)?;
+						DynamicTerm::WrapValue(inner.term.into()).annotate(inner.note.wrap())
+					}
 				}
 
 				// Invalid constructor.
-				_ => return Err(ElaborationErrorKind::InvalidConstructor.at(expr.range)),
+				(_, None) => return Err(ElaborationErrorKind::InvalidConstructor.at(expr.range)),
+				(constructor, Some(note)) =>
+					return self.switch_directions_dynamic(
+						Preterm::Constructor(constructor, arguments).at(expr.range),
+						note,
+					),
 			},
 
 			// Generic projectors.
-			Preterm::Project(scrutinee, projector) => match projector {
+			(Preterm::Project(scrutinee, projector), None) => match projector {
 				// Repeated programs.
-				Projector::Exp if self.fragment == Fragment::Logical => {
-					let (scrutinee, scrutinee_ty, _) = self.synthesize_dynamic(*scrutinee)?;
-					let DynamicValue::Exp(_, kind, ty) = scrutinee_ty else {
+				Projector::Exp => {
+					if self.fragment != Fragment::Logical {
+						return Err(ElaborationErrorKind::AttemptedMaterialization.at(expr.range));
+					}
+					let scrutinee = self.synthesize_dynamic(*scrutinee)?;
+					let Some(inner_note) = scrutinee.note.get_if_exp() else {
 						return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Exp).at(expr.range));
 					};
-					(DynamicTerm::ExpProject(scrutinee.into()), ty.as_ref().clone(), (*kind).clone())
+					DynamicTerm::ExpProject(scrutinee.term.into()).annotate(inner_note)
 				}
 
 				// Dependent pairs.
-				Projector::Field(field) if self.fragment == Fragment::Logical => {
-					let (scrutinee, scrutinee_ty, _) = self.synthesize_dynamic(*scrutinee)?;
-					let DynamicValue::IndexedSum { base_kind, base, family_kind, family } = scrutinee_ty else {
+				Projector::Field(field) => {
+					if self.fragment != Fragment::Logical {
+						return Err(ElaborationErrorKind::AttemptedMaterialization.at(expr.range));
+					}
+					let scrutinee = self.synthesize_dynamic(*scrutinee)?;
+					let DynamicValue::IndexedSum { base_kind, base, family_kind, family } = scrutinee.note.ty
+					else {
 						return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(expr.range));
 					};
 					let basepoint =
-						DynamicTerm::SgField { scrutinee: scrutinee.clone().into(), field: Field::Base };
+						DynamicTerm::SgField { scrutinee: scrutinee.term.clone().into(), field: Field::Base };
 					match field {
-						Field::Base => (basepoint, base.as_ref().clone(), (*base_kind).clone()),
-						Field::Fiber => (
-							DynamicTerm::SgField { scrutinee: scrutinee.into(), field },
-							family.evaluate_with([basepoint.evaluate_in(&self.environment)]),
-							(*family_kind).clone(),
+						Field::Base =>
+							basepoint.annotate(DynamicNote::new(base.as_ref().clone(), (*base_kind).clone())),
+						Field::Fiber => DynamicTerm::SgField { scrutinee: scrutinee.term.into(), field }.annotate(
+							DynamicNote::new(
+								family.evaluate_with([basepoint.evaluate_in(&self.environment)]),
+								(*family_kind).clone(),
+							),
 						),
 					}
 				}
 
 				// Wrappers.
 				Projector::Bx => {
-					let (tm, DynamicValue::Bx { inner: ty, kind }, _) = self.synthesize_dynamic(*scrutinee)?
-					else {
+					let outer = self.synthesize_dynamic(*scrutinee)?;
+					let Some(inner_note) = outer.note.get_if_bx() else {
 						return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Bx).at(expr.range));
 					};
-					(
-						DynamicTerm::BxProject {
-							scrutinee: tm.into(),
-							kind: Some(kind.unevaluate_in(self.len()).into()),
-						},
-						ty.as_ref().clone(),
-						(*kind).clone(),
-					)
+					DynamicTerm::BxProject {
+						scrutinee: outer.term.into(),
+						kind: Some(inner_note.kind.unevaluate_in(self.len()).into()),
+					}
+					.annotate(inner_note)
 				}
 
 				Projector::Wrap => {
-					let (tm, DynamicValue::Wrap { inner: ty, kind }, _) = self.synthesize_dynamic(*scrutinee)?
-					else {
+					let outer = self.synthesize_dynamic(*scrutinee)?;
+					let Some(inner_note) = outer.note.get_if_wrap() else {
 						return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Wrap).at(expr.range));
 					};
-					(
-						DynamicTerm::WrapProject {
-							scrutinee: tm.into(),
-							kind: Some(kind.unevaluate_in(self.len()).into()),
-						},
-						ty.as_ref().clone(),
-						(*kind).clone(),
-					)
+					DynamicTerm::WrapProject {
+						scrutinee: outer.term.into(),
+						kind: Some(inner_note.kind.unevaluate_in(self.len()).into()),
+					}
+					.annotate(inner_note)
 				}
-
-				// Invalid projector.
-				_ => return Err(ElaborationErrorKind::InvalidProjector.at(expr.range)),
 			},
 
 			// Generic case splits.
-			Preterm::Split { scrutinee, is_cast, motive, cases } => {
-				let (scrutinee, scrutinee_ty, _) = if is_cast {
+			(Preterm::Split { scrutinee, is_cast, motive, cases }, None) => {
+				let scrutinee = if is_cast {
 					self.erase().synthesize_dynamic(*scrutinee)
 				} else {
 					self.synthesize_dynamic(*scrutinee)
 				}?;
-				let scrutinee_value = scrutinee.clone().evaluate_in(&self.environment);
-				match scrutinee_ty {
+				let scrutinee_value = scrutinee.term.clone().evaluate_in(&self.environment);
+				match scrutinee.note.ty {
 					DynamicValue::Id { kind, space, left, right }
 						if is_cast || self.fragment == Fragment::Logical =>
 					{
@@ -1423,18 +1464,21 @@ impl Context {
 
 						let case_refl = self.verify_dynamic(
 							case_refl,
-							motive.evaluate_with([(*left).clone(), DynamicValue::Refl]),
+							DynamicNote::new(
+								motive.evaluate_with([(*left).clone(), DynamicValue::Refl]),
+								motive_kind.clone(),
+							),
 						)?;
 
-						(
-							DynamicTerm::CasePath {
-								scrutinee: scrutinee.into(),
-								motive: motive_term.map_into(),
-								case_refl: case_refl.into(),
-							},
+						DynamicTerm::CasePath {
+							scrutinee: scrutinee.term.into(),
+							motive: motive_term.map_into(),
+							case_refl: case_refl.into(),
+						}
+						.annotate(DynamicNote::new(
 							motive.evaluate_with([(*right).clone(), scrutinee_value]),
 							motive_kind,
-						)
+						))
 					}
 
 					// Enumerated numbers.
@@ -1470,21 +1514,22 @@ impl Context {
 							};
 							let case = cases[case_position].1.clone();
 							new_cases.push(
-								self
-									.amplify(if card <= 1 { Cost::Fin(1) } else { Cost::Inf })
-									.verify_dynamic(case, motive.evaluate_with([DynamicValue::EnumValue(card, v)]))?,
+								self.amplify(if card <= 1 { Cost::Fin(1) } else { Cost::Inf }).verify_dynamic(
+									case,
+									DynamicNote::new(
+										motive.evaluate_with([DynamicValue::EnumValue(card, v)]),
+										motive_kind.clone(),
+									),
+								)?,
 							)
 						}
-						(
-							DynamicTerm::CaseEnum {
-								scrutinee: scrutinee.into(),
-								cases: new_cases,
-								motive: motive_term.map_into(),
-								motive_kind: Some(motive_kind.unevaluate_in(self.len()).into()),
-							},
-							motive.evaluate_with([scrutinee_value]),
-							motive_kind,
-						)
+						DynamicTerm::CaseEnum {
+							scrutinee: scrutinee.term.into(),
+							cases: new_cases,
+							motive: motive_term.map_into(),
+							motive_kind: Some(motive_kind.unevaluate_in(self.len()).into()),
+						}
+						.annotate(DynamicNote::new(motive.evaluate_with([scrutinee_value]), motive_kind))
 					}
 
 					// Natural numbers.
@@ -1529,8 +1574,13 @@ impl Context {
 							[index, witness]
 						};
 						let case_suc = cases[1 - case_nil_position].1.clone();
-						let case_nil =
-							self.verify_dynamic(case_nil, motive_value.evaluate_with([DynamicValue::Num(0)]))?;
+						let case_nil = self.verify_dynamic(
+							case_nil,
+							DynamicNote::new(
+								motive_value.evaluate_with([DynamicValue::Num(0)]),
+								motive_kind.clone(),
+							),
+						)?;
 						let case_suc = self
 							.amplify(Cost::Inf)
 							.extend(bind(case_suc_parameters, case_suc))
@@ -1543,20 +1593,20 @@ impl Context {
 							.map(|ctx, body| {
 								ctx.verify_dynamic(
 									body,
-									motive_value.evaluate_with([ctx.var::<DynamicValue>(1).suc()]),
+									DynamicNote::new(
+										motive_value.evaluate_with([ctx.var::<DynamicValue>(1).suc()]),
+										motive_kind.clone(),
+									),
 								)
 							})?;
-						(
-							DynamicTerm::CaseNat {
-								scrutinee: scrutinee.into(),
-								motive_kind: Some(motive_kind.unevaluate_in(self.len()).into()),
-								motive: motive_term.map_into(),
-								case_nil: case_nil.into(),
-								case_suc: case_suc.map_into(),
-							},
-							motive_value.evaluate_with([scrutinee_value]),
-							motive_kind,
-						)
+						DynamicTerm::CaseNat {
+							scrutinee: scrutinee.term.into(),
+							motive_kind: Some(motive_kind.unevaluate_in(self.len()).into()),
+							motive: motive_term.map_into(),
+							case_nil: case_nil.into(),
+							case_suc: case_suc.map_into(),
+						}
+						.annotate(DynamicNote::new(motive_value.evaluate_with([scrutinee_value]), motive_kind))
 					}
 
 					// Invalid case split.
@@ -1564,164 +1614,41 @@ impl Context {
 				}
 			}
 
-			// Synthesis failure.
-			_ => return Err(ElaborationErrorKind::CouldNotSynthesizeDynamic.at(expr.range)),
+			// Switch directions.
+			(term, Some(note)) => return self.switch_directions_dynamic(term.at(expr.range), note),
+
+			// Elaboration failure.
+			(_, None) => return Err(ElaborationErrorKind::CouldNotSynthesizeDynamic.at(expr.range)),
 		})
 	}
 
-	fn verify_dynamic(&mut self, expr: Expression, ty: DynamicValue) -> Result<DynamicTerm, ElaborationError> {
-		let ParsedPreterm(preterm) = expr.preterm;
-		Ok(match (preterm, ty) {
-			// Let-expressions.
-			(Preterm::Let { is_meta, grade, ty, argument, pattern, tail }, tail_ty) =>
-				if is_meta {
-					let IrrefutablePattern::Label(label) = pattern else {
-						return Err(ElaborationErrorKind::InvalidIrrefutablePattern.at(expr.range));
-					};
-					self.elaborate_static_let(
-						PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail: bind([label], tail) },
-						tail_ty,
-						Self::verify_dynamic,
-						|grade, ty, argument, tail| DynamicTerm::Def {
-							grade,
-							ty: ty.into(),
-							argument: argument.into(),
-							tail: tail.map_into(),
-						},
-					)?
-				} else {
-					match pattern {
-						IrrefutablePattern::Label(label) => self.elaborate_dynamic_let(
-							PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail: bind([label], tail) },
-							tail_ty,
-							Self::verify_dynamic,
-							|grade, ty, argument_kind, argument, tail| DynamicTerm::Let {
-								grade,
-								ty: ty.into(),
-								argument_kind: argument_kind.into(),
-								argument: argument.into(),
-								tail: tail.map_into(),
-							},
-						)?,
-
-						// Repeated programs.
-						IrrefutablePattern::Exp(grade_argument, label) => self.elaborate_dynamic_exp_let(
-							PreExpLet {
-								grade: grade.unwrap_or(1.into()),
-								grade_argument,
-								argument: *argument,
-								tail: bind([label], tail),
-							},
-							tail_ty,
-							Self::verify_dynamic,
-							|grade, grade_argument, argument, kind_arg, tail| DynamicTerm::ExpLet {
-								grade,
-								grade_argument,
-								argument: argument.into(),
-								kind: kind_arg.into(),
-								tail: tail.map_into(),
-							},
-						)?,
-
-						// Dependent pairs.
-						IrrefutablePattern::Pair(labels) => self.elaborate_dynamic_sg_let(
-							PreSgLet {
-								grade: grade.unwrap_or(1.into()),
-								argument: *argument,
-								tail: bind(labels, tail),
-							},
-							tail_ty,
-							Self::verify_dynamic,
-							|grade, kinds, argument, tail| DynamicTerm::SgLet {
-								grade,
-								kinds,
-								argument: argument.into(),
-								tail: tail.map_into(),
-							},
-						)?,
-					}
-				},
-
-			// Dependent functions.
-			(
-				Preterm::Lambda { body },
-				DynamicValue::IndexedProduct { fragment, base_kind, base, family_kind, family },
-			) => {
-				let body = self
-					.extend(body)
-					.bind_dynamic(false, fragment.into(), (*base_kind).clone(), base.as_ref().clone())
-					.map(|ctx, body| ctx.verify_dynamic(*body, family.evaluate_with([ctx.var(0)])))?;
-				DynamicTerm::Function {
-					fragment,
-					body: body.map_into(),
-					domain_kind: Some(base_kind.unevaluate_in(self.len()).into()),
-					codomain_kind: Some(family_kind.unevaluate_in(self.len()).into()),
+	fn switch_directions_dynamic(
+		&mut self,
+		expr: Expression,
+		note: DynamicNote,
+	) -> Result<AnnotatedDynamicTerm, ElaborationError> {
+		let range = expr.range;
+		let term = self.synthesize_dynamic(expr)?;
+		if self.len().can_convert(&term.note.ty, &note.ty) {
+			Ok(term.term.annotate(note))
+		} else {
+			Err(
+				ElaborationErrorKind::DynamicBidirectionalMismatch {
+					synthesized: term.note.ty.unevaluate_in(self.len()),
+					expected: note.ty.unevaluate_in(self.len()),
 				}
-			}
-
-			// Dependent pairs.
-			(Preterm::Pair { basepoint, fiberpoint }, DynamicValue::IndexedSum { base, family, .. }) => {
-				let basepoint = self.verify_dynamic(*basepoint, base.as_ref().clone())?;
-				let basepoint_value = basepoint.clone().evaluate_in(&self.environment);
-				let fiberpoint = self.verify_dynamic(*fiberpoint, family.evaluate_with([basepoint_value]))?;
-				DynamicTerm::Pair { basepoint: basepoint.into(), fiberpoint: fiberpoint.into() }
-			}
-
-			// Paths.
-			(Preterm::Constructor(Constructor::Refl, tms), ty) if self.fragment == Fragment::Logical => {
-				let DynamicValue::Id { left, right, .. } = ty else {
-					return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Id).at(expr.range));
-				};
-				assert!(self.len().can_convert(&*left, &right));
-
-				let [] = tms.try_into().map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-				DynamicTerm::Refl
-			}
-
-			// Wrappers.
-			(Preterm::Constructor(Constructor::Bx, tms), ty) => {
-				let DynamicValue::Bx { inner: ty, .. } = ty else {
-					return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Bx).at(expr.range));
-				};
-				let [tm] =
-					tms.try_into().map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-				let tm = self.verify_dynamic(tm, ty.as_ref().clone())?;
-				DynamicTerm::BxValue(tm.into())
-			}
-			(Preterm::Constructor(Constructor::Wrap, tms), ty) => {
-				let DynamicValue::Wrap { inner: ty, .. } = ty else {
-					return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Wrap).at(expr.range));
-				};
-				let [tm] =
-					tms.try_into().map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;
-				let tm = self.verify_dynamic(tm, ty.as_ref().clone())?;
-				DynamicTerm::WrapValue(tm.into())
-			}
-
-			// Synthesize and conversion-check.
-			(term, ty) => {
-				let (term, synthesized_ty, _) = self.synthesize_dynamic(term.at(expr.range))?;
-				if self.len().can_convert(&synthesized_ty, &ty) {
-					term
-				} else {
-					return Err(
-						ElaborationErrorKind::DynamicBidirectionalMismatch {
-							synthesized: synthesized_ty.unevaluate_in(self.len()),
-							expected: ty.unevaluate_in(self.len()),
-						}
-						.at(expr.range),
-					);
-				}
-			}
-		})
+				.at(range),
+			)
+		}
 	}
 
 	fn elaborate_static_type(&mut self, expr: Expression) -> Result<(StaticTerm, Cpy), ElaborationError> {
 		let expr_range = expr.range;
-		let (term, StaticValue::Universe(c), _) = self.erase().synthesize_static(expr)? else {
+		let term = self.erase().synthesize_static(expr)?;
+		let StaticValue::Universe(c) = term.note.ty else {
 			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Universe).at(expr_range));
 		};
-		Ok((term, c))
+		Ok((term.term, c))
 	}
 
 	fn elaborate_dynamic_type(
@@ -1729,10 +1656,11 @@ impl Context {
 		expr: Expression,
 	) -> Result<(DynamicTerm, KindValue), ElaborationError> {
 		let expr_range = expr.range;
-		let (term, DynamicValue::Universe { kind }, _) = self.erase().synthesize_dynamic(expr)? else {
+		let term = self.erase().synthesize_dynamic(expr)?;
+		let DynamicValue::Universe { kind } = term.note.ty else {
 			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Universe).at(expr_range));
 		};
-		Ok((term, (*kind).clone()))
+		Ok((term.term, (*kind).clone()))
 	}
 
 	fn elaborate_static_let<A, B>(
@@ -1748,13 +1676,12 @@ impl Context {
 			let (ty, ty_c) = self.elaborate_static_type(ty)?;
 			let ty_value = ty.clone().evaluate_in(&self.environment);
 			let argument =
-				self.amplify(grade).erase_if(grade == 0.into()).verify_static(argument, ty_value.clone())?;
+				self.amplify(grade).verify_static(argument, StaticNote::new(ty_value.clone(), ty_c))?;
 			(ty_c, ty_value, ty, argument)
 		} else {
-			let (argument, ty_value, ty_c) =
-				self.amplify(grade).erase_if(grade == 0.into()).synthesize_static(argument)?;
-			let ty = ty_value.unevaluate_in(self.len());
-			(ty_c, ty_value, ty, argument)
+			let argument = self.amplify(grade).synthesize_static(argument)?;
+			let ty = argument.note.ty.unevaluate_in(self.len());
+			(argument.note.copy, argument.note.ty, ty, argument.term)
 		};
 
 		// TODO: Lazy evaluation.
@@ -1782,14 +1709,14 @@ impl Context {
 		let (argument_kind, ty_value, ty, argument) = if let Some(ty) = ty {
 			let (ty, argument_kind) = self.elaborate_dynamic_type(ty)?;
 			let ty_value = ty.clone().evaluate_in(&self.environment);
-			let argument =
-				self.amplify(grade).erase_if(grade == 0).verify_dynamic(argument, ty_value.clone())?;
+			let argument = self
+				.amplify(grade)
+				.verify_dynamic(argument, DynamicNote::new(ty_value.clone(), argument_kind.clone()))?;
 			(argument_kind, ty_value, ty, argument)
 		} else {
-			let (argument, ty_value, argument_kind) =
-				self.amplify(grade).erase_if(grade == 0).synthesize_dynamic(argument)?;
-			let ty = ty_value.unevaluate_in(self.len());
-			(argument_kind, ty_value, ty, argument)
+			let argument = self.amplify(grade).synthesize_dynamic(argument)?;
+			let ty = argument.note.ty.unevaluate_in(self.len());
+			(argument.note.kind, argument.note.ty, ty, argument.term)
 		};
 		// TODO: Lazy evaluation.
 		let argument_value = argument.clone().evaluate_in(&self.environment);
@@ -1811,21 +1738,21 @@ impl Context {
 		produce_let: impl FnOnce(Cost, Cost, StaticTerm, Binder<Label, B>) -> B,
 	) -> Result<B, ElaborationError> {
 		let argument_range = argument.range;
-		let (tm, ty, _) = self.amplify(grade).erase_if(grade == 0.into()).synthesize_static(argument)?;
-		let StaticValue::Exp(n, c, ty) = ty else {
+		let tm = self.amplify(grade).synthesize_static(argument)?;
+		let StaticValue::Exp(n, c, ty) = tm.note.ty else {
 			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Exp).at(argument_range));
 		};
 		if n != grade_argument {
 			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Exp).at(argument_range));
 		}
-		let rep_value = tm.clone().evaluate_in(&self.environment);
+		let rep_value = tm.term.clone().evaluate_in(&self.environment);
 		let inner_value = rep_value.clone().exp_project();
 		let tail_b = self
 			.extend(tail)
 			.alias_static(false, grade * grade_argument, c, (*ty).clone(), inner_value)
 			.map(|ctx, body| elaborate_tail(ctx, *body, tail_a))?;
 
-		Ok(produce_let(grade, grade_argument, tm, tail_b))
+		Ok(produce_let(grade, grade_argument, tm.term, tail_b))
 	}
 
 	fn elaborate_dynamic_exp_let<A, B>(
@@ -1839,21 +1766,21 @@ impl Context {
 			return Err(ElaborationErrorKind::InvalidGrade.at(argument.range));
 		};
 		let argument_range = argument.range;
-		let (tm, ty, _) = self.amplify(grade).erase_if(grade == 0).synthesize_dynamic(argument)?;
-		let DynamicValue::Exp(n, kind, ty) = ty else {
+		let tm = self.amplify(grade).synthesize_dynamic(argument)?;
+		let DynamicValue::Exp(n, kind, ty) = tm.note.ty else {
 			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Exp).at(argument_range));
 		};
 		if n != grade_argument {
 			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Exp).at(argument_range));
 		}
-		let rep_value = tm.clone().evaluate_in(&self.environment);
+		let rep_value = tm.term.clone().evaluate_in(&self.environment);
 		let inner_value = rep_value.clone().exp_project();
 		let tail_b = self
 			.extend(tail)
 			.alias_dynamic(false, (grade * grade_argument).into(), (*kind).clone(), (*ty).clone(), inner_value)
 			.map(|ctx, body| elaborate_tail(ctx, *body, tail_a))?;
 
-		Ok(produce_let(grade, grade_argument, tm, kind.unevaluate_in(self.len()), tail_b))
+		Ok(produce_let(grade, grade_argument, tm.term, kind.unevaluate_in(self.len()), tail_b))
 	}
 
 	fn elaborate_static_sg_let<A, B>(
@@ -1864,11 +1791,11 @@ impl Context {
 		produce_let: impl FnOnce(Cost, StaticTerm, Binder<Label, B, 2>) -> B,
 	) -> Result<B, ElaborationError> {
 		let argument_range = argument.range;
-		let (tm, ty, _) = self.amplify(grade).erase_if(grade == 0.into()).synthesize_static(argument)?;
-		let StaticValue::IndexedSum { base_copy, base, family_copy, family } = ty else {
+		let tm = self.amplify(grade).synthesize_static(argument)?;
+		let StaticValue::IndexedSum { base_copy, base, family_copy, family } = tm.note.ty else {
 			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(argument_range));
 		};
-		let pair_value = tm.clone().evaluate_in(&self.environment);
+		let pair_value = tm.term.clone().evaluate_in(&self.environment);
 		let base = (*base).clone();
 		let basepoint = pair_value.clone().field(Field::Base);
 		let fiber = family.evaluate_with([basepoint.clone()]);
@@ -1879,7 +1806,7 @@ impl Context {
 			.alias_static(false, grade, family_copy, fiber, fiberpoint)
 			.map(|ctx, body| elaborate_tail(ctx, *body, tail_a))?;
 
-		Ok(produce_let(grade, tm, tail_b))
+		Ok(produce_let(grade, tm.term, tail_b))
 	}
 
 	fn elaborate_dynamic_sg_let<A, B>(
@@ -1893,11 +1820,11 @@ impl Context {
 			return Err(ElaborationErrorKind::InvalidGrade.at(argument.range));
 		};
 		let argument_range = argument.range;
-		let (tm, ty, _) = self.amplify(grade).erase_if(grade == 0).synthesize_dynamic(argument)?;
-		let DynamicValue::IndexedSum { base_kind, base, family_kind, family } = ty else {
+		let tm = self.amplify(grade).synthesize_dynamic(argument)?;
+		let DynamicValue::IndexedSum { base_kind, base, family_kind, family } = tm.note.ty else {
 			return Err(ElaborationErrorKind::ExpectedFormer(ExpectedFormer::Sigma).at(argument_range));
 		};
-		let pair_value = tm.clone().evaluate_in(&self.environment);
+		let pair_value = tm.term.clone().evaluate_in(&self.environment);
 		let base = (*base).clone();
 		let basepoint = pair_value.clone().field(Field::Base);
 		let fiber = family.evaluate_with([basepoint.clone()]);
@@ -1910,7 +1837,7 @@ impl Context {
 
 		let kinds = [base_kind, family_kind].map(|x| x.unevaluate_in(self.len()).into());
 
-		Ok(produce_let(grade, kinds, tm, tail_b))
+		Ok(produce_let(grade, kinds, tm.term, tail_b))
 	}
 }
 
@@ -1932,4 +1859,138 @@ struct PreSgLet {
 	grade: Cost,
 	argument: Expression,
 	tail: Binder<ParsedLabel, Box<Expression>, 2>,
+}
+
+impl<P, const N: usize> Binder<P, AnnotatedStaticTerm, N> {
+	pub fn retract_static(self) -> (Binder<P, StaticTerm, N>, StaticNote) {
+		(Binder { parameters: self.parameters, body: self.body.term }, self.body.note)
+	}
+}
+
+impl<P, const N: usize> Binder<P, AnnotatedDynamicTerm, N> {
+	pub fn retract_dynamic(self) -> (Binder<P, DynamicTerm, N>, DynamicNote) {
+		(Binder { parameters: self.parameters, body: self.body.term }, self.body.note)
+	}
+}
+
+impl StaticTerm {
+	fn annotate(self, note: StaticNote) -> AnnotatedStaticTerm { AnnotatedStaticTerm { term: self, note } }
+}
+
+struct AnnotatedStaticTerm {
+	term: StaticTerm,
+	note: StaticNote,
+}
+
+struct StaticNote {
+	ty: StaticValue,
+	copy: Cpy,
+}
+
+impl StaticNote {
+	fn new(ty: StaticValue, copy: Cpy) -> Self { Self { ty, copy } }
+
+	fn universe(copy: Cpy) -> Self { Self::new(StaticValue::Universe(copy), Cpy::Tr) }
+
+	fn cpy() -> Self { Self::new(StaticValue::Cpy, Cpy::Tr) }
+
+	fn repr() -> Self { Self::new(StaticValue::ReprType, Cpy::Tr) }
+
+	fn product(level: Level, left: Self, right: Self) -> Self {
+		let family = bind([None], right.ty.unevaluate_in(level + 1)).evaluate();
+		Self::new(
+			StaticValue::IndexedSum {
+				base_copy: left.copy,
+				base: left.ty.into(),
+				family_copy: right.copy,
+				family: family.into(),
+			},
+			left.copy.max(right.copy),
+		)
+	}
+
+	fn exp(self, grade: Cost) -> Self {
+		Self::new(
+			StaticValue::Exp(grade, self.copy, self.ty.into()),
+			if grade == 0.into() { Cpy::Tr } else { self.copy },
+		)
+	}
+
+	fn enu(card: u16) -> Self { Self::new(StaticValue::Enum(card), Cpy::Tr) }
+
+	fn nat() -> Self { Self::new(StaticValue::Nat, Cpy::Tr) }
+}
+
+impl DynamicTerm {
+	fn annotate(self, note: DynamicNote) -> AnnotatedDynamicTerm { AnnotatedDynamicTerm { term: self, note } }
+}
+
+struct AnnotatedDynamicTerm {
+	term: DynamicTerm,
+	note: DynamicNote,
+}
+
+#[derive(Clone)]
+struct DynamicNote {
+	ty: DynamicValue,
+	kind: KindValue,
+}
+
+impl DynamicNote {
+	fn new(ty: DynamicValue, kind: KindValue) -> Self { Self { ty, kind } }
+
+	fn universe(kind: KindValue) -> Self {
+		Self::new(DynamicValue::Universe { kind: kind.into() }, KindValue::ty())
+	}
+
+	fn lift(self) -> StaticNote {
+		StaticNote::new(StaticValue::Lift { ty: self.ty, kind: self.kind.into() }, Cpy::Nt)
+	}
+
+	fn product(level: Level, left: Self, right: Self) -> Self {
+		let family = bind([None], right.ty.unevaluate_in(level + 1)).evaluate();
+		Self::new(
+			DynamicValue::IndexedSum {
+				base_kind: left.kind.clone().into(),
+				base: left.ty.into(),
+				family_kind: right.kind.clone().into(),
+				family: family.into(),
+			},
+			KindValue::pair(level, left.kind, right.kind),
+		)
+	}
+
+	fn exp(self, grade: u64) -> Self {
+		Self::new(DynamicValue::Exp(grade, self.kind.clone().into(), self.ty.into()), self.kind.exp(grade))
+	}
+
+	fn enu(card: u16) -> Self { Self::new(DynamicValue::Enum(card), KindValue::enu()) }
+
+	fn nat() -> Self { Self::new(DynamicValue::Nat, KindValue::nat()) }
+
+	fn bx(self) -> Self {
+		Self::new(DynamicValue::Bx { inner: self.ty.into(), kind: self.kind.into() }, KindValue::ptr())
+	}
+
+	fn wrap(self) -> Self {
+		Self::new(
+			DynamicValue::Wrap { inner: self.ty.into(), kind: self.kind.clone().into() },
+			self.kind.wrap(),
+		)
+	}
+
+	fn get_if_exp(&self) -> Option<Self> {
+		let DynamicValue::Exp(_, kind, ty) = &self.ty else { return None };
+		Some(Self::new(ty.as_ref().clone(), kind.as_ref().clone()))
+	}
+
+	fn get_if_bx(&self) -> Option<Self> {
+		let DynamicValue::Bx { kind, inner: ty } = &self.ty else { return None };
+		Some(Self::new(ty.as_ref().clone(), kind.as_ref().clone()))
+	}
+
+	fn get_if_wrap(&self) -> Option<Self> {
+		let DynamicValue::Wrap { kind, inner: ty } = &self.ty else { return None };
+		Some(Self::new(ty.as_ref().clone(), kind.as_ref().clone()))
+	}
 }

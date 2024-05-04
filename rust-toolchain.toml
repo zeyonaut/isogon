@@ -1,4 +1,3 @@
 [toolchain]
-# NOTE: This is a temporary downgrade to prevent 1.78 breaking aHash on nightly: https://github.com/tkaitchuck/aHash/issues/200
-# TODO: Remove the version fix when possible.
-channel = "nightly-2023-12-28"
+# Fix version for reproducibility.
+channel = "nightly-2024-05-02" 

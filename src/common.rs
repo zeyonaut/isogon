@@ -65,11 +65,11 @@ impl<P, A, const N: usize> Binder<P, A, N> {
 		Binder { parameters: self.parameters, body: f(&self.body).into() }
 	}
 
-	pub fn mapv<B, C: From<B>>(self, f: impl FnOnce([P; N], A) -> B) -> Binder<P, C, N>
+	pub fn map<B, C: From<B>>(self, f: impl FnOnce(A) -> B) -> Binder<P, C, N>
 	where
 		P: Copy,
 	{
-		Binder { parameters: self.parameters, body: f(self.parameters, self.body).into() }
+		Binder { parameters: self.parameters, body: f(self.body).into() }
 	}
 
 	pub fn map_into<B: From<A>>(self) -> Binder<P, B, N> {
