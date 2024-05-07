@@ -29,7 +29,7 @@ impl Conversion<StaticValue> for Level {
 			// Neutrals.
 			(V::Neutral(left), V::Neutral(right)) => self.can_convert(left, right),
 
-			// Types and universe indidces.
+			// Types and universe indices.
 			(V::Universe(l), V::Universe(r)) => l == r,
 
 			(V::Cpy, V::Cpy) => true,
@@ -66,11 +66,15 @@ impl Conversion<StaticValue> for Level {
 			// Quoted programs.
 			(V::Lift { ty: left, .. }, V::Lift { ty: right, .. }) | (V::Quote(left), V::Quote(right)) =>
 				self.can_convert(left, right),
+			(V::Quote(a), V::Neutral(b)) | (V::Neutral(b), V::Quote(a)) =>
+				self.can_convert(a, &DynamicValue::Neutral(DynamicNeutral::Splice(b.clone()))),
 
-			// Repeated programs.
+			// Promoted programs.
 			(V::Exp(grade_l, _, ty_l), V::Exp(grade_r, _, ty_r)) =>
 				grade_l == grade_r && self.can_convert(&**ty_l, ty_r),
-			(V::Repeat(_, left), V::Repeat(_, right)) => self.can_convert(&**left, right),
+			(V::Promote(_, left), V::Promote(_, right)) => self.can_convert(&**left, right),
+			(V::Promote(_, a), V::Neutral(b)) | (V::Neutral(b), V::Promote(_, a)) =>
+				self.can_convert(&**a, &V::Neutral(StaticNeutral::ExpProject(b.clone().into()))),
 
 			// Dependent functions.
 			(
@@ -126,7 +130,7 @@ impl Conversion<StaticNeutral> for Level {
 			// Variables.
 			(Variable(_, left), Variable(_, right)) => left == right,
 
-			// Repeated programs.
+			// Promoted programs.
 			(ExpProject(left), ExpProject(right)) => self.can_convert(&**left, right),
 
 			// Dependent functions.
@@ -180,7 +184,9 @@ impl Conversion<DynamicValue> for Level {
 			// Exponentials.
 			(Exp(grade_l, _, ty_l), Exp(grade_r, _, ty_r)) =>
 				grade_l == grade_r && self.can_convert(&**ty_l, ty_r),
-			(Repeat(_, left), Repeat(_, right)) => self.can_convert(&**left, right),
+			(Promote(_, left), Promote(_, right)) => self.can_convert(&**left, right),
+			(Promote(_, a), Neutral(b)) | (Neutral(b), Promote(_, a)) =>
+				self.can_convert(&**a, &Neutral(ExpProject(b.clone().into()))),
 
 			// Dependent functions.
 			// NOTE: Annotation conversion not implemented, as it's unclear if it gives any useful advantages.
@@ -248,6 +254,10 @@ impl Conversion<DynamicValue> for Level {
 			| (BxValue(left), BxValue(right))
 			| (Wrap { inner: left, .. }, Wrap { inner: right, .. })
 			| (WrapValue(left), WrapValue(right)) => self.can_convert(&**left, right),
+			(BxValue(a), Neutral(b)) | (Neutral(b), BxValue(a)) =>
+				self.can_convert(&**a, &Neutral(BxProject(b.clone().into()))),
+			(WrapValue(a), Neutral(b)) | (Neutral(b), WrapValue(a)) =>
+				self.can_convert(&**a, &Neutral(WrapProject(b.clone().into()))),
 
 			// Inconvertible.
 			_ => false,
@@ -265,7 +275,7 @@ impl Conversion<DynamicNeutral> for Level {
 			// Quoted programs.
 			(Splice(left), Splice(right)) => self.can_convert(left, right),
 
-			// Repeated programs.
+			// Promoted programs.
 			(ExpProject(left), ExpProject(right)) => self.can_convert(&**left, right),
 
 			// Dependent functions.
@@ -273,6 +283,12 @@ impl Conversion<DynamicNeutral> for Level {
 				Apply { scrutinee: left, argument: left_argument, .. },
 				Apply { scrutinee: right, argument: right_argument, .. },
 			) => self.can_convert(&**left, right) && self.can_convert(&**left_argument, right_argument),
+
+			// Dependent pairs.
+			(
+				Project { scrutinee: left, projection: left_field },
+				Project { scrutinee: right, projection: right_field },
+			) => left_field == right_field && self.can_convert(&**left, right),
 
 			// Enumerated numbers.
 			(

@@ -77,7 +77,7 @@ impl Unevaluate for StaticValue {
 
 			// Repeated programs.
 			V::Exp(grade, c, ty) => StaticTerm::Exp(*grade, *c, ty.unevaluate_in(level).into()),
-			V::Repeat(grade, value) => StaticTerm::Repeat(*grade, value.unevaluate_in(level).into()),
+			V::Promote(grade, value) => StaticTerm::Repeat(*grade, value.unevaluate_in(level).into()),
 
 			// Dependent functions.
 			V::IndexedProduct { fragment, base_copy, base, family_copy, family } => StaticTerm::Pi {
@@ -168,7 +168,7 @@ impl Unevaluate for DynamicValue {
 			// Repeated programs.
 			Exp(grade, kind, ty) =>
 				DynamicTerm::Exp(*grade, kind.unevaluate_in(level).into(), ty.unevaluate_in(level).into()),
-			Repeat(grade, value) =>
+			Promote(grade, value) =>
 				DynamicTerm::Repeat { grade: *grade, kind: None, term: value.unevaluate_in(level).into() },
 
 			// Dependent functions.

@@ -76,6 +76,7 @@ pub enum ElaborationErrorKind {
 	SynthesizedFormer(ExpectedFormer),
 	StaticBidirectionalMismatch { synthesized: StaticTerm, expected: StaticTerm },
 	DynamicBidirectionalMismatch { synthesized: DynamicTerm, expected: DynamicTerm },
+	CouldNotConvertDynamic(DynamicTerm, DynamicTerm),
 	InvalidCaseSplit,
 	InvalidCaseSplitScrutineeType,
 	CouldNotSynthesizeStatic,
@@ -1291,7 +1292,15 @@ impl Context {
 					let DynamicValue::Id { left, right, .. } = &note.ty else {
 						return Err(ElaborationErrorKind::SynthesizedFormer(ExpectedFormer::Id).at(expr.range));
 					};
-					assert!(self.len().can_convert(&**left, right));
+					if !(self.len().can_convert(&**left, right)) {
+						return Err(
+							ElaborationErrorKind::CouldNotConvertDynamic(
+								left.unevaluate_in(self.len()),
+								right.unevaluate_in(self.len()),
+							)
+							.at(expr.range),
+						);
+					}
 					let [] = arguments
 						.try_into()
 						.map_err(|_| ElaborationErrorKind::InvalidArgumentCount.at(expr.range))?;

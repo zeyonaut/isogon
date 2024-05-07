@@ -1,0 +1,5 @@
+#input (t : ![2] (Box #2))
+
+let @[2] x = t;
+let [0] p : Id (![2] (Box #2)) t (@[2] x) = refl;
+@[2] x

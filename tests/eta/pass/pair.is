@@ -1,0 +1,5 @@
+#input (t : #2 & #2)
+
+let (a, b) = t;
+let [0] p : Id (#2 & #2) t (a, b) = refl;
+(a, b)

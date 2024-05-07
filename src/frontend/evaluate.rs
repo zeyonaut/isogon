@@ -70,7 +70,7 @@ impl Evaluate for StaticTerm {
 
 			// Repeated programs.
 			S::Exp(grade, c, ty) => StaticValue::Exp(grade, c, ty.evaluate_in(environment).into()),
-			S::Repeat(grade, argument) => StaticValue::Repeat(grade, argument.evaluate_in(environment).into()),
+			S::Repeat(grade, argument) => StaticValue::Promote(grade, argument.evaluate_in(environment).into()),
 			S::ExpLet { grade: _, grade_argument: _, argument, tail } =>
 				tail.evaluate_at(environment, [argument.evaluate_in(environment).exp_project()]),
 			S::ExpProject(t) => t.evaluate_in(environment).exp_project(),
@@ -185,7 +185,8 @@ impl Evaluate for DynamicTerm {
 			// Repeated programs.
 			Exp(grade, kind, ty) =>
 				DynamicValue::Exp(grade, kind.evaluate_in(environment).into(), ty.evaluate_in(environment).into()),
-			Repeat { grade, kind: _, term } => DynamicValue::Repeat(grade, term.evaluate_in(environment).into()),
+			Repeat { grade, kind: _, term } =>
+				DynamicValue::Promote(grade, term.evaluate_in(environment).into()),
 			ExpLet { grade: _, grade_argument: _, argument, kind: _, tail } =>
 				tail.evaluate_at(environment, [argument.evaluate_in(environment).exp_project()]),
 			ExpProject(t) => t.evaluate_in(environment).exp_project(),

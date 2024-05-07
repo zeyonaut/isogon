@@ -1,0 +1,4 @@
+#input (t : #2 -> #2)
+
+let [0] p : Id (#2 -> #2) t (|x| t x) = refl;
+t

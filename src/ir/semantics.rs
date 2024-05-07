@@ -39,7 +39,7 @@ pub enum StaticValue {
 
 	// Repeated programs.
 	Exp(Cost, Cpy, Rc<Self>),
-	Repeat(Cost, Rc<Self>),
+	Promote(Cost, Rc<Self>),
 
 	// Dependent functions.
 	IndexedProduct {
@@ -112,7 +112,7 @@ pub enum DynamicValue {
 
 	// Repeated programs.
 	Exp(u64, Rc<KindValue>, Rc<Self>),
-	Repeat(u64, Rc<Self>),
+	Promote(u64, Rc<Self>),
 
 	// Dependent functions.
 	IndexedProduct {
@@ -320,7 +320,7 @@ impl StaticValue {
 
 	pub fn exp_project(self) -> Self {
 		match self {
-			StaticValue::Repeat(_, v) => v.as_ref().clone(),
+			StaticValue::Promote(_, v) => v.as_ref().clone(),
 			StaticValue::Neutral(n) => StaticValue::Neutral(StaticNeutral::ExpProject(n.into())),
 			_ => panic!(),
 		}
@@ -350,7 +350,7 @@ impl DynamicValue {
 
 	pub fn exp_project(self) -> Self {
 		match self {
-			DynamicValue::Repeat(_, v) => v.as_ref().clone(),
+			DynamicValue::Promote(_, v) => v.as_ref().clone(),
 			DynamicValue::Neutral(n) => DynamicValue::Neutral(DynamicNeutral::ExpProject(n.into())),
 			_ => panic!(),
 		}

@@ -1,0 +1,4 @@
+#input (t : Wrap #2)
+
+let [0] p : Id (Wrap #2) t (wrap (t unwrap)) = refl;
+t

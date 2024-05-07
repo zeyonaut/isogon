@@ -1,5 +1,9 @@
+mod common;
+mod eta;
+
 use std::{ffi::OsStr, fs};
 
+use common::EXTENSION;
 use isogon::{
 	backend::{emit::emit_object, flatten::flatten, interpret::execute, linearize::linearize, stage::stage},
 	common::Fragment,
@@ -12,9 +16,6 @@ use isogon::{
 		unevaluate::Unevaluate as _,
 	},
 };
-
-const EXTENSION: &str = "is";
-
 #[test]
 fn run_fail_tests() {
 	for path in fs::read_dir("tests/fail")

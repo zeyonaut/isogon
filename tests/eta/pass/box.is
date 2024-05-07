@@ -1,0 +1,6 @@
+#input (t : Box #2)
+
+let a = t unbox;
+let b = box a;
+let [0] p : Id (Box #2) t b = refl;
+b
