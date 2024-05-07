@@ -187,7 +187,7 @@ peg::parser! {
 			/ {Fragment::Material}
 
 		rule pragma_input() -> (ParsedLabel, Expression)
-			= [Token::Pragma(Pragma::Input)] _ label:parameter() _ [Token::Colon] _ ty:spine_headed() {(label, ty)}
+			= [Token::Pragma(Pragma::Input)] _ [Token::ParenL] _ label:parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::ParenR] {(label, ty)}
 
 		pub rule program() -> ParsedProgram
 			= _ fragment:pragma_fragment() _ input:pragma_input()? _ expr:preterm() _ {ParsedProgram {fragment, input, expr}}

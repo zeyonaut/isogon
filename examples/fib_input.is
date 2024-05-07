@@ -1,4 +1,4 @@
-#input n : Nat
+#input (n : Nat)
 
 def [*] add : '(Nat -> Nat -> Nat)
 	= <|a| |b| a :: |_| Nat {

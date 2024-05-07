@@ -1,4 +1,4 @@
-#input x : (Nat & Nat)
+#input (x : Nat & Nat)
 
 let (a, b) = x;
 (b, a)

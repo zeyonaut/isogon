@@ -30,10 +30,10 @@ def [*] pred : Nat -> Nat
 
 def [*] make_bitvec : |n : Nat| -> '<BitVec n>
 	= |n| (
-		let (n, v) = n :: |n| Nat & '<BitVec n> {
+		def (n, v) = n :: |n| Nat & '<BitVec n> {
 			| 0        -> pred n, <box 0_1>
 			| suc @n.v ->
-				let (k, v) = v;
+				def (k, v) = v;
 				pred k, <box (<lower (is_even k)>, <v>)>
 		};
 		v

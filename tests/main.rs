@@ -23,9 +23,10 @@ fn run_fail_tests() {
 		.map(|x| x.path())
 		.filter(|x| x.extension() == Some(OsStr::new(EXTENSION)))
 	{
-		let source = fs::read_to_string(path).unwrap();
-		let lexed_source = lex(&source).ok().unwrap();
-		let (preterm, _) = parse(&lexed_source).ok().unwrap();
+		let path_str = path.as_os_str().to_str().unwrap().to_owned();
+		let source = fs::read_to_string(path).expect(&path_str);
+		let lexed_source = lex(&source).ok().expect(&path_str);
+		let (preterm, _) = parse(&lexed_source).expect(&path_str);
 		let term = elaborate(preterm);
 		assert!(term.is_err());
 	}
@@ -39,25 +40,30 @@ fn run_examples() {
 		.map(|x| x.path())
 		.filter(|x| x.extension() == Some(OsStr::new(EXTENSION)))
 	{
-		let source = fs::read_to_string(path).unwrap();
-		let lexed_source = lex(&source).ok().unwrap();
-		let (parsed_program, resolver) = parse(&lexed_source).ok().unwrap();
+		let path_str = path.as_os_str().to_str().unwrap().to_owned();
+		let source = fs::read_to_string(path).expect(&path_str);
+		let lexed_source = lex(&source).ok().expect(&path_str);
+		let (parsed_program, resolver) = parse(&lexed_source).expect(&path_str);
 		let fragment = parsed_program.fragment;
-		let core_program = elaborate(parsed_program).unwrap();
+		let core_program = elaborate(parsed_program).expect(&path_str);
 		let object_program = stage(core_program.clone());
 
-		assert_eq!(
-			pretty_print(&core_program.term.evaluate().unevaluate().unelaborate(), &resolver),
-			pretty_print(&object_program.term.clone().evaluate().unevaluate().unelaborate(), &resolver)
-		);
+		if object_program.input.is_none() {
+			assert_eq!(
+				pretty_print(&core_program.term.evaluate().unevaluate().unelaborate(), &resolver),
+				pretty_print(&object_program.term.clone().evaluate().unevaluate().unelaborate(), &resolver)
+			);
+		}
 
 		if fragment == Fragment::Logical {
-			return;
+			continue;
 		}
 
 		let flat_program = flatten(&object_program);
 		let linearized_program = linearize(flat_program);
-		let _ = execute(&linearized_program);
+		if linearized_program.entry_prototype.parameter.is_none() {
+			let _ = execute(&linearized_program);
+		}
 		let _emitted_object = emit_object(
 			"program".to_owned(),
 			&linearized_program,

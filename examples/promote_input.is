@@ -1,0 +1,5 @@
+#input (n : Nat)
+n :: |_| Nat {
+	| 0        -> 0
+	| suc @_.x -> suc (suc x) 
+}
