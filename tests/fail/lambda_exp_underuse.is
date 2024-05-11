@@ -1,0 +1,5 @@
+let delete
+	: ![4] (Box Bool) -> ![2] (Box Bool)
+	= |x| (let @[4] y = x; @[2] y);
+
+delete (@[4] (box true))

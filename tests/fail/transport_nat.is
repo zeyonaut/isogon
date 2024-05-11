@@ -1,0 +1,11 @@
+let [0] F : Bool -> * c0 rbyte
+	= |b| b :: |_| * c0 rbyte 
+	{ false -> #0 | true -> #256 };
+
+let transport
+	: |x : Bool| @ -> |y : Bool| @
+	-> Id Bool x y @ -> F x -> F y
+	= |_| |_| |p| |a| 
+	p cast :: |v._| F v { refl -> a};
+
+transport true false refl 24_256

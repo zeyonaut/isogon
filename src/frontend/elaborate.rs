@@ -66,7 +66,7 @@ pub enum ElaborationErrorKind {
 	ExpectedStaticFoundDynamicVariable,
 	ExpectedDynamicFoundStaticVariable,
 	UsedNonCrispLockedVariable,
-	VariableHasUsesLeft(u64),
+	VariableHasUsesLeft { label: Label, remaining_usage: u64 },
 	SynthesizedLambda,
 	AttemptedMaterialization,
 	InvalidFormer,
@@ -83,7 +83,7 @@ pub enum ElaborationErrorKind {
 	CouldNotSynthesizeDynamic,
 	NotInScope,
 	FiberAxesDependentOnBasepoint,
-	RanOutOfVariableUses,
+	RanOutOfVariableUses { label: Label, extra_usage: Cost },
 	WrongArity,
 	InvalidArgumentCount,
 	InvalidStaticUniverse,
@@ -303,7 +303,7 @@ impl<'c, T, const N: usize> ExtendedContext<'c, T, N> {
 			if let Cost::Fin(grade) = grade {
 				(grade == 0)
 					.then_some(())
-					.ok_or(ElaborationErrorKind::VariableHasUsesLeft(grade))
+					.ok_or(ElaborationErrorKind::VariableHasUsesLeft { label: p.label, remaining_usage: grade })
 					.map_err(|e| e.at((p.locus, p.locus + 1)))?
 			}
 			self.context.tys.pop();
@@ -383,11 +383,12 @@ impl Context {
 				.fold(Cost::Fin(1), |agg, (_, amp)| agg * *amp)
 		};
 
+		let label = self.tys[level].0;
 		if let Cost::Fin(grade) = &mut self.tys[level].1.grade {
 			if let Cost::Fin(usage) = usage {
-				*grade = grade.checked_sub(usage).ok_or(ElaborationErrorKind::RanOutOfVariableUses)?;
+				*grade = grade.checked_sub(usage).ok_or(ElaborationErrorKind::RanOutOfVariableUses {label, extra_usage: Cost::Fin(usage)})?;
 			} else {
-				return Err(ElaborationErrorKind::RanOutOfVariableUses);
+				return Err(ElaborationErrorKind::RanOutOfVariableUses {label, extra_usage: Cost::Inf});
 			}
 		}
 

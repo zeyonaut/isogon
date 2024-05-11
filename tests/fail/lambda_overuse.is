@@ -1,0 +1,5 @@
+let diagonal
+	: Box Bool -> Box Bool & Box Bool
+	= |x| (x, x);
+
+diagonal (box true)

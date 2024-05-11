@@ -1,0 +1,6 @@
+def [*] diagonal
+	: |r : repr| @ -> |T : '(* c0 r)| @
+	-> '(<T> -> <T> & <T>)
+= |_| |_| <|x| (x, x)>;
+
+<diagonal rptr <Box Bool>> (box true)

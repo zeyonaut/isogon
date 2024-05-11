@@ -2,6 +2,7 @@ use lasso::Resolver;
 use peg::error::ParseError;
 
 use crate::{
+	common::Cost,
 	frontend::{
 		elaborate::{ElaborationError, ElaborationErrorKind},
 		lex::{LexError, LexErrorKind},
@@ -55,7 +56,7 @@ fn report_line_error(source: &str, range: (usize, usize), error_string: &str) {
 	};
 
 	print!("[{}:{}] ", line_number, bytes_left);
-	println!("error: {error_string}");
+	println!("{error_string}");
 
 	let visual_line = line.replace('\t', TAB_REPLACEMENT).trim_end().to_owned();
 	let visual_offset: usize =
@@ -100,28 +101,40 @@ fn format_lex_error(source: &str, LexError(location, kind): LexError) -> String 
 
 fn display_error(kind: ElaborationErrorKind, interner: &impl Resolver) -> String {
 	match kind {
+		ElaborationErrorKind::VariableHasUsesLeft { label, remaining_usage } => {
+			let label = label.map(|label| interner.resolve(&label)).unwrap_or("_");
+			format!("error: '{label}' left scope with usage {remaining_usage} remaining")
+		}
+		ElaborationErrorKind::RanOutOfVariableUses { label, extra_usage } => {
+			let label = label.map(|label| interner.resolve(&label)).unwrap_or("_");
+			let extra_usage = match extra_usage {
+				Cost::Fin(n) => format!("{n}"),
+				Cost::Inf => "omega".to_owned(),
+			};
+			format!("error: '{label}' overused by usage {extra_usage}")
+		}
 		ElaborationErrorKind::StaticBidirectionalMismatch { synthesized, expected } => {
 			// println!("elaboration error: type mismatch\nexpected: {synthesized:#?}\nfound: {expected:#?}");
 			let mut ty_sy = String::new();
 			print(&synthesized.unelaborate(), &mut ty_sy, interner).unwrap();
 			let mut ty_ex = String::new();
 			print(&expected.unelaborate(), &mut ty_ex, interner).unwrap();
-			format!("elaboration error: type mismatch\nexpected: {}\nfound: {}", ty_ex, ty_sy)
+			format!("error: type mismatch\nexpected: {}\nfound: {}", ty_ex, ty_sy)
 		}
 		ElaborationErrorKind::DynamicBidirectionalMismatch { synthesized, expected } => {
 			let mut ty_sy = String::new();
 			print(&synthesized.unelaborate(), &mut ty_sy, interner).unwrap();
 			let mut ty_ex = String::new();
 			print(&expected.unelaborate(), &mut ty_ex, interner).unwrap();
-			format!("elaboration error: type mismatch\nexpected: {}\nfound: {}", ty_ex, ty_sy)
+			format!("error: type mismatch\nexpected: {}\nfound: {}", ty_ex, ty_sy)
 		}
 		ElaborationErrorKind::CouldNotConvertDynamic(a, b) => {
 			let mut str_a = String::new();
 			print(&a.unelaborate(), &mut str_a, interner).unwrap();
 			let mut str_b = String::new();
 			print(&b.unelaborate(), &mut str_b, interner).unwrap();
-			format!("elaboration error: conversion failure\nleft: {}\nright: {}", str_a, str_b)
+			format!("error: conversion failure\nleft: {}\nright: {}", str_a, str_b)
 		}
-		_ => format!("elaboration error: {:#?}", kind),
+		_ => format!("error: {:#?}", kind),
 	}
 }
