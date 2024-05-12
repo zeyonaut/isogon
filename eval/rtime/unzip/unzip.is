@@ -1,0 +1,24 @@
+#input (list : |n : Nat| & n :: |_| * c1 rptr {
+	| 0        -> Box (![0] #1)
+	| suc @n.L -> Box (L & (Nat & Nat))
+})
+
+def [0] List : |c : copy| -> |r : repr| -> '(* c r -> Nat -> * c1 rptr)
+	= |_| |_| <|T| |n| n :: |_| * c1 rptr {
+		| 0        -> Box (![0] #1)
+		| suc @_.L -> Box (L & T)
+	}>;
+
+let (n, list) = list;
+n :: |n| <List c0 (rpair rnat rnat)> (Nat & Nat) n -> <List c0 rnat> Nat n & <List c0 rnat> Nat n {
+	| 0 -> |x| (
+		let @[0] x = x unbox;
+		box (@[0] x), box (@[0] x)
+	)
+	| suc @n.f -> |x| (
+		let (list, item) = (x unbox);
+		let (x, y) = item;
+		let (a, b) = f list;
+		box (a, x), box (b, y)
+	)
+} list

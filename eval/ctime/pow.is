@@ -1,0 +1,22 @@
+#input (p : Nat & Nat)
+
+def [*] add : '(Nat -> Nat -> Nat)
+	= <|a| |b| a :: |_| Nat {
+		| 0        -> b
+		| suc @_.k -> suc k
+	}>;
+
+def [*] mul : '(Nat -> Nat -> Nat)
+	= <|a| |b| a :: |_| Nat {
+		| 0        -> 0
+		| suc @_.k -> <add> b k
+	}>;
+
+def [*] pow : '(Nat -> Nat -> Nat)
+	= <|a| |b| a :: |_| Nat {
+		| 0        -> 1
+		| suc @_.k -> <mul> b k
+	}>;
+
+let (a, b) = p;
+<pow> a b

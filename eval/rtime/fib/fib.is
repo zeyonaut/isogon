@@ -1,0 +1,24 @@
+#input (n : Nat)
+
+def [*] add : '((Nat & Nat) -> Nat)
+	= <|ab| (
+		let (a, b) = ab;
+		a :: |_| Nat {
+			| 0        -> b
+			| suc @_.k -> suc k
+		}
+	)>;
+
+def [*] fib2 : '((Nat & (Nat & Nat)) -> (Nat & Nat))
+	= <|nx| (
+		let (n, x) = nx;
+		n :: |_| (Nat & Nat) {
+			| 0        -> x
+			| suc @_.x ->
+				let (a, b) = x;
+				<add> x, a
+		}
+	)>;
+
+let (a, b) = <fib2> (n, (0, 1));
+a

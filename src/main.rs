@@ -21,6 +21,7 @@ use isogon::{
 
 fn main() {
 	let options: Options = construct!(Options {
+		is_quiet(short('q').switch()),
 		input(construct!([
 			c(short('c').argument::<String>("\"preterm\"").help("Read input from argument").map(InputOption::Direct)),
 			f(short('f').argument::<String>("PATH").help("Read input from file").map(InputOption::FilePath)),
@@ -37,6 +38,7 @@ fn main() {
 }
 
 struct Options {
+	is_quiet: bool,
 	input: InputOption,
 	show_lir: bool,
 	show_clif: bool,
@@ -76,9 +78,12 @@ fn run(options: Options) {
 		}
 	};
 	let fragment = parsed_program.fragment;
-	println!("Parsing complete.");
-
-	println!();
+	
+	if !options.is_quiet {
+		println!("Parsing complete.");
+	
+		println!();
+	}
 
 	// Elaboration.
 	let core_program = match elaborate(parsed_program) {
@@ -88,6 +93,7 @@ fn run(options: Options) {
 			panic!()
 		}
 	};
+	if !options.is_quiet {
 	println!("Elaboration complete.");
 	println!("Elaborated term: {}", pretty_print(&core_program.term.clone().unelaborate(), &resolver));
 	println!("Synthesized type: {}", pretty_print(&core_program.ty.unevaluate_in(Level(core_program.input.is_some() as _)).unelaborate(), &resolver));
@@ -99,9 +105,11 @@ fn run(options: Options) {
 	}
 
 	println!();
+}
 
 	// Staging.
 	let object_program = stage(core_program);
+	if !options.is_quiet {
 	println!("Staging complete.");
 	println!("Staged term: {}", pretty_print(&object_program.term.clone().unelaborate(), &resolver));
 	if object_program.input.is_none() {
@@ -109,23 +117,28 @@ fn run(options: Options) {
 			"Evaluation: {}",
 			pretty_print(&object_program.term.clone().evaluate().unevaluate().unelaborate(), &resolver)
 		);
-	}
+	}}
 
 	// Early return for irrelevant programs.
 	if fragment == Fragment::Logical {
 		return;
 	}
 
+	if !options.is_quiet {
 	println!();
+	}
 
 	// Closure conversion.
 	let flat_program = flatten(&object_program);
+	if !options.is_quiet {
 	println!("Closure conversion complete.");
 
 	println!();
+	}
 
 	// Linearization.
 	let linearized_program = linearize(flat_program);
+	if !options.is_quiet {
 	println!("Linearization complete.");
 
 	if options.show_lir {
@@ -141,10 +154,12 @@ fn run(options: Options) {
 	}
 
 	println!();
+}
 
 	// Emission
 	let target_triple_string = target_triple.to_string();
 	let emission = emit_object("program".to_owned(), &linearized_program, target_triple);
+	if !options.is_quiet {
 	println!("Emission to target {target_triple_string} complete.");
 
 	if options.show_clif {
@@ -153,6 +168,7 @@ fn run(options: Options) {
 		for function in &emission.functions {
 			println!("{}", function.display());
 		}
+	}
 	}
 
 	// Object file generation.
