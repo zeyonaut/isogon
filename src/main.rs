@@ -3,7 +3,7 @@ use std::{fs::File, io::Write, path::Path, str::FromStr};
 use bpaf::{construct, long, short, Parser};
 use isogon::{
 	backend::{emit::emit_object, flatten::flatten, interpret::execute, linearize::linearize, stage::stage},
-	common::Fragment,
+	common::{Fragment, Level},
 	frontend::{
 		elaborate::elaborate,
 		evaluate::Evaluate as _,
@@ -90,7 +90,7 @@ fn run(options: Options) {
 	};
 	println!("Elaboration complete.");
 	println!("Elaborated term: {}", pretty_print(&core_program.term.clone().unelaborate(), &resolver));
-	println!("Synthesized type: {}", pretty_print(&core_program.ty.unevaluate().unelaborate(), &resolver));
+	println!("Synthesized type: {}", pretty_print(&core_program.ty.unevaluate_in(Level(core_program.input.is_some() as _)).unelaborate(), &resolver));
 	if core_program.input.is_none() {
 		println!(
 			"Evaluation: {}",

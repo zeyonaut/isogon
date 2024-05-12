@@ -7,9 +7,9 @@ use lasso::Spur;
 
 // de Bruijn index: zero is the newest bound parameter.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Index(pub(super) usize);
+pub struct Index(pub usize);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Level(pub(super) usize);
+pub struct Level(pub usize);
 
 impl Level {
 	pub fn index(self, index: usize) -> Self { Self(self.0 - (index + 1)) }

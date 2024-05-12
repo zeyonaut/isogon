@@ -1,0 +1,20 @@
+---
+AccessModifierOffset: -3
+AllowShortBlocksOnASingleLine: Always
+AllowShortIfStatementsOnASingleLine: true
+AllowShortLoopsOnASingleLine: true
+AlwaysBreakBeforeMultilineStrings: true
+BasedOnStyle: WebKit
+BreakBeforeBraces: Attach
+ContinuationIndentWidth: 3
+Cpp11BracedListStyle: true
+DerivePointerAlignment: false
+IndentExternBlock: Indent
+IndentPPDirectives: BeforeHash
+IndentWidth: 3
+PointerAlignment: Right
+QualifierAlignment: Right
+SortIncludes: CaseSensitive
+Standard: c++20
+TabWidth: 3
+UseTab: ForContinuationAndIndentation

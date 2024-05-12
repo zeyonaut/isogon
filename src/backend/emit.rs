@@ -324,6 +324,25 @@ impl<'a, 'b, 'c, 'd> Emitter<'a, 'b, 'c, 'd> {
 		match statement {
 			linear::Statement::Assign(symbol, value) => {
 				let predata = self.predata(value);
+				let predata = if let Some(predata) = predata {
+					let layout = predata.layout();
+					Some(match predata {
+						Predata::FuncRef(f) => Predata::FuncRef(f),
+						Predata::Direct(a, b) => Predata::Direct(a, b),
+						predata @ Predata::Indirect(..) | predata @ Predata::StackSlot(..) => {
+							if layout.ty().is_some() {
+								Predata::Direct(self.value(predata), layout)
+							} else {
+								let slot = self.create_slot(layout);
+								let data = self.data(predata);
+								self.store_data_in_slot(slot, 0, data);
+								Predata::StackSlot(slot, 0, layout)
+							}
+						},
+					})
+				} else { 
+					None
+				};
 				self.assign(*symbol, predata);
 			}
 			linear::Statement::Alloc(symbol, value) => {
