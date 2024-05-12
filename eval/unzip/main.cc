@@ -3,31 +3,14 @@
 #include <cassert>
 #include <charconv>
 #include <chrono>
-#include <cstdint>
 #include <cstdio>
 #include <iomanip>
 #include <iostream>
 #include <memory>
-#include <numeric>
-#include <optional>
 #include <span>
-#include <string_view>
 #include <vector>
 
-auto sample_mean(std::vector<double> const &samples) -> double {
-	return std::accumulate(samples.begin(), samples.end(), 0.0) / samples.size();
-}
-
-auto sample_std(std::vector<double> const &samples) -> double {
-	double mean = sample_mean(samples);
-	double sum = std::accumulate(samples.begin(), samples.end(), 0.0, [mean](double const &x, double const &y) { return x + ((y - mean) * (y - mean)); });
-	return std::sqrt(sum / (samples.size() - 1));
-}
-
-using u8 = uint8_t;
-using u16 = uint16_t;
-using u64 = uint64_t;
-using usize = size_t;
+#include "../utility.hh"
 
 template <typename T>
 struct List {
@@ -86,18 +69,6 @@ auto unzip_c(SizedList<Pair> *sized_list, Output *output) -> void {
 	helper(sized_list->len, sized_list->list, output);
 }
 
-template <typename T>
-auto parse(const std::string_view string) -> T {
-	int result;
-	if (std::from_chars(string.data(), string.data() + string.size(), result)
-			 .ec
-		== std::errc {}) {
-		return result;
-	} else {
-		abort();
-	}
-}
-
 auto make_list_of_pairs(u64 n) -> SizedList<Pair> {
 	List<Pair> *list = nullptr;
 	for (u64 i {0}; i < n; ++i) {
@@ -132,11 +103,6 @@ auto print_list(u64 len, List<u64> *list) {
 	}
 	std::cout << "\n";
 }
-
-struct BenchResult {
-	double mean;
-	double std;
-};
 
 auto bench(u64 sample_count, std::span<u64> sizes, auto(*fn)(SizedList<Pair> *, Output *)->void) -> std::vector<BenchResult> {
 	std::vector<BenchResult> results {};
