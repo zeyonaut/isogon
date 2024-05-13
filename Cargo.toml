@@ -2,8 +2,9 @@
 name = "isogon"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MIT"
+authors = ["Aaron Yeoh Cruz <zeyonaut@gmail.com>"]
+exclude = ["/eval", "/.*"]
 
 [dependencies]
 bpaf = "0.9.11"
@@ -15,6 +16,6 @@ peg = "0.8.2"
 target-lexicon = "0.12.14"
 unicode-width = "0.1.11"
 
-# NOTE: Used to prevent a stack overflow on the example "vec". Temporary?
+# NOTE: Used to reduce risk of stack overflow.
 [profile.dev]
 opt-level = 1
