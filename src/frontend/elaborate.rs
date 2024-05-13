@@ -386,9 +386,11 @@ impl Context {
 		let label = self.tys[level].0;
 		if let Cost::Fin(grade) = &mut self.tys[level].1.grade {
 			if let Cost::Fin(usage) = usage {
-				*grade = grade.checked_sub(usage).ok_or(ElaborationErrorKind::RanOutOfVariableUses {label, extra_usage: Cost::Fin(usage)})?;
+				*grade = grade
+					.checked_sub(usage)
+					.ok_or(ElaborationErrorKind::RanOutOfVariableUses { label, extra_usage: Cost::Fin(usage) })?;
 			} else {
-				return Err(ElaborationErrorKind::RanOutOfVariableUses {label, extra_usage: Cost::Inf});
+				return Err(ElaborationErrorKind::RanOutOfVariableUses { label, extra_usage: Cost::Inf });
 			}
 		}
 
@@ -2002,5 +2004,25 @@ impl DynamicNote {
 	fn get_if_wrap(&self) -> Option<Self> {
 		let DynamicValue::Wrap { kind, inner: ty } = &self.ty else { return None };
 		Some(Self::new(ty.as_ref().clone(), kind.as_ref().clone()))
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	#[should_panic]
+	fn test_extension_mismatch() {
+		let _ = Context::empty(Fragment::Material)
+			.extend(bind(
+				[ParsedLabel { locus: 0, label: None }; 2],
+				Box::new(Expression {
+					range: (0, 0),
+					preterm: ParsedPreterm(Preterm::Constructor(Constructor::Num(20), vec![])),
+				}),
+			))
+			.bind_static(false, 1.into(), Cpy::Tr, StaticValue::Nat)
+			.map(|_, expr: Box<Expression>| Ok(expr));
 	}
 }

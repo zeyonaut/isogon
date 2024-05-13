@@ -2,7 +2,7 @@ use std::{cmp::Ordering, collections::HashMap};
 
 use crate::common::{Binder, Cost, Cpy, Label, Level, Name, Repr, UniverseKind};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Term {
 	// Irrelevant expressions.
 	Irrelevant,
@@ -82,28 +82,28 @@ pub enum Term {
 	WrapProject(Box<Self>, Option<Repr>),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Variable {
 	Outer(Level),
 	Parameter,
 	Local(Level),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Capture {
 	pub name: Option<Name>,
 	pub variable: Variable,
 	pub cost: Cost,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Parameter {
 	pub name: Option<Name>,
 	pub grade: Cost,
 	pub repr: Option<Repr>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Procedure {
 	pub captured_parameters: Vec<Parameter>,
 	pub parameter: Option<Parameter>,
@@ -111,7 +111,7 @@ pub struct Procedure {
 	pub result_repr: Option<Repr>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Program {
 	pub input: Option<(Label, UniverseKind)>,
 	pub entry: Term,
@@ -208,5 +208,33 @@ impl Substitute for Variable {
 				Ordering::Greater => Variable::Local(Level(level.0 - minimum_level.0 - 1)),
 			}
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::common::bind;
+
+	#[test]
+	fn test_substitute() {
+		let mut substitution = HashMap::new();
+		substitution.insert(Level(1), Level(2));
+		let mut term = Term::Let {
+			grade: 1,
+			argument_kind: UniverseKind::NAT,
+			argument: Box::new(Term::Num(24)),
+			tail: bind([None], Box::new(Term::Variable(None, Variable::Local(Level(1))))),
+		};
+		term.substitute(&substitution, Level(1));
+		assert_eq!(
+			term,
+			Term::Let {
+				grade: 1,
+				argument_kind: UniverseKind::NAT,
+				argument: Box::new(Term::Num(24)),
+				tail: bind([None], Box::new(Term::Variable(None, Variable::Parameter)))
+			}
+		);
 	}
 }

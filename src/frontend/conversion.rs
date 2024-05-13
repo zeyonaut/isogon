@@ -347,3 +347,19 @@ impl<const N: usize> Conversion<Rc<Closure<Environment, DynamicTerm, N>>> for Le
 		(self + N).can_convert(&left.evaluate_auto(self), &right.evaluate_auto(self))
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	
+	#[test]
+	fn test_conversion() {
+		let value_0 = DynamicValue::BxValue(DynamicValue::Neutral(DynamicNeutral::BxProject(DynamicNeutral::Variable(None, Level(0)).into())).into());
+		let value_1 = DynamicValue::Neutral(DynamicNeutral::Variable(None, Level(0)));
+		let value_2 = DynamicValue::Neutral(DynamicNeutral::Variable(None, Level(1)));
+
+		assert!(Level(3).can_convert(&value_0, &value_1));
+		assert!(Level(2).can_convert(&value_1, &value_0));
+		assert!(!Level(2).can_convert(&value_2, &value_0));
+	}
+}

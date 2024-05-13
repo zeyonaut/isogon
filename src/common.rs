@@ -36,7 +36,7 @@ pub enum Field {
 pub type Name = Spur;
 pub type Label = Option<Name>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Binder<P, T, const N: usize = 1> {
 	pub parameters: [P; N],
 	pub body: T,
@@ -156,7 +156,7 @@ pub enum Repr {
 	Array(ArraySize, Rc<Repr>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UniverseKind {
 	pub copy: Cpy,
 	pub repr: Option<Repr>,

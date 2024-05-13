@@ -384,3 +384,21 @@ impl<const N: usize> EvaluateAuto for Closure<Environment, DynamicTerm, N> {
 		}))
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::frontend::conversion::Conversion as _;
+
+	#[test]
+	fn test_beta() {
+		assert!(Level(0).can_convert(
+			&DynamicTerm::BxProject {
+				kind: None,
+				scrutinee: DynamicTerm::BxValue(DynamicTerm::Num(25).into()).into()
+			}
+			.evaluate(),
+			&DynamicValue::Num(25)
+		))
+	}
+}

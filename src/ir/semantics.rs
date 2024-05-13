@@ -470,3 +470,19 @@ impl Environment {
 
 	pub fn pop(&mut self) { self.0.pop(); }
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	
+	#[test]
+	fn test_max() {
+		let copy_0 = StaticValue::CpyValue(CpyValue::Max(vec![StaticNeutral::Variable(None, Level(2)), StaticNeutral::Variable(None, Level(1)), StaticNeutral::Variable(None, Level(0))]));
+		let copy_1 = StaticValue::CpyValue(CpyValue::Max(vec![StaticNeutral::Variable(None, Level(1)), StaticNeutral::Variable(None, Level(0)), StaticNeutral::Variable(None, Level(2))]));
+		let copy_2 = StaticValue::max_copyability(Level(3), copy_0.clone(), copy_1.clone());
+
+		assert!(Level(3).can_convert(&copy_0, &copy_1));
+		assert!(Level(3).can_convert(&copy_1, &copy_2));
+		assert!(Level(3).can_convert(&copy_2, &copy_0));
+	}
+}
