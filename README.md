@@ -1,3 +1,6 @@
+<div align="center">
+<br>
+
 # Isogon
 
 A dependently-typed programming language for performance-critical software.
