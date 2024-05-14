@@ -66,6 +66,9 @@ peg::parser! {
 		rule finite_grade_annotation() -> u64
 			= [Token::SquareL] _ number:number64() _ [Token::SquareR] {number}
 
+		rule ty_annotation() -> Expression
+			= [Token::Colon] _ ty:spine_headed() {ty}
+
 		rule former() -> Former
 			= [Token::Tick] {Former::Lift}
 			/ [Token::Keyword(Keyword::Copy)] {Former::Copy}
@@ -161,9 +164,9 @@ peg::parser! {
 		rule spine_headed() -> Expression
 			= init:position!() preterm:(
 				  [Token::Pipe] _ parameter:parameter() _ [Token::Pipe] _ body:spine_headed() {Preterm::Lambda { body: bind([parameter], body) }}
-				/ [Token::Pipe] _ parameter:parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ fragment:[Token::At]? _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { fragment: if fragment.is_some() {Fragment::Logical} else {Fragment::Material}, base: base.into(), family: bind([parameter], right) }}
+				/ [Token::Pipe] _ parameter:parameter() _ base:ty_annotation() _ [Token::Pipe] _ fragment:[Token::At]? _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { fragment: if fragment.is_some() {Fragment::Logical} else {Fragment::Material}, base: base.into(), family: bind([parameter], right) }}
 				/ locus:position!() left:spine() _ fragment:[Token::At]? _ [Token::Arrow] _ right:spine_headed() {Preterm::Pi { fragment: if fragment.is_some() {Fragment::Logical} else {Fragment::Material}, base: left.into(), family: bind([ParsedLabel {locus, label: None}], right) }}
-				/ [Token::Pipe] _ parameter:parameter() _ [Token::Colon] _ base:spine_headed() _ [Token::Pipe] _ [Token::Amp] _ right:spine_headed() {Preterm::Sg { base: base.into(), family: bind([parameter], right) }}
+				/ [Token::Pipe] _ parameter:parameter() _ base:ty_annotation() _ [Token::Pipe] _ [Token::Amp] _ right:spine_headed() {Preterm::Sg { base: base.into(), family: bind([parameter], right) }}
 				/ locus:position!() left:spine() _ [Token::Amp] _ right:spine_headed() {Preterm::Sg { base: left.into(), family: bind([ParsedLabel {locus, label: None}], right) }}
 				/ left:spine() _ [Token::Comma] _ right:spine_headed() {Preterm::Pair { basepoint: left.into(), fiberpoint: right.into() }}
 			) fini:position!() {preterm.at((init, fini))}
@@ -177,8 +180,8 @@ peg::parser! {
 		rule preterm() -> Expression
 			= init:position!() preterm:(
 				is_meta:([Token::Keyword(Keyword::Let)] {false} / [Token::Keyword(Keyword::Def)] {true})
-					_ grade:(cost_annotation())? _ pattern:irrefutable_pattern() _ ty:([Token::Colon] _ ty:spine_headed() {ty})? _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
-				{ Preterm::Let { is_meta, grade, ty: ty.map(Box::new), argument: argument.into(), pattern, tail: tail.into() }}
+					_ grade:(cost_annotation())? _ pattern:irrefutable_pattern() _ tys:ty_annotation()**_ _ [Token::Equal] _ argument:spine_headed() _ [Token::Semi] _ tail:preterm()
+				{ Preterm::Let { is_meta, grade, tys, argument: argument.into(), pattern, tail: tail.into() }}
 			) fini:position!() {preterm.at((init, fini))}
 			/ spine_headed()
 
@@ -187,7 +190,7 @@ peg::parser! {
 			/ {Fragment::Material}
 
 		rule pragma_input() -> (ParsedLabel, Expression)
-			= [Token::Pragma(Pragma::Input)] _ [Token::ParenL] _ label:parameter() _ [Token::Colon] _ ty:spine_headed() _ [Token::ParenR] {(label, ty)}
+			= [Token::Pragma(Pragma::Input)] _ [Token::ParenL] _ label:parameter() _ ty:ty_annotation() _ [Token::ParenR] {(label, ty)}
 
 		pub rule program() -> ParsedProgram
 			= _ fragment:pragma_fragment() _ input:pragma_input()? _ expr:preterm() _ {ParsedProgram {fragment, input, expr}}

@@ -92,7 +92,7 @@ impl Stage for StaticTerm {
 
 			// Dependent functions.
 			StaticTerm::Pi { .. } => StaticValue::Type,
-			StaticTerm::Function(_, function) => StaticValue::Function(function.stage_in(environment)),
+			StaticTerm::Function(_, function) => StaticValue::Function(function.stage_in(environment).into()),
 			StaticTerm::Apply { scrutinee, argument } => {
 				let StaticValue::Function(function) = scrutinee.stage_in(environment) else { panic!() };
 				function.stage_with([argument.stage_in(environment)])
@@ -155,7 +155,7 @@ impl Stage for DynamicTerm {
 				ty_kind: argument_kind.stage_in(environment),
 				ty: ty.stage_in(environment).into(),
 				argument: argument.stage_in(environment).into(),
-				tail: tail.stage_in(environment),
+				tail: tail.stage_in(environment).into(),
 			},
 
 			// Types.
@@ -180,7 +180,7 @@ impl Stage for DynamicTerm {
 				grade_argument,
 				argument: argument.stage_in(environment).into(),
 				kind: kind.stage_in(environment),
-				tail: tail.stage_in(environment),
+				tail: tail.stage_in(environment).into(),
 			},
 			ExpProject(t) => DynamicValue::ExpProject(t.stage_in(environment).into()),
 
@@ -190,11 +190,11 @@ impl Stage for DynamicTerm {
 				base_kind: base_kind.stage_in(environment),
 				base: base.stage_in(environment).into(),
 				family_kind: family_kind.stage_in(environment),
-				family: family.stage_in(environment),
+				family: family.stage_in(environment).into(),
 			},
 			Function { fragment, body, domain_kind, codomain_kind } => DynamicValue::Function {
 				fragment,
-				body: body.stage_in(environment),
+				body: body.stage_in(environment).into(),
 				domain_kind: domain_kind.map(|kind| kind.stage_in(environment)),
 				codomain_kind: codomain_kind.map(|kind| kind.stage_in(environment)),
 			},
@@ -210,7 +210,7 @@ impl Stage for DynamicTerm {
 				base_kind: base_kind.stage_in(environment),
 				base: base.stage_in(environment).into(),
 				family_kind: family_kind.stage_in(environment),
-				family: family.stage_in(environment),
+				family: family.stage_in(environment).into(),
 			},
 			Pair { basepoint, fiberpoint } => DynamicValue::Pair {
 				basepoint: basepoint.stage_in(environment).into(),
@@ -221,7 +221,7 @@ impl Stage for DynamicTerm {
 				grade,
 				argument: argument.stage_in(environment).into(),
 				kinds: kinds.map(|kind| kind.stage_in(environment)),
-				tail: tail.stage_in(environment),
+				tail: tail.stage_in(environment).into(),
 			},
 
 			// Enumerated numbers.
@@ -230,7 +230,7 @@ impl Stage for DynamicTerm {
 			CaseEnum { scrutinee, motive_kind, motive, cases } => DynamicValue::CaseEnum {
 				scrutinee: scrutinee.stage_in(environment).into(),
 				motive_kind: motive_kind.map(|kind| kind.stage_in(environment)),
-				motive: motive.stage_in(environment),
+				motive: motive.stage_in(environment).into(),
 				cases: cases.into_iter().map(|case| case.stage_in(environment)).collect(),
 			},
 
@@ -255,9 +255,9 @@ impl Stage for DynamicTerm {
 			CaseNat { scrutinee, motive_kind, motive, case_nil, case_suc } => DynamicValue::CaseNat {
 				scrutinee: scrutinee.stage_in(environment).into(),
 				motive_kind: motive_kind.map(|kind| kind.stage_in(environment)),
-				motive: motive.stage_in(environment),
+				motive: motive.stage_in(environment).into(),
 				case_nil: case_nil.stage_in(environment).into(),
-				case_suc: case_suc.stage_in(environment),
+				case_suc: case_suc.stage_in(environment).into(),
 			},
 
 			// Wrappers.

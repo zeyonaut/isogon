@@ -77,6 +77,7 @@ pub enum ElaborationErrorKind {
 	StaticBidirectionalMismatch { synthesized: StaticTerm, expected: StaticTerm },
 	DynamicBidirectionalMismatch { synthesized: DynamicTerm, expected: DynamicTerm },
 	CouldNotConvertDynamic(DynamicTerm, DynamicTerm),
+	CouldNotConvertStatic(StaticTerm, StaticTerm),
 	InvalidCaseSplit,
 	InvalidCaseSplitScrutineeType,
 	CouldNotSynthesizeStatic,
@@ -445,51 +446,66 @@ impl Context {
 			}
 
 			// Let-expressions.
-			(Preterm::Let { is_meta: true, grade, ty, argument, pattern, tail }, note) => match pattern {
-				IrrefutablePattern::Label(label) => self.elaborate_static_let(
-					PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail: bind([label], tail) },
-					note,
-					Self::elaborate_static,
-					|grade, ty, argument, tail| {
-						let (tail, note) = tail.retract_static();
-						StaticTerm::Let { grade, ty: ty.into(), argument: argument.into(), tail: tail.map_into() }
+			(Preterm::Let { is_meta: true, grade, tys, argument, pattern, tail }, note) => {
+				match pattern {
+					IrrefutablePattern::Label(label) => self.elaborate_static_let(
+						PreLet { grade, tys, argument: *argument, tail: bind([label], tail) },
+						note,
+						Self::elaborate_static,
+						|grade, ty, argument, tail| {
+							let (tail, note) = tail.retract_static();
+							StaticTerm::Let {
+								grade,
+								ty: ty.into(),
+								argument: argument.into(),
+								tail: tail.map_into(),
+							}
 							.annotate(note)
-					},
-				)?,
+						},
+					)?,
 
-				// Repeated programs.
-				IrrefutablePattern::Exp(grade_argument, label) => self.elaborate_static_exp_let(
-					PreExpLet {
-						grade: grade.unwrap_or(1.into()),
-						grade_argument,
-						argument: *argument,
-						tail: bind([label], tail),
-					},
-					note,
-					Self::elaborate_static,
-					|grade, grade_argument, argument, tail| {
-						let (tail, note) = tail.retract_static();
-						StaticTerm::ExpLet {
-							grade,
-							grade_argument,
-							argument: argument.into(),
-							tail: tail.map_into(),
-						}
-						.annotate(note)
-					},
-				)?,
+					// Repeated programs.
+					IrrefutablePattern::Exp(grade_argument, label) if tys.is_empty() => self
+						.elaborate_static_exp_let(
+							PreExpLet {
+								grade: grade.unwrap_or(1.into()),
+								grade_argument,
+								argument: *argument,
+								tail: bind([label], tail),
+							},
+							note,
+							Self::elaborate_static,
+							|grade, grade_argument, argument, tail| {
+								let (tail, note) = tail.retract_static();
+								StaticTerm::ExpLet {
+									grade,
+									grade_argument,
+									argument: argument.into(),
+									tail: tail.map_into(),
+								}
+								.annotate(note)
+							},
+						)?,
 
-				// Dependent pairs.
-				IrrefutablePattern::Pair(labels) => self.elaborate_static_sg_let(
-					PreSgLet { grade: grade.unwrap_or(1.into()), argument: *argument, tail: bind(labels, tail) },
-					note,
-					Self::elaborate_static,
-					|grade, argument, tail| {
-						let (tail, note) = tail.retract_static();
-						StaticTerm::SgLet { grade, argument: argument.into(), tail: tail.map_into() }.annotate(note)
-					},
-				)?,
-			},
+					// Dependent pairs.
+					IrrefutablePattern::Pair(labels) if tys.is_empty() => self.elaborate_static_sg_let(
+						PreSgLet {
+							grade: grade.unwrap_or(1.into()),
+							argument: *argument,
+							tail: bind(labels, tail),
+						},
+						note,
+						Self::elaborate_static,
+						|grade, argument, tail| {
+							let (tail, note) = tail.retract_static();
+							StaticTerm::SgLet { grade, argument: argument.into(), tail: tail.map_into() }
+								.annotate(note)
+						},
+					)?,
+
+					_ => return Err(ElaborationErrorKind::CouldNotSynthesizeDynamic.at(expr.range)),
+				}
+			}
 
 			// Quoting.
 			(Preterm::SwitchLevel(quotee), None) => {
@@ -972,13 +988,13 @@ impl Context {
 			}
 
 			// Let-expressions.
-			(Preterm::Let { is_meta, grade, ty, argument, pattern, tail }, note) =>
+			(Preterm::Let { is_meta, grade, tys, argument, pattern, tail }, note) => {
 				if is_meta {
 					let IrrefutablePattern::Label(label) = pattern else {
 						return Err(ElaborationErrorKind::InvalidIrrefutablePattern.at(expr.range));
 					};
 					self.elaborate_static_let(
-						PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail: bind([label], tail) },
+						PreLet { grade, tys, argument: *argument, tail: bind([label], tail) },
 						note,
 						|ctx, tail_body, note| ctx.elaborate_dynamic(tail_body, note),
 						|grade, ty, argument, tail| {
@@ -995,7 +1011,7 @@ impl Context {
 				} else {
 					match pattern {
 						IrrefutablePattern::Label(label) => self.elaborate_dynamic_let(
-							PreLet { grade, ty: ty.map(|x| *x), argument: *argument, tail: bind([label], tail) },
+							PreLet { grade, tys, argument: *argument, tail: bind([label], tail) },
 							note,
 							Self::elaborate_dynamic,
 							|grade, ty, argument_kind, argument, tail| {
@@ -1012,30 +1028,31 @@ impl Context {
 						)?,
 
 						// Repeated programs.
-						IrrefutablePattern::Exp(grade_argument, label) => self.elaborate_dynamic_exp_let(
-							PreExpLet {
-								grade: grade.unwrap_or(1.into()),
-								grade_argument,
-								argument: *argument,
-								tail: bind([label], tail),
-							},
-							note,
-							Self::elaborate_dynamic,
-							|grade, grade_argument, argument, kind_arg, tail| {
-								let (tail, note) = tail.retract_dynamic();
-								DynamicTerm::ExpLet {
-									grade,
+						IrrefutablePattern::Exp(grade_argument, label) if tys.is_empty() => self
+							.elaborate_dynamic_exp_let(
+								PreExpLet {
+									grade: grade.unwrap_or(1.into()),
 									grade_argument,
-									argument: argument.into(),
-									kind: kind_arg.into(),
-									tail: tail.map_into(),
-								}
-								.annotate(note)
-							},
-						)?,
+									argument: *argument,
+									tail: bind([label], tail),
+								},
+								note,
+								Self::elaborate_dynamic,
+								|grade, grade_argument, argument, kind_arg, tail| {
+									let (tail, note) = tail.retract_dynamic();
+									DynamicTerm::ExpLet {
+										grade,
+										grade_argument,
+										argument: argument.into(),
+										kind: kind_arg.into(),
+										tail: tail.map_into(),
+									}
+									.annotate(note)
+								},
+							)?,
 
 						// Dependent pairs.
-						IrrefutablePattern::Pair(labels) => self.elaborate_dynamic_sg_let(
+						IrrefutablePattern::Pair(labels) if tys.is_empty() => self.elaborate_dynamic_sg_let(
 							PreSgLet {
 								grade: grade.unwrap_or(1.into()),
 								argument: *argument,
@@ -1049,8 +1066,11 @@ impl Context {
 									.annotate(note)
 							},
 						)?,
+
+						_ => return Err(ElaborationErrorKind::CouldNotSynthesizeDynamic.at(expr.range)),
 					}
-				},
+				}
+			}
 
 			// Splicing.
 			(Preterm::SwitchLevel(splicee), None) => {
@@ -1675,26 +1695,77 @@ impl Context {
 		Ok((term.term, (*kind).clone()))
 	}
 
+	fn preprocess_static_type_train(
+		&mut self,
+		mut tys: Vec<Expression>,
+	) -> Result<Option<(Cpy, StaticValue, StaticTerm)>, ElaborationError> {
+		let binding_ty = if let Some(ty) = tys.pop() { Some(self.elaborate_static_type(ty)?) } else { None };
+
+		Ok(if let Some((binding_ty, binding_ty_c)) = binding_ty {
+			let binding_ty_value = binding_ty.clone().evaluate_in(&self.environment);
+			for ty in tys {
+				let range = ty.range;
+				let (ty_term, _) = self.elaborate_static_type(ty.clone())?;
+				let ty = ty_term.clone().evaluate_in(&self.environment);
+				if !self.len().can_convert(&binding_ty_value, &ty) {
+					return Err(
+						ElaborationErrorKind::CouldNotConvertStatic(ty_term, binding_ty)
+							.at(range),
+					);
+				}
+			}
+
+			Some((binding_ty_c, binding_ty_value, binding_ty))
+		} else {
+			None
+		})
+	}
+
+	fn preprocess_dynamic_type_train(
+		&mut self,
+		mut tys: Vec<Expression>,
+	) -> Result<Option<(KindValue, DynamicValue, DynamicTerm)>, ElaborationError> {
+		let binding_ty = if let Some(ty) = tys.pop() { Some(self.elaborate_dynamic_type(ty)?) } else { None };
+
+		Ok(if let Some((binding_ty, binding_ty_kind)) = binding_ty {
+			let binding_ty_value = binding_ty.clone().evaluate_in(&self.environment);
+			for ty in tys {
+				let range = ty.range;
+				let (ty_term, _) = self.elaborate_dynamic_type(ty.clone())?;
+				let ty = ty_term.clone().evaluate_in(&self.environment);
+				if !self.len().can_convert(&binding_ty_value, &ty) {
+					return Err(
+						ElaborationErrorKind::CouldNotConvertDynamic(ty_term, binding_ty)
+							.at(range),
+					);
+				}
+			}
+
+			Some((binding_ty_kind, binding_ty_value, binding_ty))
+		} else {
+			None
+		})
+	}
+
 	fn elaborate_static_let<A, B>(
 		&mut self,
-		PreLet { grade, ty, argument, tail }: PreLet,
+		PreLet { grade, tys, argument, tail }: PreLet,
 		tail_a: A,
 		elaborate_tail: impl FnOnce(&mut Context, Expression, A) -> Result<B, ElaborationError>,
 		produce_let: impl FnOnce(Cost, StaticTerm, StaticTerm, Binder<Label, B>) -> B,
 	) -> Result<B, ElaborationError> {
 		let grade = grade.unwrap_or_else(|| if tail.parameter().label.is_some() { 1 } else { 0 }.into());
 
-		let (ty_c, ty_value, ty, argument) = if let Some(ty) = ty {
-			let (ty, ty_c) = self.elaborate_static_type(ty)?;
-			let ty_value = ty.clone().evaluate_in(&self.environment);
-			let argument =
-				self.amplify(grade).verify_static(argument, StaticNote::new(ty_value.clone(), ty_c))?;
-			(ty_c, ty_value, ty, argument)
-		} else {
-			let argument = self.amplify(grade).synthesize_static(argument)?;
-			let ty = argument.note.ty.unevaluate_in(self.len());
-			(argument.note.copy, argument.note.ty, ty, argument.term)
-		};
+		let (ty_c, ty_value, ty, argument) =
+			if let Some((ty_c, ty_value, ty)) = self.preprocess_static_type_train(tys)? {
+				let argument =
+					self.amplify(grade).verify_static(argument, StaticNote::new(ty_value.clone(), ty_c))?;
+				(ty_c, ty_value, ty, argument)
+			} else {
+				let argument = self.amplify(grade).synthesize_static(argument)?;
+				let ty = argument.note.ty.unevaluate_in(self.len());
+				(argument.note.copy, argument.note.ty, ty, argument.term)
+			};
 
 		// TODO: Lazy evaluation.
 		let argument_value = argument.clone().evaluate_in(&self.environment);
@@ -1707,7 +1778,7 @@ impl Context {
 
 	fn elaborate_dynamic_let<A, B>(
 		&mut self,
-		PreLet { grade, ty, argument, tail }: PreLet,
+		PreLet { grade, tys, argument, tail }: PreLet,
 		tail_a: A,
 		elaborate_tail: impl FnOnce(&mut Context, Expression, A) -> Result<B, ElaborationError>,
 		produce_let: impl FnOnce(u64, DynamicTerm, KindTerm, DynamicTerm, Binder<Label, B>) -> B,
@@ -1718,18 +1789,17 @@ impl Context {
 				ElaborationErrorKind::InvalidGrade.at((tail.parameter().locus, tail.parameter().locus + 1)),
 			);
 		};
-		let (argument_kind, ty_value, ty, argument) = if let Some(ty) = ty {
-			let (ty, argument_kind) = self.elaborate_dynamic_type(ty)?;
-			let ty_value = ty.clone().evaluate_in(&self.environment);
-			let argument = self
-				.amplify(grade)
-				.verify_dynamic(argument, DynamicNote::new(ty_value.clone(), argument_kind.clone()))?;
-			(argument_kind, ty_value, ty, argument)
-		} else {
-			let argument = self.amplify(grade).synthesize_dynamic(argument)?;
-			let ty = argument.note.ty.unevaluate_in(self.len());
-			(argument.note.kind, argument.note.ty, ty, argument.term)
-		};
+		let (argument_kind, ty_value, ty, argument) =
+			if let Some((argument_kind, ty_value, ty)) = self.preprocess_dynamic_type_train(tys)? {
+				let argument = self
+					.amplify(grade)
+					.verify_dynamic(argument, DynamicNote::new(ty_value.clone(), argument_kind.clone()))?;
+				(argument_kind, ty_value, ty, argument)
+			} else {
+				let argument = self.amplify(grade).synthesize_dynamic(argument)?;
+				let ty = argument.note.ty.unevaluate_in(self.len());
+				(argument.note.kind, argument.note.ty, ty, argument.term)
+			};
 		// TODO: Lazy evaluation.
 		let argument_value = argument.clone().evaluate_in(&self.environment);
 		let tail_b = self
@@ -1855,7 +1925,7 @@ impl Context {
 
 struct PreLet {
 	grade: Option<Cost>,
-	ty: Option<Expression>,
+	tys: Vec<Expression>,
 	argument: Expression,
 	tail: Binder<ParsedLabel, Box<Expression>>,
 }

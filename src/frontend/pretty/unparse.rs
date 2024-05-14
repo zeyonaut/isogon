@@ -17,13 +17,13 @@ pub fn print(preterm: &PurePreterm, f: &mut impl Write, interner: &impl Resolver
 	match &preterm.0 {
 		Preterm::Variable(name) => write!(f, "{}", interner.resolve(name))?,
 		Preterm::Index(index) => write!(f, "_{}", index.0)?,
-		Preterm::Let { is_meta, grade, ty, argument, pattern, tail } => {
+		Preterm::Let { is_meta, grade, tys, argument, pattern, tail } => {
 			write!(f, "{} ", if *is_meta { "def" } else { "let" })?;
 			if let Some(grade) = grade {
 				write!(f, "[{}] ", cost(*grade))?;
 			}
 			print_irrefutable_pattern(pattern, f, interner)?;
-			if let Some(ty) = ty {
+			for ty in tys {
 				write!(f, " : ")?;
 				print(ty, f, interner)?;
 			}

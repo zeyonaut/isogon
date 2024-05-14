@@ -32,7 +32,7 @@ pub enum Preterm<L, E> {
 	Let {
 		is_meta: bool,
 		grade: Option<Cost>,
-		ty: Option<Box<E>>,
+		tys: Vec<E>,
 		argument: Box<E>,
 		pattern: IrrefutablePattern<L>,
 		tail: Box<E>,

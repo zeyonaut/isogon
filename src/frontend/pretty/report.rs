@@ -128,6 +128,13 @@ fn display_error(kind: ElaborationErrorKind, interner: &impl Resolver) -> String
 			print(&expected.unelaborate(), &mut ty_ex, interner).unwrap();
 			format!("error: type mismatch\nexpected: {}\nfound: {}", ty_ex, ty_sy)
 		}
+		ElaborationErrorKind::CouldNotConvertStatic(a, b) => {
+			let mut str_a = String::new();
+			print(&a.unelaborate(), &mut str_a, interner).unwrap();
+			let mut str_b = String::new();
+			print(&b.unelaborate(), &mut str_b, interner).unwrap();
+			format!("error: conversion failure\nleft: {}\nright: {}", str_a, str_b)
+		}
 		ElaborationErrorKind::CouldNotConvertDynamic(a, b) => {
 			let mut str_a = String::new();
 			print(&a.unelaborate(), &mut str_a, interner).unwrap();

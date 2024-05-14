@@ -22,7 +22,7 @@ pub enum StaticValue {
 	Repeat(Rc<Self>),
 
 	// Dependent functions.
-	Function(Closure<Environment, StaticTerm>),
+	Function(Rc<Closure<Environment, StaticTerm>>),
 
 	// Dependent pairs.
 	Pair(Rc<Self>, Rc<Self>),
@@ -87,7 +87,7 @@ pub enum DynamicValue {
 		ty_kind: UniverseKind,
 		ty: Rc<Self>,
 		argument: Rc<Self>,
-		tail: Closure<Environment, DynamicTerm>,
+		tail: Rc<Closure<Environment, DynamicTerm>>,
 	},
 
 	// Types.
@@ -105,7 +105,7 @@ pub enum DynamicValue {
 		grade_argument: u64,
 		argument: Rc<Self>,
 		kind: UniverseKind,
-		tail: Closure<Environment, DynamicTerm>,
+		tail: Rc<Closure<Environment, DynamicTerm>>,
 	},
 	ExpProject(Box<Self>),
 
@@ -115,11 +115,11 @@ pub enum DynamicValue {
 		base_kind: UniverseKind,
 		base: Rc<Self>,
 		family_kind: UniverseKind,
-		family: Closure<Environment, DynamicTerm>,
+		family: Rc<Closure<Environment, DynamicTerm>>,
 	},
 	Function {
 		fragment: Fragment,
-		body: Closure<Environment, DynamicTerm>,
+		body: Rc<Closure<Environment, DynamicTerm>>,
 		domain_kind: Option<UniverseKind>,
 		codomain_kind: Option<UniverseKind>,
 	},
@@ -135,7 +135,7 @@ pub enum DynamicValue {
 		base_kind: UniverseKind,
 		base: Rc<Self>,
 		family_kind: UniverseKind,
-		family: Closure<Environment, DynamicTerm>,
+		family: Rc<Closure<Environment, DynamicTerm>>,
 	},
 	Pair {
 		basepoint: Rc<Self>,
@@ -145,7 +145,7 @@ pub enum DynamicValue {
 		grade: u64,
 		argument: Box<Self>,
 		kinds: [UniverseKind; 2],
-		tail: Closure<Environment, DynamicTerm, 2>,
+		tail: Rc<Closure<Environment, DynamicTerm, 2>>,
 	},
 	SgField(Rc<Self>, Field),
 
@@ -155,7 +155,7 @@ pub enum DynamicValue {
 	CaseEnum {
 		scrutinee: Rc<Self>,
 		motive_kind: Option<UniverseKind>,
-		motive: Closure<Environment, DynamicTerm>,
+		motive: Rc<Closure<Environment, DynamicTerm>>,
 		cases: Vec<Self>,
 	},
 
@@ -180,9 +180,9 @@ pub enum DynamicValue {
 	CaseNat {
 		scrutinee: Rc<Self>,
 		motive_kind: Option<UniverseKind>,
-		motive: Closure<Environment, DynamicTerm>,
+		motive: Rc<Closure<Environment, DynamicTerm>>,
 		case_nil: Rc<Self>,
-		case_suc: Closure<Environment, DynamicTerm, 2>,
+		case_suc: Rc<Closure<Environment, DynamicTerm, 2>>,
 	},
 
 	// Wrappers.

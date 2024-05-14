@@ -23,7 +23,7 @@ impl Unelaborate for StaticTerm {
 				Preterm::Let {
 					is_meta: true,
 					grade: Some(grade),
-					ty: Some(ty.unelaborate().into()),
+					tys: vec![ty.unelaborate()],
 					argument: argument.unelaborate().into(),
 					pattern: IrrefutablePattern::Label(tail.parameter()),
 					tail: tail.body,
@@ -71,7 +71,7 @@ impl Unelaborate for StaticTerm {
 				Preterm::Let {
 					is_meta: true,
 					grade: Some(grade),
-					ty: None,
+					tys: vec![],
 					argument: argument.unelaborate().into(),
 					pattern: IrrefutablePattern::Exp(grade_argument, tail.parameter()),
 					tail: tail.body,
@@ -96,7 +96,7 @@ impl Unelaborate for StaticTerm {
 				Preterm::Let {
 					is_meta: true,
 					grade: Some(grade),
-					ty: None,
+					tys: vec![],
 					argument: argument.unelaborate().into(),
 					pattern: IrrefutablePattern::Pair(tail.parameters),
 					tail: tail.body,
@@ -162,7 +162,7 @@ impl Unelaborate for DynamicTerm {
 				Preterm::Let {
 					is_meta: true,
 					grade: Some(grade),
-					ty: Some(ty.unelaborate().into()),
+					tys: vec![ty.unelaborate()],
 					argument: argument.unelaborate().into(),
 					pattern: IrrefutablePattern::Label(tail.parameter()),
 					tail: tail.body,
@@ -173,7 +173,7 @@ impl Unelaborate for DynamicTerm {
 				Preterm::Let {
 					is_meta: false,
 					grade: Some(grade.into()),
-					ty: Some(ty.unelaborate().into()),
+					tys: vec![ty.unelaborate()],
 					argument: argument.unelaborate().into(),
 					pattern: IrrefutablePattern::Label(tail.parameter()),
 					tail: tail.body,
@@ -193,7 +193,7 @@ impl Unelaborate for DynamicTerm {
 				Preterm::Let {
 					is_meta: false,
 					grade: Some(grade.into()),
-					ty: None,
+					tys: vec![],
 					argument: argument.unelaborate().into(),
 					pattern: IrrefutablePattern::Exp(grade_argument.into(), tail.parameter()),
 					tail: tail.body,
@@ -219,7 +219,7 @@ impl Unelaborate for DynamicTerm {
 				Preterm::Let {
 					is_meta: false,
 					grade: Some(grade.into()),
-					ty: None,
+					tys: vec![],
 					argument: argument.unelaborate().into(),
 					pattern: IrrefutablePattern::Pair(tail.parameters),
 					tail: tail.body,
