@@ -1,130 +1,171 @@
 #fragment 0
 
-% Hurken's paradox, adapted from:
+% This file contains an adaptation of Hurken's paradox, as described in:
 % https://www.cs.cmu.edu/%7Ekw/scans/hurkens95tlca.pdf
 % http://rutgerkuyper.com/pubs/bachelor.pdf
+% Some non-standard phrases are introduced to make the paradox easier to understand.
 
 % This causes elaboration to fail to terminate.
 
-% We define a basic vocabulary of types.
+% The reason for nontermination is the validity of Type : Type.
 def Type
 	= * c0;
-def False
-	= |T : Type| -> T;
+
+% We define negation with #0, but it doesn't actually matter what codomain we choose!
 def not
 	: Type -> Type
-	= |T| T -> False;
+	= |T| T -> #0;
+
+% We also define notions of powersets (containing subsets) and double powersets (containing subpowersets).
 def P
 	: Type -> Type
 	= |T| T -> Type;
 
-% Consider a powerful universe (U, sigma, tau).
+def PP
+	: Type -> Type
+	= |T| P (P T);
+
+% Consider a powerful universe (U, s, t) of 'ordinals' (by analogy to the Burali-Forti paradox).
+% An ordinal in U, for any type T, assigns to each 'reflection' of T a subpowerset of T.
 def U
-	= |T : Type| -> (P (P T) -> T) -> P (P T);
-% An 'ordinal' in U, for any type T, assigns to each 'reflection' of T a subpowerset of T.
-% We can conceptualize tau as a reflection of U:
-def tau
-	: P (P U) -> U
+	= |T : Type| -> (PP T -> T) -> PP T;
+
+% We can conceptualize t as a reflection of U:
+% (This is probably the most confusing part of the paradox.)
+def t
+	: PP U -> U
 	% If V is a U-subpowerset, T is a type, r is a T-reflection, and X is a T-subset,
 	% return the proposition V assigns to the U-subset of ordinals x such that
 	% the T-reflection of [the T-subpowerset that x assigns to r] is an element of X.
 	= |V| |T| |r| |X| V (|x| X (r (x T r)));
-% We can conceptualize sigma as an unreflection of ordinals of U into subpowersets of U.
-def sigma
-	: U -> P (P U)
-	% If x is an ordinal, return the U-subpowerset that x assigns to tau.
-	= |x| x U tau;
 	
-% If X is a subset of U, we say that X is /inductive/ iff:
-% for all ordinals x of U, if X is in sigma x, then x is in X.
+% We can conceptualize s as an 'unreflection' of U:
+def s
+	: U -> PP U
+	% If x is an ordinal, return the U-subpowerset that x assigns to t.
+	= |x| x U t;
+
+% For convenience, we define the composition of t after s:
+def ts
+	: U -> U
+	= |x| t (s x);
+
+% We also define a means of pulling back a subset X of U by an endofunction f to get a subset f* X:
+def pullback
+	: (U -> U) -> P U -> P U
+	= |f| |X| |x| X (f x);
+
+% If x and y are ordinals and X is a subset of U, we say that x 'locally dominates' y at x
+% (for lack of a better phrase) iff:
+% if sx contains X, then X contains y.
+def locally_dominates_at
+	: U -> U -> PP U
+	= |x| |y| |X| s x X -> X y;
+
+% If X is a subset of U, we say that X is 'inductive' iff:
+% for all ordinals x of U, x locally dominates x at X.
 def is_inductive
-	: P (P U)
-	= |X| |x : U| -> sigma x X -> X x;
+	: PP U
+	= |X| |x : U| -> locally_dominates_at x x X;
 
-% We define the subset Omega by the following:
-def Omega
+% If x and y are ordinals of U, we say that x dominates y (i.e., x > y) iff:
+% for all subsets X of U, x locally dominates y at X.
+def dominates
+	: U -> P U
+	= |x| |y| |X : P U| -> locally_dominates_at x y X;
+
+% We define the paradoxical subset O by the following:
+def O
 	: U
-	= tau is_inductive;
+	= t is_inductive;
 
-% If x is an ordinal of U, we say that x is /decent/ (a.k.a. well-founded) iff:
-% for all subsets X of U, if X is inductive, then x is in X.
+% If x is an ordinal of U, we say that x is 'decent' (a.k.a. 'well-founded') iff:
+% for all subsets X of U, if X is inductive, then X contains x.
 def is_decent
 	: P U
 	= |x| |X : P U| -> is_inductive X -> X x;
 
-% We show that Omega is decent:
-def proof_Omega_is_decent
-	: is_decent Omega
-	= |X| |proof_X_is_inductive| (
-		% Suppose X is is inductive. We show that X is in sigma Omega:
-		def proof_X_is_in_sigma_Omega
-			: sigma Omega X
-			= |x| proof_X_is_inductive (tau (sigma x));
+% We show that O is decent:
+def proof_O_is_decent
+	: is_decent O
+	= |X| |proof_X_is_inductive| ( % Suppose X is an inductive subset of U. We wish to show X contains O.
+		% First, we show that sO contains X:
+		def proof_sO_contains_X
+			: s O X
+			= |x| proof_X_is_inductive (ts x);
 
-		% Since X is inductive, then Omega is in X, as required:
-		def proof_Omega_is_in_X
-			: X Omega
-			= proof_X_is_inductive Omega proof_X_is_in_sigma_Omega;
+		% Since X is inductive, then X contains O, as required:
+		def proof_X_contains_O
+			: X O
+			= proof_X_is_inductive O proof_sO_contains_X;
 
-		proof_Omega_is_in_X
+		proof_X_contains_O
 	);
 
-% If y and x are ordinals of U, we say that y is a /predecessor/ of x
-% (that is, y < x) iff:
-% for all subsets X of U, if X is in sigma x, then y is in X.
-def is_predecessor_of
-	: U -> P U
-	= |y| |x| |X : P U| -> sigma x X -> X y;
-
 % If x is an ordinal of U, we say that x is 'dubious'
-% (for lack of a better name, analogous to x < x in Burali-Forti) iff:
-% tau (sigma x) is a predecessor of x.
+% (for lack of a better phrase) iff:
+% x dominates tsx.
 def is_dubious
 	: P U
-	= |x| is_predecessor_of (tau (sigma x)) x;
-	
+	= |x| dominates x (ts x);
+
+% This is definitionally the same as being 'locally dubious' at every subset:
+def is_locally_dubious
+	: U -> PP U
+	= |x| |X| locally_dominates_at x (ts x) X;
+
+% We also define a subset ND of 'nondubious' ordinals:
 def is_nondubious
 	: P U
 	= |x| not (is_dubious x);
+
 def ND = is_nondubious;
 
-% We show that Omega is dubious:
-% (analogous to Omega < Omega in Burali-Forti)
-def proof_Omega_is_dubious
-	: is_dubious Omega = |X| proof_Omega_is_decent (|x| X (tau (sigma x)));
+% First, we show that O is dubious (i.e., O > ts O):
+def proof_O_is_dubious
+	: is_dubious O = |X| proof_O_is_decent (pullback ts X);
 
-% Next, we show that the subset of non-dubious ordinals is inductive:
-def proof_nondubious_is_inductive
+% First, we show that the subset of nondubious ordinals is inductive:
+def proof_ND_is_inductive
 	: is_inductive ND
-	= |x| |proof_ND_is_in_sigma_x| (
-		% Suppose x is an ordinal of U and ND is in sigma x.
-		% We are required to show that tau (sigma x) cannot be a predecessor of x:
-		def lemma : not (is_predecessor_of (tau (sigma x)) x)
-			= |proof_tau_sigma_x_precedes_x| (
-				% First, we show that tau (sigma x) must be nondubious:
+	= |x| |proof_sx_contains_ND| (
+		% Suppose x is an ordinal of U such that sx contains ND. We wish to show that ND contains x.
+		% That is, we are required to show that x is nondubious:
+		def proof_x_is_nondubious : is_nondubious x
+			= |proof_x_is_dubious| ( % Suppose x is dubious. We wish to show a contradiction.
+				% First, we show that tsx is nondubious (i.e., tsx !> tstsx):
 				def proof_tsx_is_nondubious
-					: is_nondubious (tau (sigma x))
-					= proof_tau_sigma_x_precedes_x ND proof_ND_is_in_sigma_x;
+					: is_nondubious (ts x)
+					= proof_x_is_dubious ND proof_sx_contains_ND;
 
-				% Next, we show that tau (sigma x) must be dubious:
+				% Next, we show that tsx is dubious (i.e., tsx > tstsx):
 				def proof_tsx_is_dubious
-					: is_dubious (tau (sigma x))
-					= |X| (
-						% If X is a subset of U, we must show the following:
-						def X_is_in_instsx_implies_tstsx_is_in_X : sigma (tau (sigma x)) X -> X (tau (sigma (tau (sigma x))))
-							= proof_tau_sigma_x_precedes_x (|y| X (tau (sigma y)));
+					: is_dubious (ts x)
+					= |X| ( % Suppose X is a subset of U. We wish to show that tsx is locally dubious at X.
+						% We show that x is locally dubious at ts* X:
+						def x_is_locally_dubious_at_pb_ts_X
+							: is_locally_dubious x (pullback ts X)
+							= proof_x_is_dubious (pullback ts X);
+
+						% This is definitionally the same as saying that tsx is locally dubious at X, as required:
+						def tsx_is_locally_dubious_at_X
+							: is_locally_dubious (ts x) X
+							= x_is_locally_dubious_at_pb_ts_X;
 						
-						X_is_in_instsx_implies_tstsx_is_in_X
+						tsx_is_locally_dubious_at_X
 					);
+
+				% This yields a contradiction.
 				proof_tsx_is_nondubious proof_tsx_is_dubious
 			);
-		lemma
+
+		proof_x_is_nondubious
 	);
 
-% We show that Omega is nondubious:
-% (analogous to Omega !< Omega in Burali-Forti)
-def proof_Omega_is_nondubious
-	: is_nondubious Omega
-	= proof_Omega_is_decent is_nondubious proof_nondubious_is_inductive;
+% This lets us show that O is nondubious (i.e., O !> ts O):
+def proof_O_is_nondubious
+	: is_nondubious O
+	= proof_O_is_decent ND proof_ND_is_inductive;
 
-<(proof_Omega_is_nondubious proof_Omega_is_dubious #0) :: |_| '#0 {}>
+% This yields a contradiction, which fails to terminate.
+<proof_O_is_nondubious proof_O_is_dubious :: |_| '#0 {}>
