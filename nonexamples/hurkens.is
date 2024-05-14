@@ -1,0 +1,130 @@
+#fragment 0
+
+% Hurken's paradox, adapted from:
+% https://www.cs.cmu.edu/%7Ekw/scans/hurkens95tlca.pdf
+% http://rutgerkuyper.com/pubs/bachelor.pdf
+
+% This causes elaboration to fail to terminate.
+
+% We define a basic vocabulary of types.
+def Type
+	= * c0;
+def False
+	= |T : Type| -> T;
+def not
+	: Type -> Type
+	= |T| T -> False;
+def P
+	: Type -> Type
+	= |T| T -> Type;
+
+% Consider a powerful universe (U, sigma, tau).
+def U
+	= |T : Type| -> (P (P T) -> T) -> P (P T);
+% An 'ordinal' in U, for any type T, assigns to each 'reflection' of T a subpowerset of T.
+% We can conceptualize tau as a reflection of U:
+def tau
+	: P (P U) -> U
+	% If V is a U-subpowerset, T is a type, r is a T-reflection, and X is a T-subset,
+	% return the proposition V assigns to the U-subset of ordinals x such that
+	% the T-reflection of [the T-subpowerset that x assigns to r] is an element of X.
+	= |V| |T| |r| |X| V (|x| X (r (x T r)));
+% We can conceptualize sigma as an unreflection of ordinals of U into subpowersets of U.
+def sigma
+	: U -> P (P U)
+	% If x is an ordinal, return the U-subpowerset that x assigns to tau.
+	= |x| x U tau;
+	
+% If X is a subset of U, we say that X is /inductive/ iff:
+% for all ordinals x of U, if X is in sigma x, then x is in X.
+def is_inductive
+	: P (P U)
+	= |X| |x : U| -> sigma x X -> X x;
+
+% We define the subset Omega by the following:
+def Omega
+	: U
+	= tau is_inductive;
+
+% If x is an ordinal of U, we say that x is /decent/ (a.k.a. well-founded) iff:
+% for all subsets X of U, if X is inductive, then x is in X.
+def is_decent
+	: P U
+	= |x| |X : P U| -> is_inductive X -> X x;
+
+% We show that Omega is decent:
+def proof_Omega_is_decent
+	: is_decent Omega
+	= |X| |proof_X_is_inductive| (
+		% Suppose X is is inductive. We show that X is in sigma Omega:
+		def proof_X_is_in_sigma_Omega
+			: sigma Omega X
+			= |x| proof_X_is_inductive (tau (sigma x));
+
+		% Since X is inductive, then Omega is in X, as required:
+		def proof_Omega_is_in_X
+			: X Omega
+			= proof_X_is_inductive Omega proof_X_is_in_sigma_Omega;
+
+		proof_Omega_is_in_X
+	);
+
+% If y and x are ordinals of U, we say that y is a /predecessor/ of x
+% (that is, y < x) iff:
+% for all subsets X of U, if X is in sigma x, then y is in X.
+def is_predecessor_of
+	: U -> P U
+	= |y| |x| |X : P U| -> sigma x X -> X y;
+
+% If x is an ordinal of U, we say that x is 'dubious'
+% (for lack of a better name, analogous to x < x in Burali-Forti) iff:
+% tau (sigma x) is a predecessor of x.
+def is_dubious
+	: P U
+	= |x| is_predecessor_of (tau (sigma x)) x;
+	
+def is_nondubious
+	: P U
+	= |x| not (is_dubious x);
+def ND = is_nondubious;
+
+% We show that Omega is dubious:
+% (analogous to Omega < Omega in Burali-Forti)
+def proof_Omega_is_dubious
+	: is_dubious Omega = |X| proof_Omega_is_decent (|x| X (tau (sigma x)));
+
+% Next, we show that the subset of non-dubious ordinals is inductive:
+def proof_nondubious_is_inductive
+	: is_inductive ND
+	= |x| |proof_ND_is_in_sigma_x| (
+		% Suppose x is an ordinal of U and ND is in sigma x.
+		% We are required to show that tau (sigma x) cannot be a predecessor of x:
+		def lemma : not (is_predecessor_of (tau (sigma x)) x)
+			= |proof_tau_sigma_x_precedes_x| (
+				% First, we show that tau (sigma x) must be nondubious:
+				def proof_tsx_is_nondubious
+					: is_nondubious (tau (sigma x))
+					= proof_tau_sigma_x_precedes_x ND proof_ND_is_in_sigma_x;
+
+				% Next, we show that tau (sigma x) must be dubious:
+				def proof_tsx_is_dubious
+					: is_dubious (tau (sigma x))
+					= |X| (
+						% If X is a subset of U, we must show the following:
+						def X_is_in_instsx_implies_tstsx_is_in_X : sigma (tau (sigma x)) X -> X (tau (sigma (tau (sigma x))))
+							= proof_tau_sigma_x_precedes_x (|y| X (tau (sigma y)));
+						
+						X_is_in_instsx_implies_tstsx_is_in_X
+					);
+				proof_tsx_is_nondubious proof_tsx_is_dubious
+			);
+		lemma
+	);
+
+% We show that Omega is nondubious:
+% (analogous to Omega !< Omega in Burali-Forti)
+def proof_Omega_is_nondubious
+	: is_nondubious Omega
+	= proof_Omega_is_decent is_nondubious proof_nondubious_is_inductive;
+
+<(proof_Omega_is_nondubious proof_Omega_is_dubious #0) :: |_| '#0 {}>
