@@ -1,0 +1,9 @@
+% This showcases what appears to be a bug in either our CLIF backend or Cranelift itself:
+
+% should be implemented in ISLE: inst = `v10, v11 = isplit.i16 v9`, type = `Some(types::I8)`
+
+#input (x : (Bool & (Bool & Bool)) & Nat)
+
+let (a, b) = x;
+let (c, d) = a;
+((c, d), b)
