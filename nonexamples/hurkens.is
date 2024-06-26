@@ -7,28 +7,19 @@
 
 % This causes elaboration to fail to terminate.
 
-% The reason for nontermination is the validity of Type : Type.
-def Type
-	= * c0;
+% The reason for nontermination is the validity of Type : Type:
+def Type = * c0;
 
 % We define negation with #0, but it doesn't actually matter what codomain we choose!
-def not
-	: Type -> Type
-	= |T| T -> #0;
+def not : Type -> Type = |T| T -> #0;
 
 % We also define notions of powersets (containing subsets) and double powersets (containing subpowersets).
-def P
-	: Type -> Type
-	= |T| T -> Type;
-
-def PP
-	: Type -> Type
-	= |T| P (P T);
+def P : Type -> Type = |T| T -> Type;
+def PP : Type -> Type = |T| P (P T);
 
 % Consider a powerful universe (U, s, t) of 'ordinals' (by analogy to the Burali-Forti paradox).
 % An ordinal in U, for any type T, assigns to each 'reflection' of T a subpowerset of T.
-def U
-	= |T : Type| -> (PP T -> T) -> PP T;
+def U = |T : Type| -> (PP T -> T) -> PP T;
 
 % We can conceptualize t as a reflection of U:
 % (This is probably the most confusing part of the paradox.)
@@ -36,7 +27,7 @@ def t
 	: PP U -> U
 	% If V is a U-subpowerset, T is a type, r is a T-reflection, and X is a T-subset,
 	% return the proposition V assigns to the U-subset of ordinals x such that
-	% the T-reflection of [the T-subpowerset that x assigns to r] is an element of X.
+	% X contains [the T-subpowerset that x assigns to r] reflected by r.
 	= |V| |T| |r| |X| V (|x| X (r (x T r)));
 	
 % We can conceptualize s as an 'unreflection' of U:
@@ -46,9 +37,7 @@ def s
 	= |x| x U t;
 
 % For convenience, we define the composition of t after s:
-def ts
-	: U -> U
-	= |x| t (s x);
+def ts : U -> U = |x| t (s x);
 
 % We also define a means of pulling back a subset X of U by an endofunction f to get a subset f* X:
 def pullback
@@ -80,11 +69,6 @@ def is_decent
 	: P U
 	= |x| |X : P U| -> is_inductive X -> X x;
 
-% This is definitionally the same as being 'locally dubious' at every subset:
-def is_locally_dubious
-	: U -> PP U
-	= |x| |X| locally_follows_at x (ts x) X;
-
 % If x is an ordinal of U, we say that x is 'dubious'
 % (for lack of a better phrase) iff:
 % x follows tsx.
@@ -93,7 +77,7 @@ def is_dubious
 	= |x| follows x (ts x);
 
 % If x is an ordinal of U, if x is dubious (i.e., x > tsx), then so is tsx (i.e., tsx > tstsx):
-def proof_dubious_implies_dubious_ts
+def proof_ts_preserves_dubiosity
 	: |x : U| -> is_dubious x -> is_dubious (ts x)
 	= |x| |proof_x_is_dubious| (|X| proof_x_is_dubious (pullback ts X));
 
@@ -108,7 +92,7 @@ def ND = is_nondubious;
 def proof_ND_is_inductive
 	: is_inductive ND
 	= |x| |proof_sx_contains_ND| (
-		% Suppose x is an ordinal of U such that sx contains ND. We wish to show that x is nondubious.
+		% Suppose x is an ordinal of U such that sx contains ND. We wish to show that ND contains x.
 		|proof_x_is_dubious| ( % Suppose x is dubious.
 			% We can show that tsx is nondubious (i.e., tsx !> tstsx):
 			def proof_tsx_is_nondubious
@@ -116,14 +100,12 @@ def proof_ND_is_inductive
 				= proof_x_is_dubious ND proof_sx_contains_ND;
 
 			% However, since x is dubious, tsx is also dubious (i.e., tsx > tstsx), yielding a contradiction:
-			proof_tsx_is_nondubious (proof_dubious_implies_dubious_ts x proof_x_is_dubious)
+			proof_tsx_is_nondubious (proof_ts_preserves_dubiosity x proof_x_is_dubious)
 		)
 	);
 	
 % We define the paradoxical subset O by the following:
-def O
-	: U
-	= t is_inductive;
+def O : U = t is_inductive;
 
 % Next, we show that O is decent:
 def proof_O_is_decent
