@@ -351,10 +351,13 @@ impl<const N: usize> Conversion<Rc<Closure<Environment, DynamicTerm, N>>> for Le
 #[cfg(test)]
 mod tests {
 	use super::*;
-	
+
 	#[test]
 	fn test_conversion() {
-		let value_0 = DynamicValue::BxValue(DynamicValue::Neutral(DynamicNeutral::BxProject(DynamicNeutral::Variable(None, Level(0)).into())).into());
+		let value_0 = DynamicValue::BxValue(
+			DynamicValue::Neutral(DynamicNeutral::BxProject(DynamicNeutral::Variable(None, Level(0)).into()))
+				.into(),
+		);
 		let value_1 = DynamicValue::Neutral(DynamicNeutral::Variable(None, Level(0)));
 		let value_2 = DynamicValue::Neutral(DynamicNeutral::Variable(None, Level(1)));
 

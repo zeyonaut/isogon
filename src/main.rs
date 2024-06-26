@@ -78,10 +78,10 @@ fn run(options: Options) {
 		}
 	};
 	let fragment = parsed_program.fragment;
-	
+
 	if !options.is_quiet {
 		println!("Parsing complete.");
-	
+
 		println!();
 	}
 
@@ -94,30 +94,37 @@ fn run(options: Options) {
 		}
 	};
 	if !options.is_quiet {
-	println!("Elaboration complete.");
-	println!("Elaborated term: {}", pretty_print(&core_program.term.clone().unelaborate(), &resolver));
-	println!("Synthesized type: {}", pretty_print(&core_program.ty.unevaluate_in(Level(core_program.input.is_some() as _)).unelaborate(), &resolver));
-	if core_program.input.is_none() {
+		println!("Elaboration complete.");
+		println!("Elaborated term: {}", pretty_print(&core_program.term.clone().unelaborate(), &resolver));
 		println!(
-			"Evaluation: {}",
-			pretty_print(&core_program.term.clone().evaluate().unevaluate().unelaborate(), &resolver)
+			"Synthesized type: {}",
+			pretty_print(
+				&core_program.ty.unevaluate_in(Level(core_program.input.is_some() as _)).unelaborate(),
+				&resolver
+			)
 		);
-	}
+		if core_program.input.is_none() {
+			println!(
+				"Evaluation: {}",
+				pretty_print(&core_program.term.clone().evaluate().unevaluate().unelaborate(), &resolver)
+			);
+		}
 
-	println!();
-}
+		println!();
+	}
 
 	// Staging.
 	let object_program = stage(core_program);
 	if !options.is_quiet {
-	println!("Staging complete.");
-	println!("Staged term: {}", pretty_print(&object_program.term.clone().unelaborate(), &resolver));
-	if object_program.input.is_none() {
-		println!(
-			"Evaluation: {}",
-			pretty_print(&object_program.term.clone().evaluate().unevaluate().unelaborate(), &resolver)
-		);
-	}}
+		println!("Staging complete.");
+		println!("Staged term: {}", pretty_print(&object_program.term.clone().unelaborate(), &resolver));
+		if object_program.input.is_none() {
+			println!(
+				"Evaluation: {}",
+				pretty_print(&object_program.term.clone().evaluate().unevaluate().unelaborate(), &resolver)
+			);
+		}
+	}
 
 	// Early return for irrelevant programs.
 	if fragment == Fragment::Logical {
@@ -125,50 +132,50 @@ fn run(options: Options) {
 	}
 
 	if !options.is_quiet {
-	println!();
+		println!();
 	}
 
 	// Closure conversion.
 	let flat_program = flatten(&object_program);
 	if !options.is_quiet {
-	println!("Closure conversion complete.");
+		println!("Closure conversion complete.");
 
-	println!();
+		println!();
 	}
 
 	// Linearization.
 	let linearized_program = linearize(flat_program);
 	if !options.is_quiet {
-	println!("Linearization complete.");
+		println!("Linearization complete.");
 
-	if options.show_lir {
-		let mut printed = String::new();
+		if options.show_lir {
+			let mut printed = String::new();
+			println!();
+			pretty_print_linear(&mut printed, &linearized_program).unwrap();
+			print!("{printed}");
+		}
+		if linearized_program.entry_prototype.parameter.is_none() {
+			let (heap, result) = execute(&linearized_program);
+			println!("Execution heap: {heap:?}");
+			println!("Execution result: {result:?}");
+		}
+
 		println!();
-		pretty_print_linear(&mut printed, &linearized_program).unwrap();
-		print!("{printed}");
 	}
-	if linearized_program.entry_prototype.parameter.is_none() {
-		let (heap, result) = execute(&linearized_program);
-		println!("Execution heap: {heap:?}");
-		println!("Execution result: {result:?}");
-	}
-
-	println!();
-}
 
 	// Emission
 	let target_triple_string = target_triple.to_string();
 	let emission = emit_object("program".to_owned(), &linearized_program, target_triple);
 	if !options.is_quiet {
-	println!("Emission to target {target_triple_string} complete.");
+		println!("Emission to target {target_triple_string} complete.");
 
-	if options.show_clif {
-		println!();
-		println!("{}", emission.entry.display());
-		for function in &emission.functions {
-			println!("{}", function.display());
+		if options.show_clif {
+			println!();
+			println!("{}", emission.entry.display());
+			for function in &emission.functions {
+				println!("{}", function.display());
+			}
 		}
-	}
 	}
 
 	// Object file generation.

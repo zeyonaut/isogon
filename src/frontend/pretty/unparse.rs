@@ -229,7 +229,7 @@ fn print_projector(projector: &Projector, f: &mut impl Write, _: &impl Resolver)
 	match projector {
 		Projector::Exp => write!(f, "unexp"),
 		Projector::Bx => write!(f, "unbox"),
-		Projector::Wrap => write!(f, "wrap"),
+		Projector::Wrap => write!(f, "unwrap"),
 		Projector::Field(Field::Base) => write!(f, "/."),
 		Projector::Field(Field::Fiber) => write!(f, "/!"),
 	}

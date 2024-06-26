@@ -474,11 +474,19 @@ impl Environment {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	
+
 	#[test]
 	fn test_max() {
-		let copy_0 = StaticValue::CpyValue(CpyValue::Max(vec![StaticNeutral::Variable(None, Level(2)), StaticNeutral::Variable(None, Level(1)), StaticNeutral::Variable(None, Level(0))]));
-		let copy_1 = StaticValue::CpyValue(CpyValue::Max(vec![StaticNeutral::Variable(None, Level(1)), StaticNeutral::Variable(None, Level(0)), StaticNeutral::Variable(None, Level(2))]));
+		let copy_0 = StaticValue::CpyValue(CpyValue::Max(vec![
+			StaticNeutral::Variable(None, Level(2)),
+			StaticNeutral::Variable(None, Level(1)),
+			StaticNeutral::Variable(None, Level(0)),
+		]));
+		let copy_1 = StaticValue::CpyValue(CpyValue::Max(vec![
+			StaticNeutral::Variable(None, Level(1)),
+			StaticNeutral::Variable(None, Level(0)),
+			StaticNeutral::Variable(None, Level(2)),
+		]));
 		let copy_2 = StaticValue::max_copyability(Level(3), copy_0.clone(), copy_1.clone());
 
 		assert!(Level(3).can_convert(&copy_0, &copy_1));

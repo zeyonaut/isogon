@@ -338,9 +338,9 @@ impl<'a, 'b, 'c, 'd> Emitter<'a, 'b, 'c, 'd> {
 								self.store_data_in_slot(slot, 0, data);
 								Predata::StackSlot(slot, 0, layout)
 							}
-						},
+						}
 					})
-				} else { 
+				} else {
 					None
 				};
 				self.assign(*symbol, predata);

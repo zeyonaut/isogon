@@ -85,6 +85,7 @@ pub enum ElaborationErrorKind {
 	NotInScope,
 	FiberAxesDependentOnBasepoint,
 	RanOutOfVariableUses { label: Label, extra_usage: Cost },
+	UnbalancedCaseUses,
 	WrongArity,
 	InvalidArgumentCount,
 	InvalidStaticUniverse,
@@ -339,6 +340,60 @@ impl<'c> Drop for ErasedContext<'c> {
 	fn drop(&mut self) { self.context.fragment = self.old_fragment }
 }
 
+pub struct RecordingContext<'c> {
+	context: &'c mut Context,
+	original_costs: Vec<Cost>,
+	recorded_costs: Option<Vec<Cost>>,
+}
+
+impl<'c> RecordingContext<'c> {
+	fn new(ctx: &'c mut Context) -> Self {
+		Self {
+			original_costs: ctx.tys.iter().map(|entry| entry.1.grade).collect(),
+			context: ctx,
+			recorded_costs: None,
+		}
+	}
+
+	fn try_record(&mut self) -> Result<(), ElaborationErrorKind> {
+		if let Some(record) = &mut self.recorded_costs {
+			for (correct, found) in
+				record.iter().copied().zip(self.context.tys.iter().map(|entry| entry.1.grade))
+			{
+				if correct != found {
+					return Err(ElaborationErrorKind::UnbalancedCaseUses);
+				}
+			}
+		} else {
+			self.recorded_costs = Some(self.context.tys.iter().map(|entry| entry.1.grade).collect())
+		}
+		Ok(())
+	}
+
+	fn reset(&mut self) {
+		if self.recorded_costs.is_some() {
+			for (original, found) in self
+				.original_costs
+				.iter()
+				.copied()
+				.zip(self.context.tys.iter_mut().map(|entry| &mut entry.1.grade))
+			{
+				*found = original;
+			}
+		}
+	}
+}
+
+impl<'c> Deref for RecordingContext<'c> {
+	type Target = Context;
+
+	fn deref(&self) -> &Self::Target { self.context }
+}
+
+impl<'c> DerefMut for RecordingContext<'c> {
+	fn deref_mut(&mut self) -> &mut Self::Target { self.context }
+}
+
 pub struct Context {
 	fragment: Fragment,
 	lock: usize,
@@ -399,6 +454,8 @@ impl Context {
 	}
 
 	pub fn erase(&mut self) -> ErasedContext<'_> { ErasedContext::new(self, Fragment::Logical) }
+
+	pub fn record(&mut self) -> RecordingContext<'_> { RecordingContext::new(self) }
 
 	pub fn lock_if(&mut self, should_lock: bool) -> LockedContext<'_> { LockedContext::new(self, should_lock) }
 
@@ -825,8 +882,10 @@ impl Context {
 							.map_extra(|ctx, body| ctx.elaborate_static_type(*body))?;
 						let motive_value = motive_term.clone().map_into().evaluate_in(&self.environment);
 						// TODO: Avoid cloning.
+						let mut ctx = self.record();
 						let mut new_cases = Vec::new();
 						for v in 0..card {
+							ctx.reset();
 							let v = v as u8;
 							let Some(case_position) = cases.iter().position(|(pattern, _)| {
 								if let Pattern::Construction(Constructor::Enum(target_card, target_v), args) = pattern
@@ -839,15 +898,14 @@ impl Context {
 								return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
 							};
 							let case = cases[case_position].1.clone();
-							new_cases.push(
-								self.amplify(if card <= 1 { Cost::Fin(1) } else { Cost::Inf }).verify_static(
-									case,
-									StaticNote::new(
-										motive_value.evaluate_with([StaticValue::EnumValue(card, v)]),
-										motive_copy,
-									),
-								)?,
-							)
+							new_cases.push(ctx.verify_static(
+								case,
+								StaticNote::new(
+									motive_value.evaluate_with([StaticValue::EnumValue(card, v)]),
+									motive_copy,
+								),
+							)?);
+							ctx.try_record().map_err(|e| e.at(expr.range))?;
 						}
 						StaticTerm::CaseEnum {
 							scrutinee: scrutinee.term.into(),
@@ -1530,8 +1588,10 @@ impl Context {
 						};
 						let motive = motive_term.clone().map_into().evaluate_in(&self.environment);
 						// TODO: Avoid cloning.
+						let mut ctx = self.record();
 						let mut new_cases = Vec::new();
 						for v in 0..card {
+							ctx.reset();
 							let v = v as u8;
 							let Some(case_position) = cases.iter().position(|(pattern, _)| {
 								if let Pattern::Construction(Constructor::Enum(target_card, target_v), patterns) =
@@ -1545,15 +1605,14 @@ impl Context {
 								return Err(ElaborationErrorKind::InvalidCaseSplit.at(expr.range));
 							};
 							let case = cases[case_position].1.clone();
-							new_cases.push(
-								self.amplify(if card <= 1 { Cost::Fin(1) } else { Cost::Inf }).verify_dynamic(
-									case,
-									DynamicNote::new(
-										motive.evaluate_with([DynamicValue::EnumValue(card, v)]),
-										motive_kind.clone(),
-									),
-								)?,
-							)
+							new_cases.push(ctx.verify_dynamic(
+								case,
+								DynamicNote::new(
+									motive.evaluate_with([DynamicValue::EnumValue(card, v)]),
+									motive_kind.clone(),
+								),
+							)?);
+							ctx.try_record().map_err(|e| e.at(expr.range))?;
 						}
 						DynamicTerm::CaseEnum {
 							scrutinee: scrutinee.term.into(),
@@ -1708,10 +1767,7 @@ impl Context {
 				let (ty_term, _) = self.elaborate_static_type(ty.clone())?;
 				let ty = ty_term.clone().evaluate_in(&self.environment);
 				if !self.len().can_convert(&binding_ty_value, &ty) {
-					return Err(
-						ElaborationErrorKind::CouldNotConvertStatic(ty_term, binding_ty)
-							.at(range),
-					);
+					return Err(ElaborationErrorKind::CouldNotConvertStatic(ty_term, binding_ty).at(range));
 				}
 			}
 
@@ -1734,10 +1790,7 @@ impl Context {
 				let (ty_term, _) = self.elaborate_dynamic_type(ty.clone())?;
 				let ty = ty_term.clone().evaluate_in(&self.environment);
 				if !self.len().can_convert(&binding_ty_value, &ty) {
-					return Err(
-						ElaborationErrorKind::CouldNotConvertDynamic(ty_term, binding_ty)
-							.at(range),
-					);
+					return Err(ElaborationErrorKind::CouldNotConvertDynamic(ty_term, binding_ty).at(range));
 				}
 			}
 

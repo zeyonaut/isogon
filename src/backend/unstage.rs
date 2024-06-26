@@ -143,9 +143,9 @@ impl Unstage for DynamicValue {
 			},
 
 			Wrap(inner, kind) =>
-				DynamicTerm::Bx { inner: inner.unstage_in(level).into(), kind: kind.unstage_in(level).into() },
+				DynamicTerm::Wrap { inner: inner.unstage_in(level).into(), kind: kind.unstage_in(level).into() },
 			WrapValue(x) => DynamicTerm::WrapValue(x.unstage_in(level).into()),
-			WrapProject(scrutinee, kind) => DynamicTerm::BxProject {
+			WrapProject(scrutinee, kind) => DynamicTerm::WrapProject {
 				scrutinee: scrutinee.unstage_in(level).into(),
 				kind: kind.as_ref().map(|kind| kind.unstage_in(level).into()),
 			},

@@ -1,13 +1,8 @@
 use std::{ffi::OsStr, fs};
 
+use isogon::frontend::{elaborate::elaborate, lex::lex, parse::parse};
+
 use crate::common::EXTENSION;
-use isogon::
-	frontend::{
-		elaborate::elaborate,
-		lex::lex,
-		parse::parse,
-	}
-;
 
 #[test]
 fn run_fail_tests() {

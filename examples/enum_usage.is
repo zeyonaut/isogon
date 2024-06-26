@@ -1,0 +1,10 @@
+let res : Wrap Bool = wrap true;
+
+let test : #3 -> Bool
+	= |b| b :: |_| Bool {
+		| 0_3 -> res unwrap
+		| 1_3 -> res unwrap
+		| 2_3 -> res unwrap
+	};
+
+test 0_3
